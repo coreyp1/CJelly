@@ -1,0 +1,4 @@
+#ifndef CJELLY_LIBVER_H
+#define CJELLY_LIBVER_H
+
+#endif // CJELLY_LIBVER_H

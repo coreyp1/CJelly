@@ -1,0 +1,4 @@
+#ifndef CJELLY_MACROS_H
+#define CJELLY_MACROS_H
+
+#endif // CJELLY_MACROS_H

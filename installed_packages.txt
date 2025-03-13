@@ -1,0 +1,138 @@
+MSYS2:
+
+$ pacman -Qe
+base 2022.06-1
+bison 3.8.2-5
+filesystem 2023.02.07-2
+flex 2.6.4-3
+gdb 14.2-6
+git 2.46.0-1
+mingw-w64-x86_64-gcc 14.2.0-1
+mingw-w64-x86_64-gtest 1.15.2-1
+mingw-w64-x86_64-icu 75.1-2
+mingw-w64-x86_64-make 4.4.1-2
+mingw-w64-x86_64-spirv-headers 2~1.3.290.0-1
+mingw-w64-x86_64-spirv-tools 3~1.3.290.0-1
+mingw-w64-x86_64-vulkan-headers 1.3.290.0-1
+mingw-w64-x86_64-vulkan-loader 1.3.290.0-2
+mingw-w64-x86_64-vulkan-utility-libraries 1.3.290.0-1
+mingw-w64-x86_64-vulkan-validation-layers 1.3.290.0-1
+msys2-runtime 3.5.4-2
+nasm 2.16.03-1
+pkgconf 2.3.0-1
+vim 9.1.0707-1
+
+
+ubuntu 22:
+
+$ apt-mark showmanual
+apparmor
+base-files
+base-passwd
+bash
+bind9-libs
+bison
+bsdutils
+btop
+build-essential
+cloc
+cloud-init
+dash
+dbus-x11
+diffutils
+dos2unix
+doxygen
+eatmydata
+ffmpeg
+findutils
+firefox
+flex
+fonts-ubuntu
+fwupd
+g++
+gdb
+google-chrome-stable
+googletest
+graphviz
+grep
+gzip
+hostname
+init
+inotify-tools
+kcachegrind
+language-pack-en
+libapparmor1
+libboost-all-dev
+libcairo2-dev
+libdebconfclient0
+libeatmydata1
+libfwupd2
+libfwupdplugin5
+libgdk-pixbuf-2.0-0
+libgdk-pixbuf2.0-bin
+libgtest-dev
+libpango1.0-dev
+libsasl2-modules
+libvulkan-dev
+libwrap0
+linux-tools-common
+linux-tools-generic
+login
+make
+mesa-vulkan-drivers
+nasm
+ncurses-base
+ncurses-bin
+ncurses-term
+net-tools
+openssh-server
+openssh-sftp-server
+pkgconf
+python-babel-localedata
+python-is-python3
+python3
+python3-babel
+python3-certifi
+python3-dev
+python3-distupgrade
+python3-distutils
+python3-jinja2
+python3-json-pointer
+python3-jsonpatch
+python3-jsonschema
+python3-lib2to3
+python3-markupsafe
+python3-pip
+python3-pyrsistent
+python3-requests
+python3-serial
+python3-setuptools
+python3-tz
+python3-urllib3
+python3-venv
+show-motd
+snapd
+ssh-import-id
+sysvinit-utils
+texlive
+texlive-fonts-extra
+texlive-fonts-recommended
+texlive-full
+texlive-latex-base
+texlive-latex-extra
+texlive-xetex
+tzdata
+ubuntu-advantage-tools
+ubuntu-minimal
+ubuntu-server
+ubuntu-standard
+ubuntu-wsl
+unzip
+update-motd
+valgrind
+vulkan-tools
+wamerican
+wbritish
+wsl-setup
+wslu
+x11-apps
