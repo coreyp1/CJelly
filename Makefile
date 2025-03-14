@@ -13,6 +13,7 @@ BASE_NAME_PREFIX := lib$(SUITE)-$(PROJECT)$(BRANCH)
 MAJOR_VERSION := 0
 MINOR_VERSION := 0.0
 SO_NAME := $(BASE_NAME).$(MAJOR_VERSION)
+ENV_VARS :=
 
 # Detect OS
 UNAME_S := $(shell uname -s)
@@ -65,6 +66,7 @@ else ifeq ($(findstring MINGW64_NT,$(UNAME_S)),MINGW64_NT)  # 64-bit Windows
 	INCLUDE_INSTALL_PATH := /mingw64/include
 	LIB_INSTALL_PATH := /mingw64/lib
 	BIN_INSTALL_PATH := /mingw64/bin
+	ENV_VARS += VK_LAYER_PATH=/mingw64/bin/VkLayer_khronos_validation.json
 
 else
     $(error Unsupported OS: $(UNAME_S))
@@ -226,7 +228,7 @@ test: \
 	@printf "### Running normal tests ###\n"
 	@printf "############################\n"
 	@printf "\033[0m\n"
-	LD_LIBRARY_PATH="$(APP_DIR)" $(APP_DIR)/main$(EXE_EXTENSION)
+	LD_LIBRARY_PATH="$(APP_DIR)" $(ENV_VARS) $(APP_DIR)/main$(EXE_EXTENSION)
 
 clean: ## Remove all contents of the build directories.
 	-@rm -rvf ./build
