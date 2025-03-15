@@ -125,7 +125,7 @@ uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
   VkPhysicalDeviceMemoryProperties memProperties;
   vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
   for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
-    if ((typeFilter & (1 << i)) && 
+    if ((typeFilter & (1 << i)) &&
         (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
       return i;
     }
@@ -165,7 +165,7 @@ void createVertexBuffer() {
   VkMemoryAllocateInfo allocInfo = {0};
   allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
   allocInfo.allocationSize = memRequirements.size;
-  allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, 
+  allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits,
       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
   if (vkAllocateMemory(device, &allocInfo, NULL, &vertexBufferMemory) != VK_SUCCESS) {
@@ -238,11 +238,11 @@ VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
 
 // Helper functions to load extension functions.
 VkResult CreateDebugUtilsMessengerEXT(VkInstance instance,
-const VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo,
-const VkAllocationCallbacks* pAllocator,
-VkDebugUtilsMessengerEXT* pDebugMessenger) {
+  const VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo,
+  const VkAllocationCallbacks* pAllocator,
+  VkDebugUtilsMessengerEXT* pDebugMessenger) {
 
-PFN_vkCreateDebugUtilsMessengerEXT func = 
+  PFN_vkCreateDebugUtilsMessengerEXT func =
   (PFN_vkCreateDebugUtilsMessengerEXT) vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT");
   if (func != NULL) {
     return func(instance, pCreateInfo, pAllocator, pDebugMessenger);
@@ -253,10 +253,10 @@ PFN_vkCreateDebugUtilsMessengerEXT func =
 
 
 void DestroyDebugUtilsMessengerEXT(VkInstance instance,
-VkDebugUtilsMessengerEXT debugMessenger,
-const VkAllocationCallbacks* pAllocator) {
+  VkDebugUtilsMessengerEXT debugMessenger,
+  const VkAllocationCallbacks* pAllocator) {
 
-PFN_vkDestroyDebugUtilsMessengerEXT func = 
+  PFN_vkDestroyDebugUtilsMessengerEXT func =
   (PFN_vkDestroyDebugUtilsMessengerEXT) vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
   if (func != NULL) {
     func(instance, debugMessenger, pAllocator);
@@ -391,7 +391,7 @@ void createInstance() {
     // Set up debug messenger info so that it is used during instance creation.
     VkDebugUtilsMessengerCreateInfoEXT debugCreateInfo = {0};
     debugCreateInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
-    debugCreateInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | 
+    debugCreateInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
                                       VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
     debugCreateInfo.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
                                   VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
