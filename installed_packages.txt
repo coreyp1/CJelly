@@ -52,6 +52,7 @@ fonts-ubuntu
 fwupd
 g++
 gdb
+glslang-tools
 google-chrome-stable
 googletest
 graphviz
@@ -76,6 +77,7 @@ libpango1.0-dev
 libsasl2-modules
 libvulkan-dev
 libwrap0
+libx11-dev
 linux-tools-common
 linux-tools-generic
 login
@@ -132,6 +134,7 @@ unzip
 update-motd
 valgrind
 vulkan-tools
+vulkan-validationlayers
 wamerican
 wbritish
 wsl-setup
