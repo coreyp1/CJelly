@@ -145,6 +145,8 @@ $(LIBOBJECTS) :
 
 $(OBJ_DIR)/cjelly.o: \
 	src/cjelly.c \
+	$(GEN_DIR)/shaders/basic.vert.h \
+	$(GEN_DIR)/shaders/basic.frag.h \
 	$(DEP_CJELLY)
 
 
@@ -152,17 +154,22 @@ $(OBJ_DIR)/cjelly.o: \
 # Shaders
 ####################################################################
 
-# $(APP_DIR)/shaders/basic.frag.spv: \
-# 		src/shaders/basic.frag
-# 	@printf "\n### Compiling $@ ###\n"
-# 	@mkdir -p $(@D)
-# 	glslangValidator -V $< -o $@
-
 $(APP_DIR)/shaders/%.spv: \
 		src/shaders/%
 	@printf "\n### Compiling $@ ###\n"
 	@mkdir -p $(@D)
 	glslangValidator -V $< -o $@
+
+# Compute the desired variable name from the source file.
+# Replace dots with underscores.
+VAR_NAME = $(subst .,_, $(notdir $<))
+
+$(GEN_DIR)/shaders/%.h: $(APP_DIR)/shaders/%.spv
+	@printf "\n### Generating $@ ###\n"
+	@mkdir -p $(@D)
+	xxd -i $< \
+	  | sed "s/^\(unsigned char \)[^[]*\(\[.*\)/\1$(VAR_NAME)\2/" \
+	  | sed "s/^\(unsigned int \)[^ ]*/\1$(VAR_NAME)_len/" > $@
 
 ####################################################################
 # Shared Library
@@ -237,8 +244,6 @@ test-watch: ## Watch the file directory for changes and run the unit tests
 test: ## Make and run the Unit tests
 test: \
 		$(APP_DIR)/$(TARGET) \
-		$(APP_DIR)/shaders/basic.vert.spv \
-		$(APP_DIR)/shaders/basic.frag.spv \
 		$(APP_DIR)/main$(EXE_EXTENSION)
 #				$(APP_DIR)/test$(EXE_EXTENSION) \
 

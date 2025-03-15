@@ -14,6 +14,10 @@
 
 #include <cjelly/macros.h>
 
+// Shaders
+#include <shaders/basic.vert.h>
+#include <shaders/basic.frag.h>
+
 #ifdef _WIN32
   #include <windows.h>
 #else
@@ -116,8 +120,7 @@ void createSyncObjects();
 void drawFrame();
 void processWindowEvents();
 
-size_t readFile(const char *, char * *);
-VkShaderModule createShaderModuleFromFile(VkDevice, const char *);
+VkShaderModule createShaderModuleFromMemory(VkDevice, const unsigned char *, size_t);
 
 
 // Finds a suitable memory type based on typeFilter and desired properties.
@@ -182,33 +185,7 @@ void createVertexBuffer() {
 }
 
 
-// Reads an entire file into memory.
-size_t readFile(const char * filename, char * * buffer) {
-  FILE* file = fopen(filename, "rb");
-  if (!file) {
-    fprintf(stderr, "Failed to open file: %s\n", filename);
-    return 0;
-  }
-  fseek(file, 0, SEEK_END);
-  size_t fileSize = ftell(file);
-  rewind(file);
-  *buffer = malloc(fileSize);
-  if (!*buffer || fread(*buffer, 1, fileSize, file) != fileSize) {
-    fprintf(stderr, "Failed to read file: %s\n", filename);
-    fclose(file);
-    return 0;
-  }
-  fclose(file);
-  return fileSize;
-}
-
-
-VkShaderModule createShaderModuleFromFile(VkDevice device, const char* filename) {
-  char* code;
-  size_t codeSize = readFile(filename, &code);
-  if (codeSize == 0)
-    return VK_NULL_HANDLE;
-
+VkShaderModule createShaderModuleFromMemory(VkDevice device, const unsigned char * code, size_t codeSize) {
   VkShaderModuleCreateInfo createInfo = {0};
   createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
   createInfo.codeSize = codeSize;
@@ -216,11 +193,10 @@ VkShaderModule createShaderModuleFromFile(VkDevice device, const char* filename)
 
   VkShaderModule shaderModule;
   if (vkCreateShaderModule(device, &createInfo, NULL, &shaderModule) != VK_SUCCESS) {
-    fprintf(stderr, "Failed to create shader module from file: %s\n", filename);
-    free(code);
+    fprintf(stderr, "Failed to create shader module from memory\n");
     return VK_NULL_HANDLE;
   }
-  free(code);
+
   return shaderModule;
 }
 
@@ -599,8 +575,8 @@ void createRenderPass() {
 
 void createGraphicsPipeline() {
   // Load SPIR-V binaries and create shader modules.
-  VkShaderModule vertShaderModule = createShaderModuleFromFile(device, "shaders/basic.vert.spv");
-  VkShaderModule fragShaderModule = createShaderModuleFromFile(device, "shaders/basic.frag.spv");
+  VkShaderModule vertShaderModule = createShaderModuleFromMemory(device, basic_vert_spv, basic_vert_spv_len);
+  VkShaderModule fragShaderModule = createShaderModuleFromMemory(device, basic_frag_spv, basic_frag_spv_len);
 
   if (vertShaderModule == VK_NULL_HANDLE || fragShaderModule == VK_NULL_HANDLE) {
       fprintf(stderr, "Failed to create shader modules\n");
