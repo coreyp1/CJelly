@@ -1,6 +1,6 @@
 # CJelly - A Cross-Platform GUI Library
 
-## MSYS264 Setup
+## MSYS2 MINGW64 Setup
 
 To install packages, from the repo base directory, run:
 
