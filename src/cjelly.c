@@ -40,6 +40,26 @@ VkDebugUtilsMessengerEXT debugMessenger = VK_NULL_HANDLE;
   Window window;
 #endif
 
+
+// Vertex structure for the square.
+typedef struct Vertex {
+  float pos[2];    // Position at location 0, a vec2.
+  float color[3];  // Color at location 1, a vec3.
+} Vertex;
+
+
+// Vertices for a square, with positions and colors.
+Vertex vertices[] = {
+  { { -0.5f, -0.5f }, { 1.0f, 0.0f, 0.0f } },
+  { {  0.5f, -0.5f }, { 0.0f, 1.0f, 0.0f } },
+  { {  0.5f,  0.5f }, { 0.0f, 0.0f, 1.0f } },
+  { { -0.5f,  0.5f }, { 1.0f, 1.0f, 0.0f } },
+};
+
+VkBuffer vertexBuffer;
+VkDeviceMemory vertexBufferMemory;
+
+
 // Flag to indicate that the window should close.
 int shouldClose = 0;
 
@@ -98,6 +118,69 @@ void processWindowEvents();
 
 size_t readFile(const char *, char * *);
 VkShaderModule createShaderModuleFromFile(VkDevice, const char *);
+
+
+// Finds a suitable memory type based on typeFilter and desired properties.
+uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
+  VkPhysicalDeviceMemoryProperties memProperties;
+  vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
+  for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
+    if ((typeFilter & (1 << i)) && 
+        (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
+      return i;
+    }
+  }
+  fprintf(stderr, "Failed to find suitable memory type!\n");
+  exit(EXIT_FAILURE);
+}
+
+
+// Creates a vertex buffer and uploads the vertex data for a square (two triangles).
+void createVertexBuffer() {
+  // Define 6 vertices to draw two triangles forming a square.
+  Vertex vertices[] = {
+    { { -0.5f, -0.5f }, { 1.0f, 0.0f, 0.0f } },
+    { {  0.5f, -0.5f }, { 0.0f, 1.0f, 0.0f } },
+    { {  0.5f,  0.5f }, { 0.0f, 0.0f, 1.0f } },
+    { {  0.5f,  0.5f }, { 0.0f, 0.0f, 1.0f } },
+    { { -0.5f,  0.5f }, { 1.0f, 1.0f, 0.0f } },
+    { { -0.5f, -0.5f }, { 1.0f, 0.0f, 0.0f } },
+  };
+  VkDeviceSize bufferSize = sizeof(vertices);
+
+  VkBufferCreateInfo bufferInfo = {0};
+  bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+  bufferInfo.size = bufferSize;
+  bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+  bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+  if (vkCreateBuffer(device, &bufferInfo, NULL, &vertexBuffer) != VK_SUCCESS) {
+    fprintf(stderr, "Failed to create vertex buffer\n");
+    exit(EXIT_FAILURE);
+  }
+
+  VkMemoryRequirements memRequirements;
+  vkGetBufferMemoryRequirements(device, vertexBuffer, &memRequirements);
+
+  VkMemoryAllocateInfo allocInfo = {0};
+  allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+  allocInfo.allocationSize = memRequirements.size;
+  allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, 
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+  if (vkAllocateMemory(device, &allocInfo, NULL, &vertexBufferMemory) != VK_SUCCESS) {
+    fprintf(stderr, "Failed to allocate vertex buffer memory\n");
+    exit(EXIT_FAILURE);
+  }
+
+  vkBindBufferMemory(device, vertexBuffer, vertexBufferMemory, 0);
+
+  void* data;
+  vkMapMemory(device, vertexBufferMemory, 0, bufferSize, 0, &data);
+  memcpy(data, vertices, (size_t)bufferSize);
+  vkUnmapMemory(device, vertexBufferMemory);
+}
+
 
 // Reads an entire file into memory.
 size_t readFile(const char * filename, char * * buffer) {
@@ -419,12 +502,14 @@ void createLogicalDevice() {
 
 
 void createSwapChain() {
-  // Query surface capabilities and log them.
   VkSurfaceCapabilitiesKHR capabilities;
   vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &capabilities);
   fprintf(stderr, "Surface Capabilities:\n  minImageCount: %u\n  maxImageCount: %u\n  currentExtent: %ux%u\n",
           capabilities.minImageCount, capabilities.maxImageCount,
           capabilities.currentExtent.width, capabilities.currentExtent.height);
+
+  // Set the global swapChainExtent to what the surface supports.
+  swapChainExtent = capabilities.currentExtent;
 
   VkSwapchainCreateInfoKHR createInfo = {0};
   createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
@@ -432,9 +517,6 @@ void createSwapChain() {
   createInfo.minImageCount = 2;
   createInfo.imageFormat = VK_FORMAT_B8G8R8A8_SRGB;
   createInfo.imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
-  // Width and Height are smaller than the actual window size.
-  // createInfo.imageExtent.width = WIDTH;
-  // createInfo.imageExtent.height = HEIGHT;
   createInfo.imageExtent = capabilities.currentExtent;
   createInfo.imageArrayLayers = 1;
   createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
@@ -539,28 +621,52 @@ void createGraphicsPipeline() {
   shaderStages[1].module = fragShaderModule;
   shaderStages[1].pName = "main";
 
+  // Define a binding description for our Vertex structure.
+  VkVertexInputBindingDescription bindingDescription = {0};
+  bindingDescription.binding = 0;
+  bindingDescription.stride = sizeof(Vertex);
+  bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+  // Define attribute descriptions for the vertex shader inputs.
+  VkVertexInputAttributeDescription attributeDescriptions[2] = {0};
+
+  // Attribute 0: position (vec2)
+  attributeDescriptions[0].binding = 0;
+  attributeDescriptions[0].location = 0;
+  attributeDescriptions[0].format = VK_FORMAT_R32G32_SFLOAT;
+  attributeDescriptions[0].offset = offsetof(Vertex, pos);
+
+  // Attribute 1: color (vec3)
+  attributeDescriptions[1].binding = 0;
+  attributeDescriptions[1].location = 1;
+  attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT;
+  attributeDescriptions[1].offset = offsetof(Vertex, color);
+
   VkPipelineVertexInputStateCreateInfo vertexInputInfo = {0};
   vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-  // TODO: provide binding and attribute descriptions if needed.
+  vertexInputInfo.vertexBindingDescriptionCount = 1;
+  vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+  vertexInputInfo.vertexAttributeDescriptionCount = 2;
+  vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions;
 
   VkPipelineInputAssemblyStateCreateInfo inputAssembly = {0};
   inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
   inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
   inputAssembly.primitiveRestartEnable = VK_FALSE;
 
+  // Instead of using hard-coded WIDTH/HEIGHT, use the swapchain extent.
   VkViewport viewport = {0};
   viewport.x = 0.0f;
   viewport.y = 0.0f;
-  viewport.width = (float) WIDTH;
-  viewport.height = (float) HEIGHT;
+  viewport.width = (float) swapChainExtent.width;
+  viewport.height = (float) swapChainExtent.height;
   viewport.minDepth = 0.0f;
   viewport.maxDepth = 1.0f;
 
   VkRect2D scissor = {0};
   scissor.offset.x = 0;
   scissor.offset.y = 0;
-  scissor.extent.width = WIDTH;
-  scissor.extent.height = HEIGHT;
+  scissor.extent = swapChainExtent;
 
   VkPipelineViewportStateCreateInfo viewportState = {0};
   viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
@@ -635,8 +741,8 @@ void createFramebuffers() {
     framebufferInfo.renderPass = renderPass;
     framebufferInfo.attachmentCount = 1;
     framebufferInfo.pAttachments = attachments;
-    framebufferInfo.width = WIDTH;
-    framebufferInfo.height = HEIGHT;
+    framebufferInfo.width = swapChainExtent.width;
+    framebufferInfo.height = swapChainExtent.height;
     framebufferInfo.layers = 1;
 
     if (vkCreateFramebuffer(device, &framebufferInfo, NULL, &swapChainFramebuffers[i]) != VK_SUCCESS) {
@@ -685,15 +791,18 @@ void createCommandBuffers() {
     renderPassInfo.framebuffer = swapChainFramebuffers[i];
     renderPassInfo.renderArea.offset.x = 0;
     renderPassInfo.renderArea.offset.y = 0;
-    renderPassInfo.renderArea.extent.width = WIDTH;
-    renderPassInfo.renderArea.extent.height = HEIGHT;
+    renderPassInfo.renderArea.extent = swapChainExtent;
+
     VkClearValue clearColor = {{{0.1f, 0.1f, 0.1f, 1.0f}}};
     renderPassInfo.clearValueCount = 1;
     renderPassInfo.pClearValues = &clearColor;
 
     vkCmdBeginRenderPass(commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+    VkDeviceSize offsets[] = { 0 };
+    vkCmdBindVertexBuffers(commandBuffers[i], 0, 1, &vertexBuffer, offsets);
+
     vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
-    // Issue a draw call for 6 vertices (forming a square from 2 triangles).
     vkCmdDraw(commandBuffers[i], 6, 1, 0, 0);
     vkCmdEndRenderPass(commandBuffers[i]);
 
@@ -703,6 +812,7 @@ void createCommandBuffers() {
     }
   }
 }
+
 
 
 void createSyncObjects() {
@@ -730,6 +840,7 @@ void initVulkan() {
   createSurface();
   pickPhysicalDevice();
   createLogicalDevice();
+  createVertexBuffer();
   createSwapChain();
   createImageViews();
   createRenderPass();
@@ -801,6 +912,10 @@ void cleanup() {
   free(swapChainImageViews);
   free(swapChainImages);
   free(commandBuffers);
+
+  // Destroy the vertex buffer and free its memory.
+  vkDestroyBuffer(device, vertexBuffer, NULL);
+  vkFreeMemory(device, vertexBufferMemory, NULL);
 
   vkDestroyPipeline(device, graphicsPipeline, NULL);
   vkDestroyPipelineLayout(device, pipelineLayout, NULL);
