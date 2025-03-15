@@ -29,6 +29,7 @@ ifeq ($(UNAME_S), Linux)
 	PKG_CONFIG_PATH := /usr/local/share/pkgconfig
 	INCLUDE_INSTALL_PATH := /usr/local/include
 	LIB_INSTALL_PATH := /usr/local/lib
+	ENV_VARS += VK_LAYER_PATH=/usr/share/vulkan/explicit_layer.d
 
 else ifeq ($(UNAME_S), Darwin)
 	OS_NAME := Mac
@@ -246,7 +247,7 @@ test: \
 	@printf "### Running normal tests ###\n"
 	@printf "############################\n"
 	@printf "\033[0m\n"
-	cd $(APP_DIR) && LD_LIBRARY_PATH="$(APP_DIR)" $(ENV_VARS) ./main$(EXE_EXTENSION)
+	cd $(APP_DIR) && LD_LIBRARY_PATH="./" $(ENV_VARS) ./main$(EXE_EXTENSION)
 
 clean: ## Remove all contents of the build directories.
 	-@rm -rvf ./build
