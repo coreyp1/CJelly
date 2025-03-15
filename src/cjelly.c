@@ -514,7 +514,7 @@ void createSwapChain() {
   VkSwapchainCreateInfoKHR createInfo = {0};
   createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
   createInfo.surface = surface;
-  createInfo.minImageCount = 2;
+  createInfo.minImageCount = capabilities.minImageCount;
   createInfo.imageFormat = VK_FORMAT_B8G8R8A8_SRGB;
   createInfo.imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
   createInfo.imageExtent = capabilities.currentExtent;
