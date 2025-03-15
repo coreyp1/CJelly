@@ -3,11 +3,12 @@ MSYS2:
 $ pacman -Qe
 base 2022.06-1
 bison 3.8.2-5
-filesystem 2023.02.07-2
+filesystem 2025.02.23-1
 flex 2.6.4-3
 gdb 14.2-6
 git 2.46.0-1
 mingw-w64-x86_64-gcc 14.2.0-1
+mingw-w64-x86_64-glslang 15.1.0-1
 mingw-w64-x86_64-gtest 1.15.2-1
 mingw-w64-x86_64-icu 75.1-2
 mingw-w64-x86_64-make 4.4.1-2
@@ -17,7 +18,7 @@ mingw-w64-x86_64-vulkan-headers 1.3.290.0-1
 mingw-w64-x86_64-vulkan-loader 1.3.290.0-2
 mingw-w64-x86_64-vulkan-utility-libraries 1.3.290.0-1
 mingw-w64-x86_64-vulkan-validation-layers 1.3.290.0-1
-msys2-runtime 3.5.4-2
+msys2-runtime 3.5.7-4
 nasm 2.16.03-1
 pkgconf 2.3.0-1
 vim 9.1.0707-1

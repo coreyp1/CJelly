@@ -148,6 +148,22 @@ $(OBJ_DIR)/cjelly.o: \
 
 
 ####################################################################
+# Shaders
+####################################################################
+
+# $(APP_DIR)/shaders/basic.frag.spv: \
+# 		src/shaders/basic.frag
+# 	@printf "\n### Compiling $@ ###\n"
+# 	@mkdir -p $(@D)
+# 	glslangValidator -V $< -o $@
+
+$(APP_DIR)/shaders/%.spv: \
+		src/shaders/%
+	@printf "\n### Compiling $@ ###\n"
+	@mkdir -p $(@D)
+	glslangValidator -V $< -o $@
+
+####################################################################
 # Shared Library
 ####################################################################
 
@@ -220,6 +236,8 @@ test-watch: ## Watch the file directory for changes and run the unit tests
 test: ## Make and run the Unit tests
 test: \
 		$(APP_DIR)/$(TARGET) \
+		$(APP_DIR)/shaders/basic.vert.spv \
+		$(APP_DIR)/shaders/basic.frag.spv \
 		$(APP_DIR)/main$(EXE_EXTENSION)
 #				$(APP_DIR)/test$(EXE_EXTENSION) \
 
@@ -228,7 +246,7 @@ test: \
 	@printf "### Running normal tests ###\n"
 	@printf "############################\n"
 	@printf "\033[0m\n"
-	LD_LIBRARY_PATH="$(APP_DIR)" $(ENV_VARS) $(APP_DIR)/main$(EXE_EXTENSION)
+	cd $(APP_DIR) && LD_LIBRARY_PATH="$(APP_DIR)" $(ENV_VARS) ./main$(EXE_EXTENSION)
 
 clean: ## Remove all contents of the build directories.
 	-@rm -rvf ./build

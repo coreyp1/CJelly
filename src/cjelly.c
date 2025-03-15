@@ -96,15 +96,61 @@ void createSyncObjects();
 void drawFrame();
 void processWindowEvents();
 
+size_t readFile(const char *, char * *);
+VkShaderModule createShaderModuleFromFile(VkDevice, const char *);
+
+// Reads an entire file into memory.
+size_t readFile(const char * filename, char * * buffer) {
+  FILE* file = fopen(filename, "rb");
+  if (!file) {
+    fprintf(stderr, "Failed to open file: %s\n", filename);
+    return 0;
+  }
+  fseek(file, 0, SEEK_END);
+  size_t fileSize = ftell(file);
+  rewind(file);
+  *buffer = malloc(fileSize);
+  if (!*buffer || fread(*buffer, 1, fileSize, file) != fileSize) {
+    fprintf(stderr, "Failed to read file: %s\n", filename);
+    fclose(file);
+    return 0;
+  }
+  fclose(file);
+  return fileSize;
+}
+
+
+VkShaderModule createShaderModuleFromFile(VkDevice device, const char* filename) {
+  char* code;
+  size_t codeSize = readFile(filename, &code);
+  if (codeSize == 0)
+    return VK_NULL_HANDLE;
+
+  VkShaderModuleCreateInfo createInfo = {0};
+  createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+  createInfo.codeSize = codeSize;
+  createInfo.pCode = (const uint32_t*)code;
+
+  VkShaderModule shaderModule;
+  if (vkCreateShaderModule(device, &createInfo, NULL, &shaderModule) != VK_SUCCESS) {
+    fprintf(stderr, "Failed to create shader module from file: %s\n", filename);
+    free(code);
+    return VK_NULL_HANDLE;
+  }
+  free(code);
+  return shaderModule;
+}
+
+
 // Debug callback function for validation layers.
 VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
-GCJ_MAYBE_UNUSED(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity),
-GCJ_MAYBE_UNUSED(VkDebugUtilsMessageTypeFlagsEXT messageTypes),
-const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
-GCJ_MAYBE_UNUSED(void* pUserData)) {
+  GCJ_MAYBE_UNUSED(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity),
+  GCJ_MAYBE_UNUSED(VkDebugUtilsMessageTypeFlagsEXT messageTypes),
+  const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
+  GCJ_MAYBE_UNUSED(void* pUserData)) {
 
-fprintf(stderr, "Validation layer: %s\n", pCallbackData->pMessage);
-return VK_FALSE;
+  fprintf(stderr, "Validation layer: %s\n", pCallbackData->pMessage);
+  return VK_FALSE;
 }
 
 // Helper functions to load extension functions.
@@ -122,6 +168,7 @@ PFN_vkCreateDebugUtilsMessengerEXT func =
   }
 }
 
+
 void DestroyDebugUtilsMessengerEXT(VkInstance instance,
 VkDebugUtilsMessengerEXT debugMessenger,
 const VkAllocationCallbacks* pAllocator) {
@@ -133,6 +180,7 @@ PFN_vkDestroyDebugUtilsMessengerEXT func =
   }
 }
 
+
 //
 // Main run function that sets up everything and enters the render loop.
 //
@@ -142,6 +190,7 @@ void cjellyRun() {
   mainLoop();
   cleanup();
 }
+
 
 //
 // === PLATFORM-SPECIFIC WINDOW CREATION & EVENT HANDLING ===
@@ -159,6 +208,7 @@ LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) 
       return DefWindowProc(hwnd, uMsg, wParam, lParam);
   }
 }
+
 
 void initWindow() {
   hInstance = GetModuleHandle(NULL);
@@ -180,6 +230,7 @@ void initWindow() {
   );
   ShowWindow(window, SW_SHOW);
 }
+
 
 void processWindowEvents() {
   MSG msg;
@@ -215,6 +266,7 @@ void processWindowEvents() {
   }
 }
 #endif
+
 
 //
 // === VULKAN INITIALIZATION & RENDERING FUNCTIONS ===
@@ -278,6 +330,7 @@ void createInstance() {
   }
 }
 
+
 void createDebugMessenger() {
   VkDebugUtilsMessengerCreateInfoEXT createInfo = {0};
   createInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
@@ -298,6 +351,7 @@ void destroyDebugMessenger() {
     DestroyDebugUtilsMessengerEXT(instance, debugMessenger, NULL);
   }
 }
+
 
 void createSurface() {
 #ifdef _WIN32
@@ -321,6 +375,7 @@ void createSurface() {
 #endif
 }
 
+
 void pickPhysicalDevice() {
   uint32_t deviceCount = 0;
   vkEnumeratePhysicalDevices(instance, &deviceCount, NULL);
@@ -333,6 +388,7 @@ void pickPhysicalDevice() {
   physicalDevice = devices[0];
 }
 
+
 void createLogicalDevice() {
   uint32_t queueFamilyIndex = 0; // Simplified: assume family 0 supports both graphics and present.
   float queuePriority = 1.0f;
@@ -342,10 +398,15 @@ void createLogicalDevice() {
   queueCreateInfo.queueCount = 1;
   queueCreateInfo.pQueuePriorities = &queuePriority;
 
+  // Specify the swapchain extension.
+  const char* deviceExtensions[] = { "VK_KHR_swapchain" };
+
   VkDeviceCreateInfo createInfo = {0};
   createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
   createInfo.queueCreateInfoCount = 1;
   createInfo.pQueueCreateInfos = &queueCreateInfo;
+  createInfo.enabledExtensionCount = 1;
+  createInfo.ppEnabledExtensionNames = deviceExtensions;
 
   if (vkCreateDevice(physicalDevice, &createInfo, NULL, &device) != VK_SUCCESS) {
     fprintf(stderr, "Failed to create logical device\n");
@@ -355,6 +416,7 @@ void createLogicalDevice() {
   vkGetDeviceQueue(device, queueFamilyIndex, 0, &graphicsQueue);
   presentQueue = graphicsQueue;
 }
+
 
 void createSwapChain() {
   // Query surface capabilities and log them.
@@ -370,8 +432,10 @@ void createSwapChain() {
   createInfo.minImageCount = 2;
   createInfo.imageFormat = VK_FORMAT_B8G8R8A8_SRGB;
   createInfo.imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
-  createInfo.imageExtent.width = WIDTH;
-  createInfo.imageExtent.height = HEIGHT;
+  // Width and Height are smaller than the actual window size.
+  // createInfo.imageExtent.width = WIDTH;
+  // createInfo.imageExtent.height = HEIGHT;
+  createInfo.imageExtent = capabilities.currentExtent;
   createInfo.imageArrayLayers = 1;
   createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
   createInfo.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
@@ -385,6 +449,7 @@ void createSwapChain() {
     exit(EXIT_FAILURE);
   }
 }
+
 
 void createImageViews() {
   vkGetSwapchainImagesKHR(device, swapChain, &swapChainImageCount, NULL);
@@ -414,6 +479,7 @@ void createImageViews() {
     }
   }
 }
+
 
 void createRenderPass() {
   VkAttachmentDescription colorAttachment = {0};
@@ -448,22 +514,34 @@ void createRenderPass() {
   }
 }
 
+
 void createGraphicsPipeline() {
-  // In a complete example, load SPIR-V shader modules.
+  // Load SPIR-V binaries and create shader modules.
+  VkShaderModule vertShaderModule = createShaderModuleFromFile(device, "shaders/basic.vert.spv");
+  VkShaderModule fragShaderModule = createShaderModuleFromFile(device, "shaders/basic.frag.spv");
+
+  if (vertShaderModule == VK_NULL_HANDLE || fragShaderModule == VK_NULL_HANDLE) {
+      fprintf(stderr, "Failed to create shader modules\n");
+      exit(EXIT_FAILURE);
+  }
+
   VkPipelineShaderStageCreateInfo shaderStages[2] = {0};
+
+  // Vertex shader stage.
   shaderStages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
   shaderStages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
-  shaderStages[0].module = VK_NULL_HANDLE; // TODO: load vertex shader module
+  shaderStages[0].module = vertShaderModule;
   shaderStages[0].pName = "main";
 
+  // Fragment shader stage.
   shaderStages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
   shaderStages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-  shaderStages[1].module = VK_NULL_HANDLE; // TODO: load fragment shader module
+  shaderStages[1].module = fragShaderModule;
   shaderStages[1].pName = "main";
 
   VkPipelineVertexInputStateCreateInfo vertexInputInfo = {0};
   vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-  // TODO: provide binding and attribute descriptions
+  // TODO: provide binding and attribute descriptions if needed.
 
   VkPipelineInputAssemblyStateCreateInfo inputAssembly = {0};
   inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
@@ -519,8 +597,8 @@ void createGraphicsPipeline() {
   VkPipelineLayoutCreateInfo pipelineLayoutInfo = {0};
   pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
   if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, NULL, &pipelineLayout) != VK_SUCCESS) {
-    fprintf(stderr, "Failed to create pipeline layout\n");
-    exit(EXIT_FAILURE);
+      fprintf(stderr, "Failed to create pipeline layout\n");
+      exit(EXIT_FAILURE);
   }
 
   VkGraphicsPipelineCreateInfo pipelineInfo = {0};
@@ -538,10 +616,15 @@ void createGraphicsPipeline() {
   pipelineInfo.subpass = 0;
 
   if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &graphicsPipeline) != VK_SUCCESS) {
-    fprintf(stderr, "Failed to create graphics pipeline\n");
-    exit(EXIT_FAILURE);
+      fprintf(stderr, "Failed to create graphics pipeline\n");
+      exit(EXIT_FAILURE);
   }
+
+  // Clean up shader modules after pipeline creation.
+  vkDestroyShaderModule(device, vertShaderModule, NULL);
+  vkDestroyShaderModule(device, fragShaderModule, NULL);
 }
+
 
 void createFramebuffers() {
   swapChainFramebuffers = malloc(sizeof(VkFramebuffer) * swapChainImageCount);
@@ -563,6 +646,7 @@ void createFramebuffers() {
   }
 }
 
+
 void createCommandPool() {
   VkCommandPoolCreateInfo poolInfo = {0};
   poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
@@ -572,6 +656,7 @@ void createCommandPool() {
     exit(EXIT_FAILURE);
   }
 }
+
 
 void createCommandBuffers() {
   commandBuffers = malloc(sizeof(VkCommandBuffer) * swapChainImageCount);
@@ -619,6 +704,7 @@ void createCommandBuffers() {
   }
 }
 
+
 void createSyncObjects() {
   VkSemaphoreCreateInfo semaphoreInfo = {0};
   semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
@@ -638,6 +724,7 @@ void createSyncObjects() {
   }
 }
 
+
 void initVulkan() {
   createInstance();
   createSurface();
@@ -652,6 +739,7 @@ void initVulkan() {
   createCommandBuffers();
   createSyncObjects();
 }
+
 
 void drawFrame() {
   vkWaitForFences(device, 1, &inFlightFence, VK_TRUE, UINT64_MAX);
@@ -688,6 +776,7 @@ void drawFrame() {
   vkQueuePresentKHR(presentQueue, &presentInfo);
 }
 
+
 void mainLoop() {
   while (!shouldClose) {
     processWindowEvents();
@@ -695,6 +784,7 @@ void mainLoop() {
   }
   vkDeviceWaitIdle(device);
 }
+
 
 void cleanup() {
   vkDestroySemaphore(device, renderFinishedSemaphore, NULL);
