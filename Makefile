@@ -343,7 +343,7 @@ docs-pdf: docs ## Generate the documentation as a pdf, at ./docs/(SUITE)-(PROJEC
 	mv -f ./docs/latex/refman.pdf ./docs/$(SUITE)-$(PROJECT)$(BRANCH)-docs.pdf
 
 cloc: ## Count the lines of code used in the project
-	cloc src include flex bison test Makefile
+	cloc src include test Makefile
 
 help: ## Display this help
 	@grep -E '^[ a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "%-15s %s\n", $$1, $$2}' | sed "s/(SUITE)/$(SUITE)/g; s/(PROJECT)/$(PROJECT)/g; s/(BRANCH)/$(BRANCH)/g"
