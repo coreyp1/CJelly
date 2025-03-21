@@ -218,7 +218,7 @@ void createPlatformWindow(CJellyWindow * win, const char * title, int width, int
 
 #ifdef _WIN32
 
-processWindowEvents() {
+void processWindowEvents() {
   MSG msg;
   while(PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
     TranslateMessage(&msg);
