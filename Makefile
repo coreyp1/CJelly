@@ -30,6 +30,7 @@ ifeq ($(UNAME_S), Linux)
 	INCLUDE_INSTALL_PATH := /usr/local/include
 	LIB_INSTALL_PATH := /usr/local/lib
 	ENV_VARS += VK_LAYER_PATH=/usr/share/vulkan/explicit_layer.d
+	BUILD := linux/$(BUILD)
 
 else ifeq ($(UNAME_S), Darwin)
 	OS_NAME := Mac
@@ -39,6 +40,7 @@ else ifeq ($(UNAME_S), Darwin)
 	TARGET := $(BASE_NAME_PREFIX).dylib
 	EXE_EXTENSION :=
 	# Additional macOS-specific variables
+	BUILD := mac/$(BUILD)
 
 else ifeq ($(findstring MINGW32_NT,$(UNAME_S)),MINGW32_NT)  # 32-bit Windows
 	OS_NAME := Windows
@@ -53,6 +55,7 @@ else ifeq ($(findstring MINGW32_NT,$(UNAME_S)),MINGW32_NT)  # 32-bit Windows
 	INCLUDE_INSTALL_PATH := /mingw32/include
 	LIB_INSTALL_PATH := /mingw32/lib
 	BIN_INSTALL_PATH := /mingw32/bin
+	BUILD := win32/$(BUILD)
 
 else ifeq ($(findstring MINGW64_NT,$(UNAME_S)),MINGW64_NT)  # 64-bit Windows
 	OS_NAME := Windows
@@ -68,6 +71,7 @@ else ifeq ($(findstring MINGW64_NT,$(UNAME_S)),MINGW64_NT)  # 64-bit Windows
 	LIB_INSTALL_PATH := /mingw64/lib
 	BIN_INSTALL_PATH := /mingw64/bin
 	ENV_VARS += VK_LAYER_PATH=/mingw64/bin/VkLayer_khronos_validation.json
+	BUILD := win64/$(BUILD)
 
 else
     $(error Unsupported OS: $(UNAME_S))
@@ -255,7 +259,7 @@ test: \
 	cd $(APP_DIR) && LD_LIBRARY_PATH="./" $(ENV_VARS) ./main$(EXE_EXTENSION)
 
 clean: ## Remove all contents of the build directories.
-	-@rm -rvf ./build
+	-@rm -rvf $(BUILD_DIR)
 
 # Files will be as follows:
 # /usr/local/lib/(SUITE)/
