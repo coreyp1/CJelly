@@ -1,49 +1,62 @@
-// Define the proper platform macro for Vulkan surface creation.
-#ifdef _WIN32
-  #define VK_USE_PLATFORM_WIN32_KHR
-#else
-  #define VK_USE_PLATFORM_XLIB_KHR
-#endif
+/**
+ * @file cjelly.c
+ * @brief Implementation of the CJelly Vulkan Framework.
+ *
+ * @details
+ * This file contains the implementation of the functions declared in cjelly.h.
+ * It includes platform-specific window creation, event processing, and the initialization,
+ * management, and cleanup of Vulkan resources. This implementation abstracts away
+ * the underlying OS-specific and Vulkan boilerplate, allowing developers to focus on
+ * application-specific rendering logic.
+ *
+ * @note
+ * This file is part of the CJelly framework, developed by Ghoti.io.
+ *
+ * @date 2025
+ * @copyright Copyright (C) 2025 Ghoti.io
+ */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
-#include <limits.h>
 #include <string.h>
-#include <vulkan/vulkan.h>
 
 #include <cjelly/macros.h>
-
-// Shaders
+#include <cjelly/cjelly.h>
 #include <shaders/basic.vert.h>
 #include <shaders/basic.frag.h>
 
-#ifdef _WIN32
-  #include <windows.h>
-#else
-  #include <X11/Xlib.h>
-  #include <X11/Xatom.h>
-#endif
+// Global Vulkan objects shared among all windows.
 
-// Enable validation layers if not in NDEBUG
-#ifndef NDEBUG
-  const int enableValidationLayers = 1;
-#else
-  const int enableValidationLayers = 0;
-#endif
-
-// Global debug messenger handle.
-VkDebugUtilsMessengerEXT debugMessenger = VK_NULL_HANDLE;
-
-// Global window variables
 #ifdef _WIN32
   HWND window;
   HINSTANCE hInstance;
 #else
-  Display* display;
+  Display * display;
   Window window;
 #endif
 
+// Global Vulkan objects shared among all windows.
+VkInstance instance;
+VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
+VkDevice device;
+VkQueue graphicsQueue;
+VkQueue presentQueue;
+VkRenderPass renderPass;
+VkPipelineLayout pipelineLayout;
+VkPipeline graphicsPipeline;
+VkCommandPool commandPool;
+VkBuffer vertexBuffer;
+VkDeviceMemory vertexBufferMemory;
+
+// Global flag to indicate that the window should close.
+int shouldClose;
+
+// Global flag to enable validation layers.
+int enableValidationLayers;
+
+// Global debug messenger handle.
+VkDebugUtilsMessengerEXT debugMessenger = VK_NULL_HANDLE;
 
 // Vertex structure for the square.
 typedef struct Vertex {
@@ -60,67 +73,25 @@ Vertex vertices[] = {
   { { -0.5f,  0.5f }, { 1.0f, 1.0f, 0.0f } },
 };
 
-VkBuffer vertexBuffer;
-VkDeviceMemory vertexBufferMemory;
 
+//
+// === UTILITY FUNCTIONS ===
+//
 
-// Flag to indicate that the window should close.
-int shouldClose = 0;
+VkShaderModule createShaderModuleFromMemory(VkDevice device, const unsigned char * code, size_t codeSize) {
+  VkShaderModuleCreateInfo createInfo = {0};
+  createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+  createInfo.codeSize = codeSize;
+  createInfo.pCode = (const uint32_t *)code;
 
-const int WIDTH = 800;
-const int HEIGHT = 600;
+  VkShaderModule shaderModule;
+  if (vkCreateShaderModule(device, &createInfo, NULL, &shaderModule) != VK_SUCCESS) {
+    fprintf(stderr, "Failed to create shader module from memory\n");
+    return VK_NULL_HANDLE;
+  }
 
-// Vulkan globals
-VkInstance instance;
-VkSurfaceKHR surface;
-VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
-VkDevice device;
-VkQueue graphicsQueue;
-VkQueue presentQueue;
-
-VkSwapchainKHR swapChain;
-uint32_t swapChainImageCount;
-VkImage* swapChainImages;
-VkFormat swapChainImageFormat;
-VkExtent2D swapChainExtent;
-VkImageView* swapChainImageViews;
-
-VkRenderPass renderPass;
-VkPipelineLayout pipelineLayout;
-VkPipeline graphicsPipeline;
-VkFramebuffer* swapChainFramebuffers;
-
-VkCommandPool commandPool;
-VkCommandBuffer* commandBuffers;
-
-VkSemaphore imageAvailableSemaphore;
-VkSemaphore renderFinishedSemaphore;
-VkFence inFlightFence;
-
-// Forward declarations for helper functions
-void initWindow();
-void initVulkan();
-void mainLoop();
-void cleanup();
-
-void createInstance();
-void createDebugMessenger();
-void destroyDebugMessenger();
-void createSurface();
-void pickPhysicalDevice();
-void createLogicalDevice();
-void createSwapChain();
-void createImageViews();
-void createRenderPass();
-void createGraphicsPipeline();
-void createFramebuffers();
-void createCommandPool();
-void createCommandBuffers();
-void createSyncObjects();
-void drawFrame();
-void processWindowEvents();
-
-VkShaderModule createShaderModuleFromMemory(VkDevice, const unsigned char *, size_t);
+  return shaderModule;
+}
 
 
 // Finds a suitable memory type based on typeFilter and desired properties.
@@ -135,6 +106,557 @@ uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
   }
   fprintf(stderr, "Failed to find suitable memory type!\n");
   exit(EXIT_FAILURE);
+}
+
+
+// Debug callback function for validation layers.
+VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
+  GCJ_MAYBE_UNUSED(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity),
+  GCJ_MAYBE_UNUSED(VkDebugUtilsMessageTypeFlagsEXT messageTypes),
+  const VkDebugUtilsMessengerCallbackDataEXT * pCallbackData,
+  GCJ_MAYBE_UNUSED(void * pUserData)) {
+
+  fprintf(stderr, "Validation layer: %s\n", pCallbackData->pMessage);
+  return VK_FALSE;
+}
+
+
+// Helper functions to load extension functions.
+VkResult CreateDebugUtilsMessengerEXT(VkInstance instance,
+  const VkDebugUtilsMessengerCreateInfoEXT * pCreateInfo,
+  const VkAllocationCallbacks * pAllocator,
+  VkDebugUtilsMessengerEXT * pDebugMessenger) {
+
+  PFN_vkCreateDebugUtilsMessengerEXT func =
+  (PFN_vkCreateDebugUtilsMessengerEXT) vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT");
+  if (func != NULL) {
+    return func(instance, pCreateInfo, pAllocator, pDebugMessenger);
+  } else {
+    return VK_ERROR_EXTENSION_NOT_PRESENT;
+  }
+}
+
+
+void DestroyDebugUtilsMessengerEXT(VkInstance instance,
+  VkDebugUtilsMessengerEXT debugMessenger,
+  const VkAllocationCallbacks * pAllocator) {
+
+  PFN_vkDestroyDebugUtilsMessengerEXT func =
+  (PFN_vkDestroyDebugUtilsMessengerEXT) vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
+  if (func != NULL) {
+    func(instance, debugMessenger, pAllocator);
+  }
+}
+
+
+//
+// === PLATFORM-SPECIFIC WINDOW CREATION ===
+//
+
+// Window procedure for Windows.
+#ifdef _WIN32
+
+LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+  switch(uMsg) {
+    case WM_CLOSE:
+      shouldClose = 1;
+      PostQuitMessage(0);
+      return 0;
+    default:
+      return DefWindowProc(hwnd, uMsg, wParam, lParam);
+  }
+}
+
+#endif
+
+
+// Creates a platform-specific window and initializes the CJellyWindow structure.
+void createPlatformWindow(CJellyWindow * win, const char * title, int width, int height) {
+  win->width = width;
+  win->height = height;
+
+#ifdef _WIN32
+
+  hInstance = GetModuleHandle(NULL);
+  WNDCLASS wc = {0};
+  wc.lpfnWndProc = WindowProc;
+  wc.hInstance = hInstance;
+  wc.lpszClassName = "VulkanWindowClass";
+  RegisterClass(&wc);
+  win->handle = CreateWindowEx(
+    0,
+    "VulkanWindowClass",
+    title,
+    WS_OVERLAPPEDWINDOW,
+    CW_USEDEFAULT, CW_USEDEFAULT,
+    width, height,
+    NULL, NULL,
+    hInstance,
+    NULL
+  );
+  ShowWindow(win->handle, SW_SHOW);
+
+#else
+
+  int screen = DefaultScreen(display);
+  win->handle = XCreateSimpleWindow(display, RootWindow(display, screen),
+      0, 0, width, height, 1, BlackPixel(display, screen),
+      WhitePixel(display, screen));
+  Atom wmDelete = XInternAtom(display, "WM_DELETE_WINDOW", False);
+  XStoreName(display, win->handle, title);
+  XSetWMProtocols(display, win->handle, &wmDelete, 1);
+  XMapWindow(display, win->handle);
+
+#endif
+
+}
+
+
+//
+// === EVENT PROCESSING (PLATFORM-SPECIFIC) ===
+//
+
+#ifdef _WIN32
+
+processWindowEvents() {
+  MSG msg;
+  while(PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+    TranslateMessage(&msg);
+    DispatchMessage(&msg);
+  }
+}
+
+#else
+
+void processWindowEvents() {
+  while (XPending(display)) {
+    XEvent event;
+    XNextEvent(display, &event);
+    if (event.type == ClientMessage) {
+      shouldClose = 1;
+    }
+  }
+}
+
+#endif
+
+
+//
+// === PER-WINDOW VULKAN OBJECTS ===
+//
+
+// Create a Vulkan surface for a given window.
+void createSurfaceForWindow(CJellyWindow * win) {
+
+#ifdef _WIN32
+
+  VkWin32SurfaceCreateInfoKHR createInfo = {0};
+  createInfo.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
+  createInfo.hinstance = hInstance;
+  createInfo.hwnd = win->handle;
+  if (vkCreateWin32SurfaceKHR(instance, &createInfo, NULL, &win->surface) != VK_SUCCESS) {
+    fprintf(stderr, "Failed to create Win32 surface\n");
+    exit(EXIT_FAILURE);
+  }
+
+#else
+
+  VkXlibSurfaceCreateInfoKHR createInfo = {0};
+  createInfo.sType = VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR;
+  createInfo.dpy = display;
+  createInfo.window = win->handle;
+  if (vkCreateXlibSurfaceKHR(instance, &createInfo, NULL, &win->surface) != VK_SUCCESS) {
+    fprintf(stderr, "Failed to create Xlib surface\n");
+    exit(EXIT_FAILURE);
+  }
+
+#endif
+
+}
+
+
+// Create the swap chain for a window.
+void createSwapChainForWindow(CJellyWindow * win) {
+  VkSurfaceCapabilitiesKHR capabilities;
+  vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, win->surface, &capabilities);
+
+  // Setting the swap chain extent to the window's extent.
+  win->swapChainExtent = capabilities.currentExtent;
+
+  VkSwapchainCreateInfoKHR createInfo = {0};
+  createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+  createInfo.surface = win->surface;
+  createInfo.minImageCount = capabilities.minImageCount;
+  createInfo.imageFormat = VK_FORMAT_B8G8R8A8_SRGB;
+  createInfo.imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+  createInfo.imageExtent = win->swapChainExtent;
+  createInfo.imageArrayLayers = 1;
+  createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+  createInfo.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+  createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+  createInfo.presentMode = VK_PRESENT_MODE_FIFO_KHR;
+  createInfo.clipped = VK_TRUE;
+  createInfo.oldSwapchain = VK_NULL_HANDLE;
+
+  if (vkCreateSwapchainKHR(device, &createInfo, NULL, &win->swapChain) != VK_SUCCESS) {
+    fprintf(stderr, "Failed to create swap chain\n");
+    exit(EXIT_FAILURE);
+  }
+}
+
+
+// Create image views for the swap chain images.
+void createImageViewsForWindow(CJellyWindow * win) {
+  vkGetSwapchainImagesKHR(device, win->swapChain, &win->swapChainImageCount, NULL);
+  win->swapChainImages = malloc(sizeof(VkImage) * win->swapChainImageCount);
+  vkGetSwapchainImagesKHR(device, win->swapChain, &win->swapChainImageCount, win->swapChainImages);
+
+  win->swapChainImageViews = malloc(sizeof(VkImageView) * win->swapChainImageCount);
+  for (uint32_t i = 0; i < win->swapChainImageCount; i++) {
+    VkImageViewCreateInfo viewInfo = {0};
+    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    viewInfo.image = win->swapChainImages[i];
+    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    viewInfo.format = VK_FORMAT_B8G8R8A8_SRGB;
+    viewInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+    viewInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+    viewInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+    viewInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+    viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+    viewInfo.subresourceRange.baseMipLevel = 0;
+    viewInfo.subresourceRange.levelCount = 1;
+    viewInfo.subresourceRange.baseArrayLayer = 0;
+    viewInfo.subresourceRange.layerCount = 1;
+
+    if (vkCreateImageView(device, &viewInfo, NULL, &win->swapChainImageViews[i]) != VK_SUCCESS) {
+      fprintf(stderr, "Failed to create image view\n");
+      exit(EXIT_FAILURE);
+    }
+  }
+}
+
+
+// Create framebuffers for the window.
+void createFramebuffersForWindow(CJellyWindow * win) {
+  win->swapChainFramebuffers = malloc(sizeof(VkFramebuffer) * win->swapChainImageCount);
+  for (uint32_t i = 0; i < win->swapChainImageCount; i++) {
+    VkImageView attachments[] = { win->swapChainImageViews[i] };
+    VkFramebufferCreateInfo framebufferInfo = {0};
+    framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+    framebufferInfo.renderPass = renderPass;
+    framebufferInfo.attachmentCount = 1;
+    framebufferInfo.pAttachments = attachments;
+    framebufferInfo.width = win->swapChainExtent.width;
+    framebufferInfo.height = win->swapChainExtent.height;
+    framebufferInfo.layers = 1;
+
+    if (vkCreateFramebuffer(device, &framebufferInfo, NULL, &win->swapChainFramebuffers[i]) != VK_SUCCESS) {
+      fprintf(stderr, "Failed to create framebuffer\n");
+      exit(EXIT_FAILURE);
+    }
+  }
+}
+
+
+// Allocate and record command buffers for a window.
+void createCommandBuffersForWindow(CJellyWindow * win) {
+  win->commandBuffers = malloc(sizeof(VkCommandBuffer) * win->swapChainImageCount);
+  VkCommandBufferAllocateInfo allocInfo = {0};
+  allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+  allocInfo.commandPool = commandPool;
+  allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+  allocInfo.commandBufferCount = win->swapChainImageCount;
+
+  if (vkAllocateCommandBuffers(device, &allocInfo, win->commandBuffers) != VK_SUCCESS) {
+    fprintf(stderr, "Failed to allocate command buffers\n");
+    exit(EXIT_FAILURE);
+  }
+
+  for (uint32_t i = 0; i < win->swapChainImageCount; i++) {
+    VkCommandBufferBeginInfo beginInfo = {0};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+
+    if (vkBeginCommandBuffer(win->commandBuffers[i], &beginInfo) != VK_SUCCESS) {
+      fprintf(stderr, "Failed to begin command buffer\n");
+      exit(EXIT_FAILURE);
+    }
+
+    VkRenderPassBeginInfo renderPassInfo = {0};
+    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    renderPassInfo.renderPass = renderPass;
+    renderPassInfo.framebuffer = win->swapChainFramebuffers[i];
+    renderPassInfo.renderArea.offset.x = 0;
+    renderPassInfo.renderArea.offset.y = 0;
+    renderPassInfo.renderArea.extent = win->swapChainExtent;
+
+    VkClearValue clearColor = {{{0.1f, 0.1f, 0.1f, 1.0f}}};
+    renderPassInfo.clearValueCount = 1;
+    renderPassInfo.pClearValues = &clearColor;
+
+    vkCmdBeginRenderPass(win->commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+    // Dynamically set the viewport using this window's swap chain extent.
+    VkViewport viewport = {0};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = (float)win->swapChainExtent.width;
+    viewport.height = (float)win->swapChainExtent.height;
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    vkCmdSetViewport(win->commandBuffers[i], 0, 1, &viewport);
+
+    // Dynamically set the scissor using this window's swap chain extent.
+    VkRect2D scissor = {0};
+    scissor.offset.x = 0;
+    scissor.offset.y = 0;
+    scissor.extent = win->swapChainExtent;
+    vkCmdSetScissor(win->commandBuffers[i], 0, 1, &scissor);
+
+    VkDeviceSize offsets[] = {0};
+    vkCmdBindVertexBuffers(win->commandBuffers[i], 0, 1, &vertexBuffer, offsets);
+
+    vkCmdBindPipeline(win->commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+    vkCmdDraw(win->commandBuffers[i], 6, 1, 0, 0);
+    vkCmdEndRenderPass(win->commandBuffers[i]);
+
+    if (vkEndCommandBuffer(win->commandBuffers[i]) != VK_SUCCESS) {
+      fprintf(stderr, "Failed to record command buffer\n");
+      exit(EXIT_FAILURE);
+    }
+  }
+}
+
+
+// Create synchronization objects for a window.
+void createSyncObjectsForWindow(CJellyWindow * win) {
+  VkSemaphoreCreateInfo semaphoreInfo = {0};
+  semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+
+  if (vkCreateSemaphore(device, &semaphoreInfo, NULL, &win->imageAvailableSemaphore) != VK_SUCCESS ||
+      vkCreateSemaphore(device, &semaphoreInfo, NULL, &win->renderFinishedSemaphore) != VK_SUCCESS) {
+    fprintf(stderr, "Failed to create semaphores\n");
+    exit(EXIT_FAILURE);
+  }
+
+  VkFenceCreateInfo fenceInfo = {0};
+  fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+  fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+
+  if (vkCreateFence(device, &fenceInfo, NULL, &win->inFlightFence) != VK_SUCCESS) {
+    fprintf(stderr, "Failed to create fence\n");
+    exit(EXIT_FAILURE);
+  }
+}
+
+//
+// === DRAWING A FRAME PER WINDOW ===
+//
+
+void drawFrameForWindow(CJellyWindow * win) {
+  vkWaitForFences(device, 1, &win->inFlightFence, VK_TRUE, UINT64_MAX);
+  vkResetFences(device, 1, &win->inFlightFence);
+
+  uint32_t imageIndex;
+  vkAcquireNextImageKHR(device, win->swapChain, UINT64_MAX,
+                        win->imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
+
+  VkSubmitInfo submitInfo = {0};
+  submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+  VkSemaphore waitSemaphores[] = { win->imageAvailableSemaphore };
+  VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
+  submitInfo.waitSemaphoreCount = 1;
+  submitInfo.pWaitSemaphores = waitSemaphores;
+  submitInfo.pWaitDstStageMask = waitStages;
+  submitInfo.commandBufferCount = 1;
+  submitInfo.pCommandBuffers = &win->commandBuffers[imageIndex];
+  VkSemaphore signalSemaphores[] = { win->renderFinishedSemaphore };
+  submitInfo.signalSemaphoreCount = 1;
+  submitInfo.pSignalSemaphores = signalSemaphores;
+
+  if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, win->inFlightFence) != VK_SUCCESS) {
+    fprintf(stderr, "Failed to submit draw command buffer\n");
+  }
+
+  VkPresentInfoKHR presentInfo = {0};
+  presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+  presentInfo.waitSemaphoreCount = 1;
+  presentInfo.pWaitSemaphores = signalSemaphores;
+  presentInfo.swapchainCount = 1;
+  presentInfo.pSwapchains = &win->swapChain;
+  presentInfo.pImageIndices = &imageIndex;
+
+  vkQueuePresentKHR(presentQueue, &presentInfo);
+}
+
+
+//
+// === CLEANUP FOR A WINDOW ===
+//
+
+void cleanupWindow(CJellyWindow * win) {
+  vkDestroySemaphore(device, win->renderFinishedSemaphore, NULL);
+  vkDestroySemaphore(device, win->imageAvailableSemaphore, NULL);
+  vkDestroyFence(device, win->inFlightFence, NULL);
+
+  free(win->commandBuffers);
+
+  for (uint32_t i = 0; i < win->swapChainImageCount; i++) {
+    vkDestroyFramebuffer(device, win->swapChainFramebuffers[i], NULL);
+    vkDestroyImageView(device, win->swapChainImageViews[i], NULL);
+  }
+
+  free(win->swapChainFramebuffers);
+  free(win->swapChainImageViews);
+  free(win->swapChainImages);
+
+  vkDestroySwapchainKHR(device, win->swapChain, NULL);
+  vkDestroySurfaceKHR(instance, win->surface, NULL);
+
+#ifdef _WIN32
+
+  DestroyWindow(win->handle);
+
+#else
+
+  XDestroyWindow(display, win->handle);
+
+#endif
+
+}
+
+
+//
+// === VULKAN INITIALIZATION & RENDERING FUNCTIONS ===
+//
+
+void createInstance() {
+  VkApplicationInfo appInfo = {0};
+  appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+  appInfo.pApplicationName = "Vulkan Square";
+  appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
+  appInfo.pEngineName = "CjellyEngine";
+  appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
+  appInfo.apiVersion = VK_API_VERSION_1_0;
+
+  // Specify required extensions for the platform.
+  const char * extensions[10];
+  uint32_t extCount = 0;
+  extensions[extCount++] = "VK_KHR_surface";
+
+#ifdef _WIN32
+
+  extensions[extCount++] = "VK_KHR_win32_surface";
+
+#else
+
+  extensions[extCount++] = "VK_KHR_xlib_surface";
+
+#endif
+
+  if (enableValidationLayers) {
+    extensions[extCount++] = "VK_EXT_debug_utils";
+  }
+
+  VkInstanceCreateInfo createInfo = {0};
+  createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+  createInfo.pApplicationInfo = &appInfo;
+  createInfo.enabledExtensionCount = extCount;
+  createInfo.ppEnabledExtensionNames = extensions;
+
+  if (enableValidationLayers) {
+    const char * validationLayers[] = { "VK_LAYER_KHRONOS_validation" };
+    createInfo.enabledLayerCount = 1;
+    createInfo.ppEnabledLayerNames = validationLayers;
+
+    // Set up debug messenger info so that it is used during instance creation.
+    VkDebugUtilsMessengerCreateInfoEXT debugCreateInfo = {0};
+    debugCreateInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
+    debugCreateInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+                                      VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+    debugCreateInfo.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
+                                  VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+                                  VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+    debugCreateInfo.pfnUserCallback = debugCallback;
+    createInfo.pNext = (VkDebugUtilsMessengerCreateInfoEXT *)&debugCreateInfo;
+  }
+  else {
+    createInfo.enabledLayerCount = 0;
+    createInfo.pNext = NULL;
+  }
+
+  if (vkCreateInstance(&createInfo, NULL, &instance) != VK_SUCCESS) {
+    fprintf(stderr, "Failed to create Vulkan instance\n");
+    exit(EXIT_FAILURE);
+  }
+
+  if (enableValidationLayers) {
+    createDebugMessenger();
+  }
+}
+
+
+void createDebugMessenger() {
+  VkDebugUtilsMessengerCreateInfoEXT createInfo = {0};
+  createInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
+  createInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+                                VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+  createInfo.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
+                            VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+                            VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+  createInfo.pfnUserCallback = debugCallback;
+
+  if (CreateDebugUtilsMessengerEXT(instance, &createInfo, NULL, &debugMessenger) != VK_SUCCESS) {
+    fprintf(stderr, "Failed to set up debug messenger!\n");
+  }
+}
+
+
+void destroyDebugMessenger() {
+  if (enableValidationLayers && debugMessenger != VK_NULL_HANDLE) {
+    DestroyDebugUtilsMessengerEXT(instance, debugMessenger, NULL);
+  }
+}
+
+
+void pickPhysicalDevice() {
+  uint32_t deviceCount = 0;
+  vkEnumeratePhysicalDevices(instance, &deviceCount, NULL);
+  if (deviceCount == 0) {
+    fprintf(stderr, "Failed to find GPUs with Vulkan support\n");
+    exit(EXIT_FAILURE);
+  }
+  VkPhysicalDevice devices[deviceCount];
+  vkEnumeratePhysicalDevices(instance, &deviceCount, devices);
+  physicalDevice = devices[0];
+}
+
+
+void createLogicalDevice() {
+  uint32_t queueFamilyIndex = 0; // Simplified: assume family 0 supports both graphics and present.
+  float queuePriority = 1.0f;
+  VkDeviceQueueCreateInfo queueCreateInfo = {0};
+  queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+  queueCreateInfo.queueFamilyIndex = queueFamilyIndex;
+  queueCreateInfo.queueCount = 1;
+  queueCreateInfo.pQueuePriorities = &queuePriority;
+
+  // Specify the swapchain extension.
+  const char * deviceExtensions[] = { "VK_KHR_swapchain" };
+
+  VkDeviceCreateInfo createInfo = {0};
+  createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+  createInfo.queueCreateInfoCount = 1;
+  createInfo.pQueueCreateInfos = &queueCreateInfo;
+  createInfo.enabledExtensionCount = 1;
+  createInfo.ppEnabledExtensionNames = deviceExtensions;
+
+  if (vkCreateDevice(physicalDevice, &createInfo, NULL, &device) != VK_SUCCESS) {
+    fprintf(stderr, "Failed to create logical device\n");
+    exit(EXIT_FAILURE);
+  }
+
+  vkGetDeviceQueue(device, queueFamilyIndex, 0, &graphicsQueue);
+  presentQueue = graphicsQueue;
 }
 
 
@@ -178,364 +700,10 @@ void createVertexBuffer() {
 
   vkBindBufferMemory(device, vertexBuffer, vertexBufferMemory, 0);
 
-  void* data;
+  void * data;
   vkMapMemory(device, vertexBufferMemory, 0, bufferSize, 0, &data);
   memcpy(data, vertices, (size_t)bufferSize);
   vkUnmapMemory(device, vertexBufferMemory);
-}
-
-
-VkShaderModule createShaderModuleFromMemory(VkDevice device, const unsigned char * code, size_t codeSize) {
-  VkShaderModuleCreateInfo createInfo = {0};
-  createInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
-  createInfo.codeSize = codeSize;
-  createInfo.pCode = (const uint32_t*)code;
-
-  VkShaderModule shaderModule;
-  if (vkCreateShaderModule(device, &createInfo, NULL, &shaderModule) != VK_SUCCESS) {
-    fprintf(stderr, "Failed to create shader module from memory\n");
-    return VK_NULL_HANDLE;
-  }
-
-  return shaderModule;
-}
-
-
-// Debug callback function for validation layers.
-VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
-  GCJ_MAYBE_UNUSED(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity),
-  GCJ_MAYBE_UNUSED(VkDebugUtilsMessageTypeFlagsEXT messageTypes),
-  const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
-  GCJ_MAYBE_UNUSED(void* pUserData)) {
-
-  fprintf(stderr, "Validation layer: %s\n", pCallbackData->pMessage);
-  return VK_FALSE;
-}
-
-// Helper functions to load extension functions.
-VkResult CreateDebugUtilsMessengerEXT(VkInstance instance,
-  const VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo,
-  const VkAllocationCallbacks* pAllocator,
-  VkDebugUtilsMessengerEXT* pDebugMessenger) {
-
-  PFN_vkCreateDebugUtilsMessengerEXT func =
-  (PFN_vkCreateDebugUtilsMessengerEXT) vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT");
-  if (func != NULL) {
-    return func(instance, pCreateInfo, pAllocator, pDebugMessenger);
-  } else {
-    return VK_ERROR_EXTENSION_NOT_PRESENT;
-  }
-}
-
-
-void DestroyDebugUtilsMessengerEXT(VkInstance instance,
-  VkDebugUtilsMessengerEXT debugMessenger,
-  const VkAllocationCallbacks* pAllocator) {
-
-  PFN_vkDestroyDebugUtilsMessengerEXT func =
-  (PFN_vkDestroyDebugUtilsMessengerEXT) vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT");
-  if (func != NULL) {
-    func(instance, debugMessenger, pAllocator);
-  }
-}
-
-
-//
-// Main run function that sets up everything and enters the render loop.
-//
-void cjellyRun() {
-  initWindow();
-  initVulkan();
-  mainLoop();
-  cleanup();
-}
-
-
-//
-// === PLATFORM-SPECIFIC WINDOW CREATION & EVENT HANDLING ===
-//
-
-#ifdef _WIN32
-// Windows-specific window procedure
-LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
-  switch(uMsg) {
-    case WM_CLOSE:
-      shouldClose = 1;
-      PostQuitMessage(0);
-      return 0;
-    default:
-      return DefWindowProc(hwnd, uMsg, wParam, lParam);
-  }
-}
-
-
-void initWindow() {
-  hInstance = GetModuleHandle(NULL);
-  WNDCLASS wc = {0};
-  wc.lpfnWndProc = WindowProc;
-  wc.hInstance = hInstance;
-  wc.lpszClassName = "VulkanWindowClass";
-  RegisterClass(&wc);
-  window = CreateWindowEx(
-    0,
-    "VulkanWindowClass",
-    "Vulkan Square",
-    WS_OVERLAPPEDWINDOW,
-    CW_USEDEFAULT, CW_USEDEFAULT,
-    WIDTH, HEIGHT,
-    NULL, NULL,
-    hInstance,
-    NULL
-  );
-  ShowWindow(window, SW_SHOW);
-}
-
-
-void processWindowEvents() {
-  MSG msg;
-  while(PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
-    TranslateMessage(&msg);
-    DispatchMessage(&msg);
-  }
-}
-
-#else  // Linux (using Xlib)
-
-void initWindow() {
-  display = XOpenDisplay(NULL);
-  if (!display) {
-    fprintf(stderr, "Failed to open X display\n");
-    exit(EXIT_FAILURE);
-  }
-  int screen = DefaultScreen(display);
-  window = XCreateSimpleWindow(display, RootWindow(display, screen), 0, 0, WIDTH, HEIGHT, 1,
-                                BlackPixel(display, screen), WhitePixel(display, screen));
-  // Enable window close events.
-  Atom wmDelete = XInternAtom(display, "WM_DELETE_WINDOW", False);
-  XSetWMProtocols(display, window, &wmDelete, 1);
-  XMapWindow(display, window);
-}
-
-void processWindowEvents() {
-  while (XPending(display)) {
-    XEvent event;
-    XNextEvent(display, &event);
-    if (event.type == ClientMessage)
-      shouldClose = 1;
-  }
-}
-#endif
-
-
-//
-// === VULKAN INITIALIZATION & RENDERING FUNCTIONS ===
-//
-
-void createInstance() {
-  VkApplicationInfo appInfo = {0};
-  appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-  appInfo.pApplicationName = "Vulkan Square";
-  appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
-  appInfo.pEngineName = "CjellyEngine";
-  appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
-  appInfo.apiVersion = VK_API_VERSION_1_0;
-
-  // Specify required extensions for the platform.
-  const char* extensions[10];
-  uint32_t extCount = 0;
-  extensions[extCount++] = "VK_KHR_surface";
-#ifdef _WIN32
-  extensions[extCount++] = "VK_KHR_win32_surface";
-#else
-  extensions[extCount++] = "VK_KHR_xlib_surface";
-#endif
-  if (enableValidationLayers) {
-    extensions[extCount++] = "VK_EXT_debug_utils";
-  }
-
-  VkInstanceCreateInfo createInfo = {0};
-  createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
-  createInfo.pApplicationInfo = &appInfo;
-  createInfo.enabledExtensionCount = extCount;
-  createInfo.ppEnabledExtensionNames = extensions;
-
-  if (enableValidationLayers) {
-    const char* validationLayers[] = { "VK_LAYER_KHRONOS_validation" };
-    createInfo.enabledLayerCount = 1;
-    createInfo.ppEnabledLayerNames = validationLayers;
-
-    // Set up debug messenger info so that it is used during instance creation.
-    VkDebugUtilsMessengerCreateInfoEXT debugCreateInfo = {0};
-    debugCreateInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
-    debugCreateInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
-                                      VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
-    debugCreateInfo.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
-                                  VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
-                                  VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
-    debugCreateInfo.pfnUserCallback = debugCallback;
-    createInfo.pNext = (VkDebugUtilsMessengerCreateInfoEXT*)&debugCreateInfo;
-  } else {
-    createInfo.enabledLayerCount = 0;
-    createInfo.pNext = NULL;
-  }
-
-  if (vkCreateInstance(&createInfo, NULL, &instance) != VK_SUCCESS) {
-    fprintf(stderr, "Failed to create Vulkan instance\n");
-    exit(EXIT_FAILURE);
-  }
-
-  if (enableValidationLayers) {
-    createDebugMessenger();
-  }
-}
-
-
-void createDebugMessenger() {
-  VkDebugUtilsMessengerCreateInfoEXT createInfo = {0};
-  createInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
-  createInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
-                                VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
-  createInfo.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
-                            VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
-                            VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
-  createInfo.pfnUserCallback = debugCallback;
-
-  if (CreateDebugUtilsMessengerEXT(instance, &createInfo, NULL, &debugMessenger) != VK_SUCCESS) {
-    fprintf(stderr, "Failed to set up debug messenger!\n");
-  }
-}
-
-void destroyDebugMessenger() {
-  if (enableValidationLayers && debugMessenger != VK_NULL_HANDLE) {
-    DestroyDebugUtilsMessengerEXT(instance, debugMessenger, NULL);
-  }
-}
-
-
-void createSurface() {
-#ifdef _WIN32
-  VkWin32SurfaceCreateInfoKHR createInfo = {0};
-  createInfo.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
-  createInfo.hinstance = hInstance;
-  createInfo.hwnd = window;
-  if (vkCreateWin32SurfaceKHR(instance, &createInfo, NULL, &surface) != VK_SUCCESS) {
-    fprintf(stderr, "Failed to create Win32 surface\n");
-    exit(EXIT_FAILURE);
-  }
-#else
-  VkXlibSurfaceCreateInfoKHR createInfo = {0};
-  createInfo.sType = VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR;
-  createInfo.dpy = display;
-  createInfo.window = window;
-  if (vkCreateXlibSurfaceKHR(instance, &createInfo, NULL, &surface) != VK_SUCCESS) {
-    fprintf(stderr, "Failed to create Xlib surface\n");
-    exit(EXIT_FAILURE);
-  }
-#endif
-}
-
-
-void pickPhysicalDevice() {
-  uint32_t deviceCount = 0;
-  vkEnumeratePhysicalDevices(instance, &deviceCount, NULL);
-  if (deviceCount == 0) {
-    fprintf(stderr, "Failed to find GPUs with Vulkan support\n");
-    exit(EXIT_FAILURE);
-  }
-  VkPhysicalDevice devices[deviceCount];
-  vkEnumeratePhysicalDevices(instance, &deviceCount, devices);
-  physicalDevice = devices[0];
-}
-
-
-void createLogicalDevice() {
-  uint32_t queueFamilyIndex = 0; // Simplified: assume family 0 supports both graphics and present.
-  float queuePriority = 1.0f;
-  VkDeviceQueueCreateInfo queueCreateInfo = {0};
-  queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-  queueCreateInfo.queueFamilyIndex = queueFamilyIndex;
-  queueCreateInfo.queueCount = 1;
-  queueCreateInfo.pQueuePriorities = &queuePriority;
-
-  // Specify the swapchain extension.
-  const char* deviceExtensions[] = { "VK_KHR_swapchain" };
-
-  VkDeviceCreateInfo createInfo = {0};
-  createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-  createInfo.queueCreateInfoCount = 1;
-  createInfo.pQueueCreateInfos = &queueCreateInfo;
-  createInfo.enabledExtensionCount = 1;
-  createInfo.ppEnabledExtensionNames = deviceExtensions;
-
-  if (vkCreateDevice(physicalDevice, &createInfo, NULL, &device) != VK_SUCCESS) {
-    fprintf(stderr, "Failed to create logical device\n");
-    exit(EXIT_FAILURE);
-  }
-
-  vkGetDeviceQueue(device, queueFamilyIndex, 0, &graphicsQueue);
-  presentQueue = graphicsQueue;
-}
-
-
-void createSwapChain() {
-  VkSurfaceCapabilitiesKHR capabilities;
-  vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &capabilities);
-  fprintf(stderr, "Surface Capabilities:\n  minImageCount: %u\n  maxImageCount: %u\n  currentExtent: %ux%u\n",
-          capabilities.minImageCount, capabilities.maxImageCount,
-          capabilities.currentExtent.width, capabilities.currentExtent.height);
-
-  // Set the global swapChainExtent to what the surface supports.
-  swapChainExtent = capabilities.currentExtent;
-
-  VkSwapchainCreateInfoKHR createInfo = {0};
-  createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
-  createInfo.surface = surface;
-  createInfo.minImageCount = capabilities.minImageCount;
-  createInfo.imageFormat = VK_FORMAT_B8G8R8A8_SRGB;
-  createInfo.imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
-  createInfo.imageExtent = capabilities.currentExtent;
-  createInfo.imageArrayLayers = 1;
-  createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-  createInfo.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
-  createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-  createInfo.presentMode = VK_PRESENT_MODE_FIFO_KHR;
-  createInfo.clipped = VK_TRUE;
-  createInfo.oldSwapchain = VK_NULL_HANDLE;
-
-  if (vkCreateSwapchainKHR(device, &createInfo, NULL, &swapChain) != VK_SUCCESS) {
-    fprintf(stderr, "Failed to create swap chain\n");
-    exit(EXIT_FAILURE);
-  }
-}
-
-
-void createImageViews() {
-  vkGetSwapchainImagesKHR(device, swapChain, &swapChainImageCount, NULL);
-  swapChainImages = malloc(sizeof(VkImage) * swapChainImageCount);
-  vkGetSwapchainImagesKHR(device, swapChain, &swapChainImageCount, swapChainImages);
-
-  swapChainImageViews = malloc(sizeof(VkImageView) * swapChainImageCount);
-  for (uint32_t i = 0; i < swapChainImageCount; i++) {
-    VkImageViewCreateInfo viewInfo = {0};
-    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    viewInfo.image = swapChainImages[i];
-    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    viewInfo.format = VK_FORMAT_B8G8R8A8_SRGB;
-    viewInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-    viewInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-    viewInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-    viewInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-    viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    viewInfo.subresourceRange.baseMipLevel = 0;
-    viewInfo.subresourceRange.levelCount = 1;
-    viewInfo.subresourceRange.baseArrayLayer = 0;
-    viewInfo.subresourceRange.layerCount = 1;
-
-    if (vkCreateImageView(device, &viewInfo, NULL, &swapChainImageViews[i]) != VK_SUCCESS) {
-      fprintf(stderr, "Failed to create image view\n");
-      exit(EXIT_FAILURE);
-    }
-  }
 }
 
 
@@ -630,26 +798,22 @@ void createGraphicsPipeline() {
   inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
   inputAssembly.primitiveRestartEnable = VK_FALSE;
 
-  // Instead of using hard-coded WIDTH/HEIGHT, use the swapchain extent.
-  VkViewport viewport = {0};
-  viewport.x = 0.0f;
-  viewport.y = 0.0f;
-  viewport.width = (float) swapChainExtent.width;
-  viewport.height = (float) swapChainExtent.height;
-  viewport.minDepth = 0.0f;
-  viewport.maxDepth = 1.0f;
-
-  VkRect2D scissor = {0};
-  scissor.offset.x = 0;
-  scissor.offset.y = 0;
-  scissor.extent = swapChainExtent;
-
+  // Instead of hard-coding the viewport and scissor,
+  // we define a viewport state with counts and use dynamic states to set actual values later.
   VkPipelineViewportStateCreateInfo viewportState = {0};
   viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-  viewportState.viewportCount = 1;
-  viewportState.pViewports = &viewport;
+  viewportState.viewportCount = 1;   // Only the count is used.
   viewportState.scissorCount = 1;
-  viewportState.pScissors = &scissor;
+
+  VkDynamicState dynamicStates[] = {
+      VK_DYNAMIC_STATE_VIEWPORT,
+      VK_DYNAMIC_STATE_SCISSOR,
+  };
+
+  VkPipelineDynamicStateCreateInfo dynamicState = {0};
+  dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+  dynamicState.dynamicStateCount = 2;
+  dynamicState.pDynamicStates = dynamicStates;
 
   VkPipelineRasterizationStateCreateInfo rasterizer = {0};
   rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
@@ -690,6 +854,7 @@ void createGraphicsPipeline() {
   pipelineInfo.pVertexInputState = &vertexInputInfo;
   pipelineInfo.pInputAssemblyState = &inputAssembly;
   pipelineInfo.pViewportState = &viewportState;
+  pipelineInfo.pDynamicState = &dynamicState;
   pipelineInfo.pRasterizationState = &rasterizer;
   pipelineInfo.pMultisampleState = &multisampling;
   pipelineInfo.pColorBlendState = &colorBlending;
@@ -708,27 +873,6 @@ void createGraphicsPipeline() {
 }
 
 
-void createFramebuffers() {
-  swapChainFramebuffers = malloc(sizeof(VkFramebuffer) * swapChainImageCount);
-  for (uint32_t i = 0; i < swapChainImageCount; i++) {
-    VkImageView attachments[] = { swapChainImageViews[i] };
-    VkFramebufferCreateInfo framebufferInfo = {0};
-    framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-    framebufferInfo.renderPass = renderPass;
-    framebufferInfo.attachmentCount = 1;
-    framebufferInfo.pAttachments = attachments;
-    framebufferInfo.width = swapChainExtent.width;
-    framebufferInfo.height = swapChainExtent.height;
-    framebufferInfo.layers = 1;
-
-    if (vkCreateFramebuffer(device, &framebufferInfo, NULL, &swapChainFramebuffers[i]) != VK_SUCCESS) {
-      fprintf(stderr, "Failed to create framebuffer\n");
-      exit(EXIT_FAILURE);
-    }
-  }
-}
-
-
 void createCommandPool() {
   VkCommandPoolCreateInfo poolInfo = {0};
   poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
@@ -740,174 +884,31 @@ void createCommandPool() {
 }
 
 
-void createCommandBuffers() {
-  commandBuffers = malloc(sizeof(VkCommandBuffer) * swapChainImageCount);
-  VkCommandBufferAllocateInfo allocInfo = {0};
-  allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-  allocInfo.commandPool = commandPool;
-  allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-  allocInfo.commandBufferCount = swapChainImageCount;
+//
+// === GLOBAL VULKAN INITIALIZATION & CLEANUP ===
+//
 
-  if (vkAllocateCommandBuffers(device, &allocInfo, commandBuffers) != VK_SUCCESS) {
-    fprintf(stderr, "Failed to allocate command buffers\n");
-    exit(EXIT_FAILURE);
-  }
-
-  for (uint32_t i = 0; i < swapChainImageCount; i++) {
-    VkCommandBufferBeginInfo beginInfo = {0};
-    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    if (vkBeginCommandBuffer(commandBuffers[i], &beginInfo) != VK_SUCCESS) {
-      fprintf(stderr, "Failed to begin recording command buffer\n");
-      exit(EXIT_FAILURE);
-    }
-
-    VkRenderPassBeginInfo renderPassInfo = {0};
-    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    renderPassInfo.renderPass = renderPass;
-    renderPassInfo.framebuffer = swapChainFramebuffers[i];
-    renderPassInfo.renderArea.offset.x = 0;
-    renderPassInfo.renderArea.offset.y = 0;
-    renderPassInfo.renderArea.extent = swapChainExtent;
-
-    VkClearValue clearColor = {{{0.1f, 0.1f, 0.1f, 1.0f}}};
-    renderPassInfo.clearValueCount = 1;
-    renderPassInfo.pClearValues = &clearColor;
-
-    vkCmdBeginRenderPass(commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-
-    VkDeviceSize offsets[] = { 0 };
-    vkCmdBindVertexBuffers(commandBuffers[i], 0, 1, &vertexBuffer, offsets);
-
-    vkCmdBindPipeline(commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
-    vkCmdDraw(commandBuffers[i], 6, 1, 0, 0);
-    vkCmdEndRenderPass(commandBuffers[i]);
-
-    if (vkEndCommandBuffer(commandBuffers[i]) != VK_SUCCESS) {
-      fprintf(stderr, "Failed to record command buffer\n");
-      exit(EXIT_FAILURE);
-    }
-  }
-}
-
-
-
-void createSyncObjects() {
-  VkSemaphoreCreateInfo semaphoreInfo = {0};
-  semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-
-  if (vkCreateSemaphore(device, &semaphoreInfo, NULL, &imageAvailableSemaphore) != VK_SUCCESS ||
-    vkCreateSemaphore(device, &semaphoreInfo, NULL, &renderFinishedSemaphore) != VK_SUCCESS) {
-    fprintf(stderr, "Failed to create semaphores\n");
-    exit(EXIT_FAILURE);
-  }
-
-  VkFenceCreateInfo fenceInfo = {0};
-  fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-  fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
-  if (vkCreateFence(device, &fenceInfo, NULL, &inFlightFence) != VK_SUCCESS) {
-    fprintf(stderr, "Failed to create fence\n");
-    exit(EXIT_FAILURE);
-  }
-}
-
-
-void initVulkan() {
+void initVulkanGlobal() {
   createInstance();
-  createSurface();
+  if (enableValidationLayers) createDebugMessenger();
   pickPhysicalDevice();
   createLogicalDevice();
   createVertexBuffer();
-  createSwapChain();
-  createImageViews();
   createRenderPass();
   createGraphicsPipeline();
-  createFramebuffers();
   createCommandPool();
-  createCommandBuffers();
-  createSyncObjects();
 }
 
-
-void drawFrame() {
-  vkWaitForFences(device, 1, &inFlightFence, VK_TRUE, UINT64_MAX);
-  vkResetFences(device, 1, &inFlightFence);
-
-  uint32_t imageIndex;
-  vkAcquireNextImageKHR(device, swapChain, UINT64_MAX, imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
-
-  VkSubmitInfo submitInfo = {0};
-  submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-  VkSemaphore waitSemaphores[] = { imageAvailableSemaphore };
-  VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
-  submitInfo.waitSemaphoreCount = 1;
-  submitInfo.pWaitSemaphores = waitSemaphores;
-  submitInfo.pWaitDstStageMask = waitStages;
-  submitInfo.commandBufferCount = 1;
-  submitInfo.pCommandBuffers = &commandBuffers[imageIndex];
-  VkSemaphore signalSemaphores[] = { renderFinishedSemaphore };
-  submitInfo.signalSemaphoreCount = 1;
-  submitInfo.pSignalSemaphores = signalSemaphores;
-
-  if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFence) != VK_SUCCESS) {
-    fprintf(stderr, "Failed to submit draw command buffer\n");
-  }
-
-  VkPresentInfoKHR presentInfo = {0};
-  presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-  presentInfo.waitSemaphoreCount = 1;
-  presentInfo.pWaitSemaphores = signalSemaphores;
-  presentInfo.swapchainCount = 1;
-  presentInfo.pSwapchains = &swapChain;
-  presentInfo.pImageIndices = &imageIndex;
-
-  vkQueuePresentKHR(presentQueue, &presentInfo);
-}
-
-
-void mainLoop() {
-  while (!shouldClose) {
-    processWindowEvents();
-    drawFrame();
-  }
-  vkDeviceWaitIdle(device);
-}
-
-
-void cleanup() {
-  vkDestroySemaphore(device, renderFinishedSemaphore, NULL);
-  vkDestroySemaphore(device, imageAvailableSemaphore, NULL);
-  vkDestroyFence(device, inFlightFence, NULL);
-
-  vkDestroyCommandPool(device, commandPool, NULL);
-
-  for (uint32_t i = 0; i < swapChainImageCount; i++) {
-    vkDestroyFramebuffer(device, swapChainFramebuffers[i], NULL);
-    vkDestroyImageView(device, swapChainImageViews[i], NULL);
-  }
-  free(swapChainFramebuffers);
-  free(swapChainImageViews);
-  free(swapChainImages);
-  free(commandBuffers);
-
-  // Destroy the vertex buffer and free its memory.
-  vkDestroyBuffer(device, vertexBuffer, NULL);
-  vkFreeMemory(device, vertexBufferMemory, NULL);
-
+void cleanupVulkanGlobal() {
   vkDestroyPipeline(device, graphicsPipeline, NULL);
   vkDestroyPipelineLayout(device, pipelineLayout, NULL);
   vkDestroyRenderPass(device, renderPass, NULL);
-  vkDestroySwapchainKHR(device, swapChain, NULL);
-  vkDestroyDevice(device, NULL);
-  vkDestroySurfaceKHR(instance, surface, NULL);
+  vkDestroyBuffer(device, vertexBuffer, NULL);
+  vkFreeMemory(device, vertexBufferMemory, NULL);
+  vkDestroyCommandPool(device, commandPool, NULL);
   if (enableValidationLayers) {
     destroyDebugMessenger();
   }
+  vkDestroyDevice(device, NULL);
   vkDestroyInstance(instance, NULL);
-
-#ifdef _WIN32
-  DestroyWindow(window);
-#else
-  XDestroyWindow(display, window);
-  XCloseDisplay(display);
-#endif
 }
