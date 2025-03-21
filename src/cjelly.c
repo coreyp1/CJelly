@@ -209,6 +209,9 @@ void createPlatformWindow(CJellyWindow * win, const char * title, int width, int
 
 #endif
 
+  win->needsRedraw = 1;
+  win->nextFrameTime = 0;
+
 }
 
 
@@ -233,7 +236,10 @@ void processWindowEvents() {
     XEvent event;
     XNextEvent(display, &event);
     if (event.type == ClientMessage) {
-      shouldClose = 1;
+      Atom wmDelete = XInternAtom(display, "WM_DELETE_WINDOW", False);
+      if ((Atom)event.xclient.data.l[0] == wmDelete) {
+        shouldClose = 1;
+      }
     }
   }
 }

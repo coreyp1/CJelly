@@ -193,11 +193,27 @@ const int WIDTH = 800;
 const int HEIGHT = 600;
 
 /**
+ * @brief Specifies the update mode for a CJelly window.
+ *
+ * This enumeration defines the different strategies for updating the window's content.
+ * Depending on the chosen mode, the window can redraw continuously synchronized to VSync,
+ * at a fixed frame rate, or only when an event indicates that a redraw is necessary.
+ */
+typedef enum {
+  CJELLY_UPDATE_MODE_VSYNC,       /**< Redraw is synchronized with the display's refresh rate via VSync. */
+  CJELLY_UPDATE_MODE_FIXED,       /**< Redraw at a fixed frame rate specified by the fixedFramerate field. */
+  CJELLY_UPDATE_MODE_EVENT_DRIVEN /**< Redraw only when explicitly marked as needing an update. */
+} CJellyUpdateMode;
+
+/**
  * @brief Represents a window and its associated Vulkan resources in the CJelly framework.
  *
  * The CJellyWindow struct encapsulates both the OS-specific window handle and all the Vulkan
  * objects required for rendering within that window. This includes the Vulkan surface, swapchain,
  * image views, framebuffers, command buffers, and synchronization primitives.
+ *
+ * Additional fields allow each window to specify its update strategy, including whether it should
+ * redraw continuously or only when necessary.
  *
  * @note On Windows, the window handle is an HWND, while on Linux it is an Xlib Window.
  *
@@ -244,31 +260,43 @@ const int HEIGHT = 600;
  *
  * @var CJellyWindow::height
  *  The height of the window in pixels.
+ *
+ * @var CJellyWindow::updateMode
+ *   Specifies how frequently the window's content is updated (e.g., VSync, fixed, or event-driven).
+ *
+ * @var CJellyWindow::fixedFramerate
+ *   The target frame rate (in frames per second) when using fixed update mode.
+ *
+ * @var CJellyWindow::needsRedraw
+ *   A flag that indicates whether a redraw is needed when using event-driven updates.
+ *
+ * @var CJellyWindow::nextFrameTime
+ *  The timestamp (in milliseconds) when the next frame should be rendered (for fixed update mode).
  */
 typedef struct CJellyWindow {
-  #ifdef _WIN32
-    HWND handle;            /**< OS-specific window handle (HWND for Windows) */
-  #else
-    Window handle;          /**< OS-specific window handle (Xlib Window for Linux) */
-  #endif
-    VkSurfaceKHR surface;   /**< Vulkan surface associated with the window */
-    VkSwapchainKHR swapChain;               /**< Vulkan swapchain for image presentation */
-    uint32_t swapChainImageCount;           /**< Number of images in the swapchain */
-    VkImage* swapChainImages;               /**< Array of Vulkan images from the swapchain */
-    VkImageView* swapChainImageViews;       /**< Array of image views corresponding to swapchain images */
-    VkFramebuffer* swapChainFramebuffers;   /**< Array of framebuffers for rendering */
-    VkCommandBuffer* commandBuffers;        /**< Array of command buffers allocated for the window */
-    VkSemaphore imageAvailableSemaphore;    /**< Semaphore signaling image availability */
-    VkSemaphore renderFinishedSemaphore;    /**< Semaphore signaling that rendering is finished */
-    VkFence inFlightFence;                  /**< Fence used for synchronizing frame submissions */
-    VkExtent2D swapChainExtent;             /**< Dimensions of the swapchain images */
-    int width;                              /**< Window width in pixels */
-    int height;                             /**< Window height in pixels */
-  } CJellyWindow;
-
 #ifdef _WIN32
-  #include <windows.h>
+  HWND handle;            /**< OS-specific window handle (HWND for Windows) */
+#else
+  Window handle;          /**< OS-specific window handle (Xlib Window for Linux) */
 #endif
+  VkSurfaceKHR surface;   /**< Vulkan surface associated with the window */
+  VkSwapchainKHR swapChain;               /**< Vulkan swapchain for image presentation */
+  uint32_t swapChainImageCount;           /**< Number of images in the swapchain */
+  VkImage* swapChainImages;               /**< Array of Vulkan images from the swapchain */
+  VkImageView* swapChainImageViews;       /**< Array of image views corresponding to swapchain images */
+  VkFramebuffer* swapChainFramebuffers;   /**< Array of framebuffers for rendering */
+  VkCommandBuffer* commandBuffers;        /**< Array of command buffers allocated for the window */
+  VkSemaphore imageAvailableSemaphore;    /**< Semaphore signaling image availability */
+  VkSemaphore renderFinishedSemaphore;    /**< Semaphore signaling that rendering is finished */
+  VkFence inFlightFence;                  /**< Fence used for synchronizing frame submissions */
+  VkExtent2D swapChainExtent;             /**< Dimensions of the swapchain images */
+  int width;                              /**< Window width in pixels */
+  int height;                             /**< Window height in pixels */
+  CJellyUpdateMode updateMode;            /**< Update mode for this window (e.g., VSync, fixed, or event-driven) */
+  uint32_t fixedFramerate;                /**< Target frame rate (FPS) when in fixed update mode */
+  int needsRedraw;                        /**< Flag indicating a redraw is needed in event-driven mode */
+  uint64_t nextFrameTime;                 /**< Timestamp (in milliseconds) when the next frame should be rendered (for fixed mode) */
+} CJellyWindow;
 
 
 /* === UTILITY FUNCTIONS === */
