@@ -628,12 +628,65 @@ void pickPhysicalDevice() {
   uint32_t deviceCount = 0;
   vkEnumeratePhysicalDevices(instance, &deviceCount, NULL);
   if (deviceCount == 0) {
-    fprintf(stderr, "Failed to find GPUs with Vulkan support\n");
-    exit(EXIT_FAILURE);
+      fprintf(stderr, "Failed to find GPUs with Vulkan support\n");
+      exit(EXIT_FAILURE);
   }
+
   VkPhysicalDevice devices[deviceCount];
   vkEnumeratePhysicalDevices(instance, &deviceCount, devices);
-  physicalDevice = devices[0];
+
+  VkPhysicalDevice bestDevice = VK_NULL_HANDLE;
+  int bestScore = -1;
+
+  for (uint32_t i = 0; i < deviceCount; i++) {
+      VkPhysicalDevice device = devices[i];
+
+      // Retrieve device properties and features.
+      VkPhysicalDeviceProperties deviceProperties;
+      vkGetPhysicalDeviceProperties(device, &deviceProperties);
+
+      VkPhysicalDeviceFeatures deviceFeatures;
+      vkGetPhysicalDeviceFeatures(device, &deviceFeatures);
+
+      // Check for required extensions (e.g., VK_KHR_swapchain)
+      uint32_t extensionCount = 0;
+      vkEnumerateDeviceExtensionProperties(device, NULL, &extensionCount, NULL);
+      VkExtensionProperties availableExtensions[extensionCount];
+      vkEnumerateDeviceExtensionProperties(device, NULL, &extensionCount, availableExtensions);
+
+      int swapchainExtensionFound = 0;
+      for (uint32_t j = 0; j < extensionCount; j++) {
+          if (strcmp(availableExtensions[j].extensionName, VK_KHR_SWAPCHAIN_EXTENSION_NAME) == 0) {
+              swapchainExtensionFound = 1;
+              break;
+          }
+      }
+      if (!swapchainExtensionFound) {
+          // Skip this device if it doesn't support swapchains.
+          continue;
+      }
+
+      // Score the device:
+      // Prefer discrete GPUs over integrated ones.
+      int score = 0;
+      if (deviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) {
+          score += 1000;
+      }
+      // Use a property like maxImageDimension2D as a rough performance metric.
+      score += deviceProperties.limits.maxImageDimension2D;
+
+      if (score > bestScore) {
+          bestScore = score;
+          bestDevice = device;
+      }
+  }
+
+  if (bestDevice == VK_NULL_HANDLE) {
+      fprintf(stderr, "Failed to find a suitable GPU\n");
+      exit(EXIT_FAILURE);
+  }
+
+  physicalDevice = bestDevice;
 }
 
 

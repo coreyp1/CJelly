@@ -25,6 +25,11 @@ uint64_t getCurrentTimeInMilliseconds(void) {
 
 #include <cjelly/cjelly.h>
 
+
+void renderSquare(CJellyWindow *win) {
+  drawFrameForWindow(win);
+}
+
 int main(void) {
   #ifdef _WIN32
   // Windows: hInstance is set in createPlatformWindow.
@@ -39,9 +44,14 @@ int main(void) {
 
   // Create two windows.
   CJellyWindow win1 = {0}, win2 = {0};
+
+  win1.renderCallback = renderSquare;
   win1.updateMode = CJELLY_UPDATE_MODE_FIXED;
   win1.fixedFramerate = 60;
+
+  win2.renderCallback = renderSquare;
   win2.updateMode = CJELLY_UPDATE_MODE_EVENT_DRIVEN;
+
   createPlatformWindow(&win1, "Vulkan Square - Window 1", WIDTH, HEIGHT);
   createPlatformWindow(&win2, "Vulkan Square - Window 2", WIDTH, HEIGHT);
 
@@ -75,19 +85,25 @@ int main(void) {
       switch (win->updateMode) {
         case CJELLY_UPDATE_MODE_VSYNC:
           // For VSync mode, the present call (with FIFO) will throttle rendering.
-          drawFrameForWindow(win);
+          if (win->renderCallback) {
+            win->renderCallback(win);
+          }
           break;
         case CJELLY_UPDATE_MODE_FIXED:
           // In fixed mode, only render if it’s time for the next frame.
           if (currentTime >= win->nextFrameTime) {
-            drawFrameForWindow(win);
+            if (win->renderCallback) {
+              win->renderCallback(win);
+            }
             win->nextFrameTime = currentTime + (1000 / win->fixedFramerate);
           }
           break;
         case CJELLY_UPDATE_MODE_EVENT_DRIVEN:
           // In event-driven mode, only render when needed.
           if (win->needsRedraw) {
-            drawFrameForWindow(win);
+            if (win->renderCallback) {
+              win->renderCallback(win);
+            }
             win->needsRedraw = 0;
           }
           break;

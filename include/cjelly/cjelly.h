@@ -192,6 +192,31 @@ extern VkDebugUtilsMessengerEXT debugMessenger;
 const int WIDTH = 800;
 const int HEIGHT = 600;
 
+typedef struct CJellyWindow CJellyWindow;
+
+/**
+ * @brief Callback type for per-window rendering.
+ *
+ * This function should record commands into the command buffers for the given window,
+ * drawing whatever content is appropriate.
+ *
+ * @param win Pointer to the CJellyWindow that is being rendered.
+ */
+typedef void (*CJellyRenderCallback)(CJellyWindow *win);
+
+/**
+ * @brief Specifies the update mode for a CJelly window.
+ *
+ * This enumeration defines the different strategies for updating the window's content.
+ * Depending on the chosen mode, the window can redraw continuously synchronized to VSync,
+ * at a fixed frame rate, or only when an event indicates that a redraw is necessary.
+ */
+typedef enum {
+  CJELLY_UPDATE_MODE_VSYNC,       /**< Redraw is synchronized with the display's refresh rate via VSync. */
+  CJELLY_UPDATE_MODE_FIXED,       /**< Redraw at a fixed frame rate specified by the fixedFramerate field. */
+  CJELLY_UPDATE_MODE_EVENT_DRIVEN /**< Redraw only when explicitly marked as needing an update. */
+} CJellyUpdateMode;
+
 /**
  * @brief Specifies the update mode for a CJelly window.
  *
@@ -272,6 +297,9 @@ typedef enum {
  *
  * @var CJellyWindow::nextFrameTime
  *  The timestamp (in milliseconds) when the next frame should be rendered (for fixed update mode).
+ *
+ * @var CJellyWindow::renderCallback
+ *   Function pointer for the custom rendering callback for this window.
  */
 typedef struct CJellyWindow {
 #ifdef _WIN32
@@ -296,6 +324,7 @@ typedef struct CJellyWindow {
   uint32_t fixedFramerate;                /**< Target frame rate (FPS) when in fixed update mode */
   int needsRedraw;                        /**< Flag indicating a redraw is needed in event-driven mode */
   uint64_t nextFrameTime;                 /**< Timestamp (in milliseconds) when the next frame should be rendered (for fixed mode) */
+  CJellyRenderCallback renderCallback;    /**< Custom render function for this window */
 } CJellyWindow;
 
 
