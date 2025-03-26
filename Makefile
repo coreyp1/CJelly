@@ -112,6 +112,10 @@ endif
 
 INCLUDE := -I include/cjelly -I include/ -I $(GEN_DIR)/
 LIBOBJECTS := \
+	$(OBJ_DIR)/format/3d/mtl.o \
+	$(OBJ_DIR)/format/3d/obj.o \
+	$(OBJ_DIR)/format/image.o \
+	$(OBJ_DIR)/format/image/bmp.o \
 	$(OBJ_DIR)/cjelly.o
 
 
@@ -124,6 +128,22 @@ CJELLYLIBRARY := -L $(APP_DIR) -l$(SUITE)-$(PROJECT)$(BRANCH)
 all: $(APP_DIR)/$(TARGET) $(APP_DIR)/cjelly$(EXE_EXTENSION) ## Build the shared library
 
 ####################################################################
+# Test Files
+####################################################################
+
+# Automatically gather all files under the test/ directory (recursively)
+TEST_FILES_SRC := $(shell find test/ -type f)
+
+# Destination files will be placed under $(APP_DIR)/ preserving the test/ folder structure.
+TEST_FILES := $(addprefix $(APP_DIR)/, $(TEST_FILES_SRC))
+
+# Pattern rule to copy each test file from the test/ directory to $(APP_DIR)/test/
+$(APP_DIR)/test/%: test/%
+	@mkdir -p $(dir $@)
+	cp -u $< $@
+
+
+####################################################################
 # Dependency Variables
 ####################################################################
 DEP_LIBVER = \
@@ -131,6 +151,18 @@ DEP_LIBVER = \
 DEP_MACROS = \
 	include/cjelly/macros.h \
 	$(DEP_LIBVER)
+DEP_FORMAT_3D_MTL = \
+	include/cjelly/format/3d/mtl.h \
+	$(DEP_MACROS)
+DEP_FORMAT_3D_OBJ = \
+	include/cjelly/format/3d/obj.h \
+	$(DEP_FORMAT_3D_MTL)
+DEP_FORMAT_IMAGE = \
+	include/cjelly/format/image.h \
+	$(DEP_MACROS)
+DEP_FORMAT_IMAGE_BMP = \
+	include/cjelly/format/image/bmp.h \
+	$(DEP_MACROS)
 
 DEP_CJELLY = \
 	include/cjelly/cjelly.h \
@@ -146,11 +178,30 @@ $(LIBOBJECTS) :
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) $(INCLUDE) -c $< -MMD -o $@ $(OS_SPECIFIC_CXX_FLAGS)
 
+$(OBJ_DIR)/format/3d/mtl.o: \
+	src/format/3d/mtl.c \
+	$(DEP_FORMAT_3D_MTL)
+
+$(OBJ_DIR)/format/3d/obj.o: \
+	src/format/3d/obj.c \
+	$(DEP_FORMAT_3D_OBJ)
+
+$(OBJ_DIR)/format/image.o: \
+	src/format/image.c \
+	$(DEP_FORMAT_IMAGE) \
+	$(DEP_FORMAT_IMAGE_BMP) \
+	$(DEP_MACROS)
+
+$(OBJ_DIR)/format/image/bmp.o: \
+	src/format/image/bmp.c \
+	$(DEP_MACROS)
 
 $(OBJ_DIR)/cjelly.o: \
 	src/cjelly.c \
+	$(DEP_FORMAT_IMAGE) \
 	$(GEN_DIR)/shaders/basic.vert.h \
 	$(GEN_DIR)/shaders/basic.frag.h \
+	$(GEN_DIR)/shaders/textured.frag.h \
 	$(DEP_CJELLY)
 
 
@@ -158,6 +209,7 @@ $(OBJ_DIR)/cjelly.o: \
 # Shaders
 ####################################################################
 
+# Automatically gather all files under the src/shaders/ directory (recursively)
 $(APP_DIR)/shaders/%.spv: \
 		src/shaders/%
 	@printf "\n### Compiling $@ ###\n"
@@ -168,12 +220,14 @@ $(APP_DIR)/shaders/%.spv: \
 # Replace dots with underscores.
 VAR_NAME = $(subst .,_, $(notdir $<))
 
+# Pattern rule to generate a header file from a SPIR-V file.
 $(GEN_DIR)/shaders/%.h: $(APP_DIR)/shaders/%.spv
 	@printf "\n### Generating $@ ###\n"
 	@mkdir -p $(@D)
 	xxd -i $< \
 	  | sed "s/^\(unsigned char \)[^[]*\(\[.*\)/\1$(VAR_NAME)\2/" \
 	  | sed "s/^\(unsigned int \)[^ ]*/\1$(VAR_NAME)_len/" > $@
+
 
 ####################################################################
 # Shared Library
@@ -205,6 +259,8 @@ endif
 $(APP_DIR)/main$(EXE_EXTENSION): \
 		src/main.c \
 		$(DEP_CJELLY) \
+		$(DEP_FORMAT_3D_MTL) \
+		$(DEP_FORMAT_3D_OBJ) \
 		$(APP_DIR)/$(TARGET)
 	@printf "\n### Compiling CJelly Test ###\n"
 	@mkdir -p $(@D)
@@ -247,6 +303,7 @@ test-watch: ## Watch the file directory for changes and run the unit tests
 
 test: ## Make and run the Unit tests
 test: \
+		$(TEST_FILES) \
 		$(APP_DIR)/$(TARGET) \
 		$(APP_DIR)/main$(EXE_EXTENSION)
 #				$(APP_DIR)/test$(EXE_EXTENSION) \

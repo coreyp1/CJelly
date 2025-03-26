@@ -3,6 +3,11 @@
 #include <stdlib.h>
 #include <stdint.h>
 
+// #include <cjelly/format/3d/obj.h>
+// #include <cjelly/format/3d/mtl.h>
+#include <cjelly/format/image.h>
+#include <cjelly/format/image/bmp.h>
+
 #ifdef _WIN32
 #include <windows.h>
 #include <stdint.h>
@@ -70,7 +75,7 @@ int main(void) {
   createSwapChainForWindow(&win2);
   createImageViewsForWindow(&win2);
   createFramebuffersForWindow(&win2);
-  createCommandBuffersForWindow(&win2);
+  createTexturedCommandBuffersForWindow(&win2);
   createSyncObjectsForWindow(&win2);
 
   // Main render loop.

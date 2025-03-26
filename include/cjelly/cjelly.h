@@ -45,6 +45,8 @@
 #include <stddef.h>    // For size_t and offsetof
 #include <vulkan/vulkan.h>
 
+#include <cjelly/macros.h>
+
 
 #ifdef __cplusplus
 extern "C" {
@@ -203,19 +205,6 @@ typedef struct CJellyWindow CJellyWindow;
  * @param win Pointer to the CJellyWindow that is being rendered.
  */
 typedef void (*CJellyRenderCallback)(CJellyWindow *win);
-
-/**
- * @brief Specifies the update mode for a CJelly window.
- *
- * This enumeration defines the different strategies for updating the window's content.
- * Depending on the chosen mode, the window can redraw continuously synchronized to VSync,
- * at a fixed frame rate, or only when an event indicates that a redraw is necessary.
- */
-typedef enum {
-  CJELLY_UPDATE_MODE_VSYNC,       /**< Redraw is synchronized with the display's refresh rate via VSync. */
-  CJELLY_UPDATE_MODE_FIXED,       /**< Redraw at a fixed frame rate specified by the fixedFramerate field. */
-  CJELLY_UPDATE_MODE_EVENT_DRIVEN /**< Redraw only when explicitly marked as needing an update. */
-} CJellyUpdateMode;
 
 /**
  * @brief Specifies the update mode for a CJelly window.
@@ -602,6 +591,8 @@ void initVulkanGlobal(void);
  */
 void cleanupVulkanGlobal(void);
 
+
+void createTexturedCommandBuffersForWindow(CJellyWindow * win);
 
 #ifdef __cplusplus
 }

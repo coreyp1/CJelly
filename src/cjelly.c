@@ -16,6 +16,7 @@
  * @copyright Copyright (C) 2025 Ghoti.io
  */
 
+#include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
@@ -25,6 +26,8 @@
 #include <cjelly/cjelly.h>
 #include <shaders/basic.vert.h>
 #include <shaders/basic.frag.h>
+#include <shaders/textured.frag.h>
+#include <cjelly/format/image.h>
 
 // Global Vulkan objects shared among all windows.
 
@@ -49,6 +52,20 @@ VkCommandPool commandPool;
 VkBuffer vertexBuffer;
 VkDeviceMemory vertexBufferMemory;
 
+// Global texture variables (declared in your header, defined here)
+VkPipeline texturedPipeline;
+VkPipelineLayout texturedPipelineLayout;
+VkImage textureImage;
+VkDeviceMemory textureImageMemory;
+VkImageView textureImageView;
+VkSampler textureSampler;
+VkDescriptorPool textureDescriptorPool;
+VkDescriptorSetLayout textureDescriptorSetLayout;
+VkDescriptorSet textureDescriptorSet;
+VkBuffer vertexBufferTextured;
+VkDeviceMemory vertexBufferTexturedMemory;
+
+
 // Global flag to indicate that the window should close.
 int shouldClose;
 
@@ -64,14 +81,25 @@ typedef struct Vertex {
   float color[3];  // Color at location 1, a vec3.
 } Vertex;
 
+// Vertex structure for a textured square.
+typedef struct VertexTextured {
+  float pos[2];      // Position (x, y)
+  float texCoord[2]; // Texture coordinate (u, v)
+} VertexTextured;
 
-// Vertices for a square, with positions and colors.
-Vertex vertices[] = {
-  { { -0.5f, -0.5f }, { 1.0f, 0.0f, 0.0f } },
-  { {  0.5f, -0.5f }, { 0.0f, 1.0f, 0.0f } },
-  { {  0.5f,  0.5f }, { 0.0f, 0.0f, 1.0f } },
-  { { -0.5f,  0.5f }, { 1.0f, 1.0f, 0.0f } },
-};
+
+// Forward declarations for helper functions (for texture loading):
+void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties,
+  VkBuffer * buffer, VkDeviceMemory * bufferMemory);
+void createImage(uint32_t width, uint32_t height, VkFormat format, VkImageTiling tiling,
+ VkImageUsageFlags usage, VkMemoryPropertyFlags properties,
+ VkImage * image, VkDeviceMemory * imageMemory);
+VkCommandBuffer beginSingleTimeCommands(void);
+void endSingleTimeCommands(VkCommandBuffer commandBuffer);
+void transitionImageLayout(VkImage image, VkFormat format,
+           VkImageLayout oldLayout, VkImageLayout newLayout);
+void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height);
+
 
 
 //
@@ -944,6 +972,638 @@ void createCommandPool() {
 
 
 //
+// === TEXTURED SQUARE ===
+//
+
+/**
+ * @brief Creates a descriptor pool for texture descriptor sets.
+ *
+ * This function creates a descriptor pool that can allocate descriptor sets
+ * containing combined image samplers.
+ */
+void createTextureDescriptorPool() {
+  VkDescriptorPoolSize poolSize = {0};
+  poolSize.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  poolSize.descriptorCount = 1;  // Change this if you need more descriptors.
+
+  VkDescriptorPoolCreateInfo poolInfo = {0};
+  poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+  poolInfo.poolSizeCount = 1;
+  poolInfo.pPoolSizes = &poolSize;
+  poolInfo.maxSets = 1;  // Adjust if allocating multiple descriptor sets.
+
+  if (vkCreateDescriptorPool(device, &poolInfo, NULL, &textureDescriptorPool) != VK_SUCCESS) {
+      fprintf(stderr, "Failed to create texture descriptor pool!\n");
+      exit(EXIT_FAILURE);
+  }
+}
+
+void createDescriptorSetLayouts() {
+  // Define a descriptor set layout for the texture.
+  VkDescriptorSetLayoutBinding layoutBinding = {0};
+  layoutBinding.binding = 0;
+  layoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  layoutBinding.descriptorCount = 1;
+  layoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+  VkDescriptorSetLayoutCreateInfo layoutInfo = {0};
+  layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+  layoutInfo.bindingCount = 1;
+  layoutInfo.pBindings = &layoutBinding;
+
+  if (vkCreateDescriptorSetLayout(device, &layoutInfo, NULL, &textureDescriptorSetLayout) != VK_SUCCESS) {
+    fprintf(stderr, "Failed to create texture descriptor set layout\n");
+    exit(EXIT_FAILURE);
+  }
+}
+
+/**
+* @brief Allocates a descriptor set for the texture.
+*
+* This function allocates a descriptor set from the descriptor pool using
+* the layout defined by textureDescriptorSetLayout.
+*/
+void allocateTextureDescriptorSet() {
+  VkDescriptorSetAllocateInfo allocInfo = {0};
+  allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+  allocInfo.descriptorPool = textureDescriptorPool;
+  allocInfo.descriptorSetCount = 1;
+  allocInfo.pSetLayouts = &textureDescriptorSetLayout;
+
+  if (vkAllocateDescriptorSets(device, &allocInfo, &textureDescriptorSet) != VK_SUCCESS) {
+      fprintf(stderr, "Failed to allocate texture descriptor set!\n");
+      exit(EXIT_FAILURE);
+  }
+}
+
+void createTexturedGraphicsPipeline() {
+  // Load SPIR-V binaries and create shader modules for texturing.
+  VkShaderModule vertShaderModule = createShaderModuleFromMemory(device, basic_vert_spv, basic_vert_spv_len);
+  VkShaderModule fragShaderModule = createShaderModuleFromMemory(device, textured_frag_spv, textured_frag_spv_len);
+
+  if (vertShaderModule == VK_NULL_HANDLE || fragShaderModule == VK_NULL_HANDLE) {
+    fprintf(stderr, "Failed to create textured shader modules\n");
+    exit(EXIT_FAILURE);
+  }
+
+  VkPipelineShaderStageCreateInfo shaderStages[2] = {0};
+
+  // Vertex shader stage (expects texture coordinates).
+  shaderStages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  shaderStages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+  shaderStages[0].module = vertShaderModule;
+  shaderStages[0].pName = "main";
+
+  // Fragment shader stage (samples from texture).
+  shaderStages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  shaderStages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+  shaderStages[1].module = fragShaderModule;
+  shaderStages[1].pName = "main";
+
+  // Define a binding description for our textured vertex structure.
+  VkVertexInputBindingDescription bindingDescription = {0};
+  bindingDescription.binding = 0;
+  bindingDescription.stride = sizeof(VertexTextured);
+  bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+  // Define attribute descriptions for the textured vertex shader inputs.
+  VkVertexInputAttributeDescription attributeDescriptions[2] = {0};
+
+  // Attribute 0: position (vec2)
+  attributeDescriptions[0].binding = 0;
+  attributeDescriptions[0].location = 0;
+  attributeDescriptions[0].format = VK_FORMAT_R32G32_SFLOAT;
+  attributeDescriptions[0].offset = offsetof(VertexTextured, pos);
+
+  // Attribute 1: texture coordinate (vec2)
+  attributeDescriptions[1].binding = 0;
+  attributeDescriptions[1].location = 1;
+  attributeDescriptions[1].format = VK_FORMAT_R32G32_SFLOAT;
+  attributeDescriptions[1].offset = offsetof(VertexTextured, texCoord);
+
+  VkPipelineVertexInputStateCreateInfo vertexInputInfo = {0};
+  vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+  vertexInputInfo.vertexBindingDescriptionCount = 1;
+  vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+  vertexInputInfo.vertexAttributeDescriptionCount = 2;
+  vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions;
+
+  VkPipelineInputAssemblyStateCreateInfo inputAssembly = {0};
+  inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+  inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+  inputAssembly.primitiveRestartEnable = VK_FALSE;
+
+  // Keep viewport and dynamic state as before.
+  VkPipelineViewportStateCreateInfo viewportState = {0};
+  viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+  viewportState.viewportCount = 1;
+  viewportState.scissorCount = 1;
+
+  VkDynamicState dynamicStates[] = {
+    VK_DYNAMIC_STATE_VIEWPORT,
+    VK_DYNAMIC_STATE_SCISSOR,
+  };
+
+  VkPipelineDynamicStateCreateInfo dynamicState = {0};
+  dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+  dynamicState.dynamicStateCount = 2;
+  dynamicState.pDynamicStates = dynamicStates;
+
+  VkPipelineRasterizationStateCreateInfo rasterizer = {0};
+  rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+  rasterizer.depthClampEnable = VK_FALSE;
+  rasterizer.rasterizerDiscardEnable = VK_FALSE;
+  rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+  rasterizer.lineWidth = 1.0f;
+  rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+  rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+
+  VkPipelineMultisampleStateCreateInfo multisampling = {0};
+  multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+  multisampling.sampleShadingEnable = VK_FALSE;
+  multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+  VkPipelineColorBlendAttachmentState colorBlendAttachment = {0};
+  colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                                        VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+  colorBlendAttachment.blendEnable = VK_FALSE;
+
+  VkPipelineColorBlendStateCreateInfo colorBlending = {0};
+  colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+  colorBlending.logicOpEnable = VK_FALSE;
+  colorBlending.attachmentCount = 1;
+  colorBlending.pAttachments = &colorBlendAttachment;
+
+  VkDescriptorSetLayout descriptorSetLayouts[] = { textureDescriptorSetLayout };
+  VkPipelineLayoutCreateInfo pipelineLayoutInfo = {0};
+  pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+  pipelineLayoutInfo.setLayoutCount = 1;
+  pipelineLayoutInfo.pSetLayouts = descriptorSetLayouts;
+
+  if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, NULL, &texturedPipelineLayout) != VK_SUCCESS) {
+    fprintf(stderr, "Failed to create textured pipeline layout\n");
+    exit(EXIT_FAILURE);
+  }
+
+  VkGraphicsPipelineCreateInfo pipelineInfo = {0};
+  pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+  pipelineInfo.stageCount = 2;
+  pipelineInfo.pStages = shaderStages;
+  pipelineInfo.pVertexInputState = &vertexInputInfo;
+  pipelineInfo.pInputAssemblyState = &inputAssembly;
+  pipelineInfo.pViewportState = &viewportState;
+  pipelineInfo.pDynamicState = &dynamicState;
+  pipelineInfo.pRasterizationState = &rasterizer;
+  pipelineInfo.pMultisampleState = &multisampling;
+  pipelineInfo.pColorBlendState = &colorBlending;
+  pipelineInfo.layout = texturedPipelineLayout; // Use the new layout.
+  pipelineInfo.renderPass = renderPass;
+  pipelineInfo.subpass = 0;
+
+  if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &texturedPipeline) != VK_SUCCESS) {
+    fprintf(stderr, "Failed to create textured graphics pipeline\n");
+    exit(EXIT_FAILURE);
+  }
+
+  // Clean up shader modules after pipeline creation.
+  vkDestroyShaderModule(device, vertShaderModule, NULL);
+  vkDestroyShaderModule(device, fragShaderModule, NULL);
+}
+
+/// Creates a texture image from a BMP file.
+void createTextureImage(const char* filePath) {
+  // Load BMP data (assumed to be in 24-bit RGB format)
+  CJellyFormatImage * image;
+  CJellyFormatImageError error = cjelly_format_image_load(filePath, &image);
+  if (error != CJELLY_FORMAT_IMAGE_SUCCESS) {
+    fprintf(stderr, "Failed to load BMP file: %s\n", filePath);
+    fprintf(stderr, "Error: %s\n", cjelly_format_image_strerror(error));
+    exit(EXIT_FAILURE);
+  }
+
+  // Convert RGB to RGBA.
+  int texWidth = image->raw->width;
+  int texHeight = image->raw->height;
+  unsigned char* pixelsRGB = image->raw->data;
+  if (!pixelsRGB) {
+      fprintf(stderr, "Failed to load BMP file: %s\n", filePath);
+      exit(EXIT_FAILURE);
+  }
+
+  // Convert RGB to RGBA.
+  size_t pixelCount = texWidth * texHeight;
+  size_t rgbaImageSize = pixelCount * 4; // 4 bytes per pixel.
+  unsigned char* pixels = malloc(rgbaImageSize);
+  if (!pixels) {
+      fprintf(stderr, "Failed to allocate memory for RGBA image\n");
+      exit(EXIT_FAILURE);
+  }
+  for (size_t i = 0; i < pixelCount; ++i) {
+      pixels[i*4 + 0] = pixelsRGB[i*3 + 0];
+      pixels[i*4 + 1] = pixelsRGB[i*3 + 1];
+      pixels[i*4 + 2] = pixelsRGB[i*3 + 2];
+      pixels[i*4 + 3] = 255;  // Fully opaque.
+  }
+
+  // Clean up the original RGB image.
+  cjelly_format_image_free(image);
+
+  VkDeviceSize bufferSize = rgbaImageSize;
+
+  // Create a staging buffer to hold the pixel data.
+  VkBuffer stagingBuffer;
+  VkDeviceMemory stagingBufferMemory;
+  createBuffer(bufferSize,
+               VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+               &stagingBuffer, &stagingBufferMemory);
+
+  // Map memory and copy the pixel data.
+  void* data;
+  vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
+  memcpy(data, pixels, (size_t)bufferSize);
+  vkUnmapMemory(device, stagingBufferMemory);
+  free(pixels);
+
+  // Create the Vulkan texture image.
+  // We choose VK_FORMAT_R8G8B8A8_UNORM for the RGBA data.
+  createImage(texWidth, texHeight, VK_FORMAT_R8G8B8A8_UNORM,
+              VK_IMAGE_TILING_OPTIMAL,
+              VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+              VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+              &textureImage, &textureImageMemory);
+
+  // Transition image layout to prepare for the data copy.
+  transitionImageLayout(textureImage, VK_FORMAT_R8G8B8A8_UNORM,
+                        VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+  // Copy the pixel data from the staging buffer into the texture image.
+  copyBufferToImage(stagingBuffer, textureImage, texWidth, texHeight);
+
+  // Transition the image layout for shader access.
+  transitionImageLayout(textureImage, VK_FORMAT_R8G8B8A8_UNORM,
+                        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+
+  vkDestroyBuffer(device, stagingBuffer, NULL);
+  vkFreeMemory(device, stagingBufferMemory, NULL);
+}
+
+/// Creates an image view for the texture image.
+void createTextureImageView() {
+  VkImageViewCreateInfo viewInfo = {0};
+  viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+  viewInfo.image = textureImage;
+  viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+  viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+  viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  viewInfo.subresourceRange.baseMipLevel = 0;
+  viewInfo.subresourceRange.levelCount = 1;
+  viewInfo.subresourceRange.baseArrayLayer = 0;
+  viewInfo.subresourceRange.layerCount = 1;
+
+  if (vkCreateImageView(device, &viewInfo, NULL, &textureImageView) != VK_SUCCESS) {
+    fprintf(stderr, "Failed to create texture image view\n");
+    exit(EXIT_FAILURE);
+  }
+}
+
+/// Creates a texture sampler.
+void createTextureSampler() {
+  VkSamplerCreateInfo samplerInfo = {0};
+  samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+  samplerInfo.magFilter = VK_FILTER_LINEAR;
+  samplerInfo.minFilter = VK_FILTER_LINEAR;
+
+  samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+  samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+  samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+
+  samplerInfo.anisotropyEnable = VK_TRUE;
+  samplerInfo.maxAnisotropy = 16;
+
+  samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+  samplerInfo.unnormalizedCoordinates = VK_FALSE;
+
+  samplerInfo.compareEnable = VK_FALSE;
+  samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
+
+  samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+  samplerInfo.mipLodBias = 0.0f;
+  samplerInfo.minLod = 0.0f;
+  samplerInfo.maxLod = 0.0f;
+
+  if (vkCreateSampler(device, &samplerInfo, NULL, &textureSampler) != VK_SUCCESS) {
+    fprintf(stderr, "Failed to create texture sampler\n");
+    exit(EXIT_FAILURE);
+  }
+}
+
+/// Updates a descriptor set with the texture image view and sampler.
+void updateTextureDescriptorSet(VkDescriptorSet descriptorSet) {
+  VkDescriptorImageInfo imageInfo = {0};
+  imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  imageInfo.imageView = textureImageView;
+  imageInfo.sampler = textureSampler;
+
+  VkWriteDescriptorSet descriptorWrite = {0};
+  descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  descriptorWrite.dstSet = descriptorSet;
+  descriptorWrite.dstBinding = 0; // Must match the binding in the descriptor set layout.
+  descriptorWrite.dstArrayElement = 0;
+  descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  descriptorWrite.descriptorCount = 1;
+  descriptorWrite.pImageInfo = &imageInfo;
+
+  vkUpdateDescriptorSets(device, 1, &descriptorWrite, 0, NULL);
+}
+
+void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer* buffer, VkDeviceMemory* bufferMemory) {
+  VkBufferCreateInfo bufferInfo = {0};
+  bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+  bufferInfo.size = size;
+  bufferInfo.usage = usage;
+  bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+  if (vkCreateBuffer(device, &bufferInfo, NULL, buffer) != VK_SUCCESS) {
+    fprintf(stderr, "Failed to create buffer\n");
+    exit(EXIT_FAILURE);
+  }
+
+  VkMemoryRequirements memRequirements;
+  vkGetBufferMemoryRequirements(device, *buffer, &memRequirements);
+
+  VkMemoryAllocateInfo allocInfo = {0};
+  allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+  allocInfo.allocationSize = memRequirements.size;
+  allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties);
+
+  if (vkAllocateMemory(device, &allocInfo, NULL, bufferMemory) != VK_SUCCESS) {
+    fprintf(stderr, "Failed to allocate buffer memory\n");
+    exit(EXIT_FAILURE);
+  }
+
+  vkBindBufferMemory(device, *buffer, *bufferMemory, 0);
+}
+
+void createImage(uint32_t width, uint32_t height, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties, VkImage* image, VkDeviceMemory* imageMemory) {
+  VkImageCreateInfo imageInfo = {0};
+  imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+  imageInfo.imageType = VK_IMAGE_TYPE_2D;
+  imageInfo.extent.width = width;
+  imageInfo.extent.height = height;
+  imageInfo.extent.depth = 1;
+  imageInfo.mipLevels = 1;
+  imageInfo.arrayLayers = 1;
+  imageInfo.format = format;
+  imageInfo.tiling = tiling;
+  imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  imageInfo.usage = usage;
+  imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+  imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+  if (vkCreateImage(device, &imageInfo, NULL, image) != VK_SUCCESS) {
+    fprintf(stderr, "Failed to create image\n");
+    exit(EXIT_FAILURE);
+  }
+
+  VkMemoryRequirements memRequirements;
+  vkGetImageMemoryRequirements(device, *image, &memRequirements);
+
+  VkMemoryAllocateInfo allocInfo = {0};
+  allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+  allocInfo.allocationSize = memRequirements.size;
+  allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits, properties);
+
+  if (vkAllocateMemory(device, &allocInfo, NULL, imageMemory) != VK_SUCCESS) {
+    fprintf(stderr, "Failed to allocate image memory\n");
+    exit(EXIT_FAILURE);
+  }
+
+  vkBindImageMemory(device, *image, *imageMemory, 0);
+}
+
+VkCommandBuffer beginSingleTimeCommands(void) {
+  VkCommandBufferAllocateInfo allocInfo = {0};
+  allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+  allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+  allocInfo.commandPool = commandPool;
+  allocInfo.commandBufferCount = 1;
+
+  VkCommandBuffer commandBuffer;
+  vkAllocateCommandBuffers(device, &allocInfo, &commandBuffer);
+
+  VkCommandBufferBeginInfo beginInfo = {0};
+  beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+  beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+  vkBeginCommandBuffer(commandBuffer, &beginInfo);
+  return commandBuffer;
+}
+
+void endSingleTimeCommands(VkCommandBuffer commandBuffer) {
+  vkEndCommandBuffer(commandBuffer);
+
+  VkSubmitInfo submitInfo = {0};
+  submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+  submitInfo.commandBufferCount = 1;
+  submitInfo.pCommandBuffers = &commandBuffer;
+
+  vkQueueSubmit(graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+  vkQueueWaitIdle(graphicsQueue);
+
+  vkFreeCommandBuffers(device, commandPool, 1, &commandBuffer);
+}
+
+void transitionImageLayout(VkImage image, GCJ_MAYBE_UNUSED(VkFormat format), VkImageLayout oldLayout, VkImageLayout newLayout) {
+  VkCommandBuffer commandBuffer = beginSingleTimeCommands();
+
+  VkImageMemoryBarrier barrier = {0};
+  barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+  barrier.oldLayout = oldLayout;
+  barrier.newLayout = newLayout;
+  barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.image = image;
+
+  barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  barrier.subresourceRange.baseMipLevel = 0;
+  barrier.subresourceRange.levelCount = 1;
+  barrier.subresourceRange.baseArrayLayer = 0;
+  barrier.subresourceRange.layerCount = 1;
+
+  VkPipelineStageFlags sourceStage;
+  VkPipelineStageFlags destinationStage;
+
+  if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+    barrier.srcAccessMask = 0;
+    barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+  }
+  else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+  }
+  else {
+    fprintf(stderr, "Unsupported layout transition!\n");
+    exit(EXIT_FAILURE);
+  }
+
+  vkCmdPipelineBarrier(commandBuffer, sourceStage, destinationStage, 0,  0, NULL, 0, NULL, 1, &barrier);
+
+  endSingleTimeCommands(commandBuffer);
+}
+
+void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height) {
+  VkCommandBuffer commandBuffer = beginSingleTimeCommands();
+
+  VkBufferImageCopy region = {0};
+  region.bufferOffset = 0;
+  region.bufferRowLength = 0;  // Tightly packed.
+  region.bufferImageHeight = 0;
+  region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  region.imageSubresource.mipLevel = 0;
+  region.imageSubresource.baseArrayLayer = 0;
+  region.imageSubresource.layerCount = 1;
+  region.imageOffset = (VkOffset3D){0, 0, 0};
+  region.imageExtent = (VkExtent3D){width, height, 1};
+
+  vkCmdCopyBufferToImage(commandBuffer, buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+  endSingleTimeCommands(commandBuffer);
+}
+
+void createTexturedCommandBuffersForWindow(CJellyWindow * win) {
+  win->commandBuffers = malloc(sizeof(VkCommandBuffer) * win->swapChainImageCount);
+  VkCommandBufferAllocateInfo allocInfo = {0};
+  allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+  allocInfo.commandPool = commandPool;
+  allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+  allocInfo.commandBufferCount = win->swapChainImageCount;
+
+  if (vkAllocateCommandBuffers(device, &allocInfo, win->commandBuffers) != VK_SUCCESS) {
+    fprintf(stderr, "Failed to allocate textured command buffers\n");
+    exit(EXIT_FAILURE);
+  }
+
+  for (uint32_t i = 0; i < win->swapChainImageCount; i++) {
+    VkCommandBufferBeginInfo beginInfo = {0};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    if (vkBeginCommandBuffer(win->commandBuffers[i], &beginInfo) != VK_SUCCESS) {
+      fprintf(stderr, "Failed to begin textured command buffer\n");
+      exit(EXIT_FAILURE);
+    }
+
+    VkRenderPassBeginInfo renderPassInfo = {0};
+    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    renderPassInfo.renderPass = renderPass; // Assume same render pass is used.
+    renderPassInfo.framebuffer = win->swapChainFramebuffers[i];
+    renderPassInfo.renderArea.offset = (VkOffset2D){0, 0};
+    renderPassInfo.renderArea.extent = win->swapChainExtent;
+    VkClearValue clearColor = {{{0.1f, 0.1f, 0.1f, 1.0f}}};
+    renderPassInfo.clearValueCount = 1;
+    renderPassInfo.pClearValues = &clearColor;
+    vkCmdBeginRenderPass(win->commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+    // Set dynamic viewport and scissor.
+    VkViewport viewport = {0};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = (float)win->swapChainExtent.width;
+    viewport.height = (float)win->swapChainExtent.height;
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    vkCmdSetViewport(win->commandBuffers[i], 0, 1, &viewport);
+
+    VkRect2D scissor = {0};
+    scissor.offset = (VkOffset2D){0, 0};
+    scissor.extent = win->swapChainExtent;
+    vkCmdSetScissor(win->commandBuffers[i], 0, 1, &scissor);
+
+    VkDeviceSize offsets[] = {0};
+    // Bind the vertex buffer containing textured vertices.
+    vkCmdBindVertexBuffers(win->commandBuffers[i], 0, 1, &vertexBufferTextured, offsets);
+
+    // Bind the textured pipeline instead of the original one.
+    vkCmdBindPipeline(win->commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, texturedPipeline);
+
+    // Bind descriptor sets containing the texture (assuming descriptor set is allocated and updated).
+    assert(textureDescriptorSet != VK_NULL_HANDLE);
+    assert(texturedPipelineLayout != VK_NULL_HANDLE);
+    vkCmdBindDescriptorSets(win->commandBuffers[i],
+                            VK_PIPELINE_BIND_POINT_GRAPHICS,
+                            texturedPipelineLayout,
+                            0, 1, &textureDescriptorSet,
+                            0, NULL);
+
+    // Issue draw call (the count may vary based on your vertex buffer).
+    vkCmdDraw(win->commandBuffers[i], 6, 1, 0, 0);
+
+    vkCmdEndRenderPass(win->commandBuffers[i]);
+
+    if (vkEndCommandBuffer(win->commandBuffers[i]) != VK_SUCCESS) {
+      fprintf(stderr, "Failed to record textured command buffer\n");
+      exit(EXIT_FAILURE);
+    }
+  }
+}
+
+/**
+ * @brief Creates a vertex buffer for a textured square.
+ *
+ * This function allocates a Vulkan vertex buffer and uploads vertex data
+ * from the global 'verticesTextured' array. The VertexTextured structure includes
+ * both position and texture coordinates.
+ */
+void createTexturedVertexBuffer() {
+  // Vertices for a textured square.
+  VertexTextured verticesTextured[] = {
+    { { -0.5f, -0.5f }, { 0.0f, 0.0f } },
+    { {  0.5f, -0.5f }, { 1.0f, 0.0f } },
+    { {  0.5f,  0.5f }, { 1.0f, 1.0f } },
+    { {  0.5f,  0.5f }, { 1.0f, 1.0f } },  // Duplicate the top-right vertex.
+    { { -0.5f,  0.5f }, { 0.0f, 1.0f } },
+    { { -0.5f, -0.5f }, { 0.0f, 0.0f } }   // Duplicate the bottom-left vertex.
+  };
+
+  VkDeviceSize bufferSize = sizeof(verticesTextured);
+
+  VkBufferCreateInfo bufferInfo = {0};
+  bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+  bufferInfo.size = bufferSize;
+  bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+  bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+  if (vkCreateBuffer(device, &bufferInfo, NULL, &vertexBufferTextured) != VK_SUCCESS) {
+    fprintf(stderr, "Failed to create textured vertex buffer\n");
+    exit(EXIT_FAILURE);
+  }
+
+  VkMemoryRequirements memRequirements;
+  vkGetBufferMemoryRequirements(device, vertexBufferTextured, &memRequirements);
+
+  VkMemoryAllocateInfo allocInfo = {0};
+  allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+  allocInfo.allocationSize = memRequirements.size;
+  allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits,
+    VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+  if (vkAllocateMemory(device, &allocInfo, NULL, &vertexBufferTexturedMemory) != VK_SUCCESS) {
+    fprintf(stderr, "Failed to allocate textured vertex buffer memory\n");
+    exit(EXIT_FAILURE);
+  }
+
+  vkBindBufferMemory(device, vertexBufferTextured, vertexBufferTexturedMemory, 0);
+
+  void* data;
+  vkMapMemory(device, vertexBufferTexturedMemory, 0, bufferSize, 0, &data);
+  memcpy(data, verticesTextured, (size_t)bufferSize);
+  vkUnmapMemory(device, vertexBufferTexturedMemory);
+}
+
+//
 // === GLOBAL VULKAN INITIALIZATION & CLEANUP ===
 //
 
@@ -952,22 +1612,66 @@ void initVulkanGlobal() {
   if (enableValidationLayers) createDebugMessenger();
   pickPhysicalDevice();
   createLogicalDevice();
-  createVertexBuffer();
   createRenderPass();
-  createGraphicsPipeline();
   createCommandPool();
+
+  createVertexBuffer();
+  createGraphicsPipeline();
+
+  // Textured square setup.
+  createTextureImage("test/images/bmp/tang.bmp");
+  createTexturedVertexBuffer();
+  createTextureImageView();
+  createTextureSampler();
+  createDescriptorSetLayouts();
+  createTextureDescriptorPool();
+  allocateTextureDescriptorSet();
+  updateTextureDescriptorSet(textureDescriptorSet);
+  createTexturedGraphicsPipeline();
 }
 
 void cleanupVulkanGlobal() {
+  // Destroy pipeline and related objects.
   vkDestroyPipeline(device, graphicsPipeline, NULL);
   vkDestroyPipelineLayout(device, pipelineLayout, NULL);
   vkDestroyRenderPass(device, renderPass, NULL);
+
+  // Clean up the vertex buffer for the colorful square.
   vkDestroyBuffer(device, vertexBuffer, NULL);
   vkFreeMemory(device, vertexBufferMemory, NULL);
+
+  // --- Begin Texture Cleanup ---
+  // Destroy the textured pipeline and layout.
+  vkDestroyPipeline(device, texturedPipeline, NULL);
+  vkDestroyPipelineLayout(device, texturedPipelineLayout, NULL);
+
+  // Destroy the textured vertex buffer.
+  vkDestroyBuffer(device, vertexBufferTextured, NULL);
+  vkFreeMemory(device, vertexBufferTexturedMemory, NULL);
+
+  // Destroy the texture sampler and image view.
+  vkDestroySampler(device, textureSampler, NULL);
+  vkDestroyImageView(device, textureImageView, NULL);
+
+  // Destroy the texture image and free its memory.
+  vkDestroyImage(device, textureImage, NULL);
+  vkFreeMemory(device, textureImageMemory, NULL);
+
+  // Destroy the descriptor pool and layout for the texture.
+  vkDestroyDescriptorPool(device, textureDescriptorPool, NULL);
+  vkDestroyDescriptorSetLayout(device, textureDescriptorSetLayout, NULL);
+  // Note: The textureDescriptorSet is automatically freed when the descriptor pool is destroyed.
+  // --- End Texture Cleanup ---
+
+  // Clean up the command pool.
   vkDestroyCommandPool(device, commandPool, NULL);
+
+  // Destroy the debug messenger if validation layers are enabled.
   if (enableValidationLayers) {
     destroyDebugMessenger();
   }
+
+  // Destroy the device and instance.
   vkDestroyDevice(device, NULL);
   vkDestroyInstance(instance, NULL);
 }
