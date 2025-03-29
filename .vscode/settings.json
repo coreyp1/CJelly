@@ -1,0 +1,8 @@
+{
+  "files.associations": {
+    "compare": "c",
+    "type_traits": "c",
+  },
+  "C_Cpp.clang_format_style": "file",
+  "editor.formatOnSave": true
+}
