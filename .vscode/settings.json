@@ -4,5 +4,7 @@
     "type_traits": "c",
   },
   "C_Cpp.clang_format_style": "file",
-  "editor.formatOnSave": true
+  "editor.formatOnSave": true,
+  "files.trimTrailingWhitespace": true,
+  "files.insertFinalNewline": true,
 }
