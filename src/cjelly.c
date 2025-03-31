@@ -133,8 +133,9 @@ uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
   VkPhysicalDeviceMemoryProperties memProperties;
   vkGetPhysicalDeviceMemoryProperties(physicalDevice, &memProperties);
   for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
-    if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags &
-                                       properties) == properties) {
+    if ((typeFilter & (1 << i)) &&
+        (memProperties.memoryTypes[i].propertyFlags & properties) ==
+            properties) {
       return i;
     }
   }
@@ -166,7 +167,8 @@ VkResult CreateDebugUtilsMessengerEXT(VkInstance instance,
           instance, "vkCreateDebugUtilsMessengerEXT");
   if (func != NULL) {
     return func(instance, pCreateInfo, pAllocator, pDebugMessenger);
-  } else {
+  }
+  else {
     return VK_ERROR_EXTENSION_NOT_PRESENT;
   }
 }
@@ -630,13 +632,13 @@ void createInstance() {
     debugCreateInfo.messageSeverity =
         VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
         VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
-    debugCreateInfo.messageType =
-        VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
+    debugCreateInfo.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
         VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
         VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
     debugCreateInfo.pfnUserCallback = debugCallback;
     createInfo.pNext = (VkDebugUtilsMessengerCreateInfoEXT *)&debugCreateInfo;
-  } else {
+  }
+  else {
     createInfo.enabledLayerCount = 0;
     createInfo.pNext = NULL;
   }
@@ -656,10 +658,10 @@ void createDebugMessenger() {
   VkDebugUtilsMessengerCreateInfoEXT createInfo = {0};
   createInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
   createInfo.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
-                               VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+      VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
   createInfo.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
-                           VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
-                           VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+      VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+      VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
   createInfo.pfnUserCallback = debugCallback;
 
   if (CreateDebugUtilsMessengerEXT(
@@ -806,9 +808,9 @@ void createVertexBuffer() {
   VkMemoryAllocateInfo allocInfo = {0};
   allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
   allocInfo.allocationSize = memRequirements.size;
-  allocInfo.memoryTypeIndex = findMemoryType(
-      memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                                          VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+  allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits,
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+          VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
   if (vkAllocateMemory(device, &allocInfo, NULL, &vertexBufferMemory) !=
       VK_SUCCESS) {
@@ -956,9 +958,9 @@ void createGraphicsPipeline() {
   multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
   VkPipelineColorBlendAttachmentState colorBlendAttachment = {0};
-  colorBlendAttachment.colorWriteMask =
-      VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
-      VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+  colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
+      VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT |
+      VK_COLOR_COMPONENT_A_BIT;
   colorBlendAttachment.blendEnable = VK_FALSE;
 
   VkPipelineColorBlendStateCreateInfo colorBlending = {0};
@@ -1177,9 +1179,9 @@ void createTexturedGraphicsPipeline() {
   multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
 
   VkPipelineColorBlendAttachmentState colorBlendAttachment = {0};
-  colorBlendAttachment.colorWriteMask =
-      VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
-      VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+  colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
+      VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT |
+      VK_COLOR_COMPONENT_A_BIT;
   colorBlendAttachment.blendEnable = VK_FALSE;
 
   VkPipelineColorBlendStateCreateInfo colorBlending = {0};
@@ -1508,13 +1510,15 @@ void transitionImageLayout(VkImage image, GCJ_MAYBE_UNUSED(VkFormat format),
     barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
     sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
     destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
-  } else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL &&
-             newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+  }
+  else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL &&
+      newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
     barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
     barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
     sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
     destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-  } else {
+  }
+  else {
     fprintf(stderr, "Unsupported layout transition!\n");
     exit(EXIT_FAILURE);
   }
@@ -1663,9 +1667,9 @@ void createTexturedVertexBuffer() {
   VkMemoryAllocateInfo allocInfo = {0};
   allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
   allocInfo.allocationSize = memRequirements.size;
-  allocInfo.memoryTypeIndex = findMemoryType(
-      memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-                                          VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+  allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits,
+      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+          VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
   if (vkAllocateMemory(device, &allocInfo, NULL, &vertexBufferTexturedMemory) !=
       VK_SUCCESS) {

@@ -116,6 +116,7 @@ LIBOBJECTS := \
 	$(OBJ_DIR)/format/3d/obj.o \
 	$(OBJ_DIR)/format/image.o \
 	$(OBJ_DIR)/format/image/bmp.o \
+	$(OBJ_DIR)/application.o \
 	$(OBJ_DIR)/cjelly.o
 
 
@@ -151,6 +152,14 @@ DEP_LIBVER = \
 DEP_MACROS = \
 	include/cjelly/macros.h \
 	$(DEP_LIBVER)
+DEP_TYPES = \
+	include/cjelly/types.h \
+	$(DEP_MACROS)
+
+DEP_APPLICATION = \
+	include/cjelly/application.h \
+	$(DEP_TYPES)
+
 DEP_FORMAT_3D_MTL = \
 	include/cjelly/format/3d/mtl.h \
 	$(DEP_MACROS)
@@ -195,6 +204,10 @@ $(OBJ_DIR)/format/image.o: \
 $(OBJ_DIR)/format/image/bmp.o: \
 	src/format/image/bmp.c \
 	$(DEP_MACROS)
+
+$(OBJ_DIR)/application.o: \
+	src/application.c \
+	$(DEP_APPLICATION)
 
 $(OBJ_DIR)/cjelly.o: \
 	src/cjelly.c \
