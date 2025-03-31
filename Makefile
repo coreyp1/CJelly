@@ -109,15 +109,14 @@ else
 
 endif
 
+# The standard include directories for the project.
+INCLUDE := -I include/ -I $(GEN_DIR)/
 
-INCLUDE := -I include/cjelly -I include/ -I $(GEN_DIR)/
-LIBOBJECTS := \
-	$(OBJ_DIR)/format/3d/mtl.o \
-	$(OBJ_DIR)/format/3d/obj.o \
-	$(OBJ_DIR)/format/image.o \
-	$(OBJ_DIR)/format/image/bmp.o \
-	$(OBJ_DIR)/application.o \
-	$(OBJ_DIR)/cjelly.o
+# Automatically collect all .c source files under the src directory.
+SOURCES := $(shell find src -type f -name '*.c')
+
+# Convert each source file path to an object file path.
+LIBOBJECTS := $(patsubst src/%.c,$(OBJ_DIR)/%.o,$(SOURCES))
 
 
 TESTFLAGS := `PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --libs --cflags gtest`
@@ -145,77 +144,38 @@ $(APP_DIR)/test/%: test/%
 
 
 ####################################################################
-# Dependency Variables
+# Dependency Inclusion
 ####################################################################
-DEP_LIBVER = \
-	include/cjelly/libver.h
-DEP_MACROS = \
-	include/cjelly/macros.h \
-	$(DEP_LIBVER)
-DEP_TYPES = \
-	include/cjelly/types.h \
-	$(DEP_MACROS)
 
-DEP_APPLICATION = \
-	include/cjelly/application.h \
-	$(DEP_TYPES)
-
-DEP_FORMAT_3D_MTL = \
-	include/cjelly/format/3d/mtl.h \
-	$(DEP_MACROS)
-DEP_FORMAT_3D_OBJ = \
-	include/cjelly/format/3d/obj.h \
-	$(DEP_FORMAT_3D_MTL)
-DEP_FORMAT_IMAGE = \
-	include/cjelly/format/image.h \
-	$(DEP_MACROS)
-DEP_FORMAT_IMAGE_BMP = \
-	include/cjelly/format/image/bmp.h \
-	$(DEP_MACROS)
-
-DEP_CJELLY = \
-	include/cjelly/cjelly.h \
-	$(DEP_MACROS)
+# Automatically include all generated dependency files.
+-include $(wildcard $(OBJ_DIR)/*.d)
 
 
 ####################################################################
 # Object Files
 ####################################################################
 
-$(LIBOBJECTS) :
+# Pattern rule for C source files: compile .c files to .o files, generating dependency files.
+$(OBJ_DIR)/%.o: src/%.c
 	@printf "\n### Compiling $@ ###\n"
 	@mkdir -p $(@D)
-	$(CC) $(CFLAGS) $(INCLUDE) -c $< -MMD -o $@ $(OS_SPECIFIC_CXX_FLAGS)
+	$(CC) $(CFLAGS) $(INCLUDE) -c $< -MMD -MP -MF $(@:.o=.d) -o $@ $(OS_SPECIFIC_CXX_FLAGS)
 
-$(OBJ_DIR)/format/3d/mtl.o: \
-	src/format/3d/mtl.c \
-	$(DEP_FORMAT_3D_MTL)
+# Pattern rule for C++ source files (if any):
+$(OBJ_DIR)/%.o: src/%.cpp
+	@printf "\n### Compiling $@ ###\n"
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(INCLUDE) -c $< -MMD -MP -MF $(@:.o=.d) -o $@
 
-$(OBJ_DIR)/format/3d/obj.o: \
-	src/format/3d/obj.c \
-	$(DEP_FORMAT_3D_OBJ)
-
-$(OBJ_DIR)/format/image.o: \
-	src/format/image.c \
-	$(DEP_FORMAT_IMAGE) \
-	$(DEP_FORMAT_IMAGE_BMP) \
-	$(DEP_MACROS)
-
-$(OBJ_DIR)/format/image/bmp.o: \
-	src/format/image/bmp.c \
-	$(DEP_MACROS)
-
-$(OBJ_DIR)/application.o: \
-	src/application.c \
-	$(DEP_APPLICATION)
-
+# Because the shaders are generated (and therefore will not exist the first
+# time that the Makefile is run), we need to explicitly add a dependency to the
+# object file.  Otherwise, the shader will not be compiled yet, meaning that
+# the generated header file will not exist yet, and the compiler error out
+# before generating the list of dependencies.
 $(OBJ_DIR)/cjelly.o: \
-	src/cjelly.c \
-	$(DEP_FORMAT_IMAGE) \
 	$(GEN_DIR)/shaders/basic.vert.h \
 	$(GEN_DIR)/shaders/basic.frag.h \
-	$(GEN_DIR)/shaders/textured.frag.h \
-	$(DEP_CJELLY)
+	$(GEN_DIR)/shaders/textured.frag.h
 
 
 ####################################################################

@@ -76,6 +76,11 @@ int enableValidationLayers;
 // Global debug messenger handle.
 VkDebugUtilsMessengerEXT debugMessenger = VK_NULL_HANDLE;
 
+// Global constants for window dimensions.
+const int WIDTH = 800;
+const int HEIGHT = 600;
+
+
 // Vertex structure for the square.
 typedef struct Vertex {
   float pos[2];   // Position at location 0, a vec2.
