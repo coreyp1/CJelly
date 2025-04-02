@@ -415,6 +415,16 @@ CJellyApplicationError cjelly_application_init(
     }
   }
 
+  // Copy the application name to the app structure.
+  if (app->appName) {
+    free(app->appName);
+  }
+  app->appName = strdup(appName);
+  if (!app->appName) {
+    fprintf(stderr, "Failed to copy application name.\n");
+    goto ERROR_RETURN;
+  }
+
   // Assemble the information needed to create the Vulkan instance.
   assert(app->instance == VK_NULL_HANDLE);
   VkApplicationInfo appInfo = {0};
@@ -458,7 +468,8 @@ CJellyApplicationError cjelly_application_init(
   if (res != VK_SUCCESS || app->instance == VK_NULL_HANDLE) {
     fprintf(stderr,
         "Failed to create temporary Vulkan instance for device enumeration.\n");
-    return CJELLY_APPLICATION_ERROR_INIT_FAILED;
+    err = CJELLY_APPLICATION_ERROR_INIT_FAILED;
+    goto ERROR_RETURN;
   }
 
   // Create a temporary, headless surface for device enumeration.
@@ -506,7 +517,7 @@ CJellyApplicationError cjelly_application_init(
   if (res != VK_SUCCESS) {
     fprintf(stderr, "Failed to retrieve physical devices.\n");
     err = CJELLY_APPLICATION_ERROR_INIT_FAILED;
-    goto ERROR_FREE_DEVICES;
+    goto ERROR_RETURN;
   }
 
   // Filter physical devices based on required options.
@@ -683,11 +694,13 @@ CJellyApplicationError cjelly_application_init(
 
   // The `physicalDevices` array is no longer needed.
   free(physicalDevices);
+  physicalDevices = NULL;
 
   // Check if a suitable physical device was found.
   if (bestPhysicalDevice == VK_NULL_HANDLE) {
     fprintf(stderr, "No physical device meets the required constraints.\n");
-    return CJELLY_APPLICATION_ERROR_INVALID_OPTIONS;
+    err = CJELLY_APPLICATION_ERROR_INVALID_OPTIONS;
+    goto ERROR_RETURN;
   }
   app->physicalDevice = bestPhysicalDevice;
 
@@ -695,16 +708,6 @@ CJellyApplicationError cjelly_application_init(
   err = cjelly_application_create_logical_device(app);
   if (err != CJELLY_APPLICATION_ERROR_NONE) {
     fprintf(stderr, "Failed to create logical device.\n");
-    goto ERROR_RETURN;
-  }
-
-  // Copy the application name to the app structure.
-  if (app->appName) {
-    free(app->appName);
-  }
-  app->appName = strdup(appName);
-  if (!app->appName) {
-    fprintf(stderr, "Failed to copy application name.\n");
     goto ERROR_RETURN;
   }
 
@@ -733,9 +736,12 @@ CJellyApplicationError cjelly_application_init(
   return CJELLY_APPLICATION_ERROR_NONE;
 
   // Error handling.
-ERROR_FREE_DEVICES:
-  free(physicalDevices);
 ERROR_RETURN:
+  // Destroy the list of physical devices.
+  if (physicalDevices) {
+    free(physicalDevices);
+  }
+
   // Free the application name if it was allocated.
   if (app->appName) {
     free(app->appName);
