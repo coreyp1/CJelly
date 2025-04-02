@@ -114,109 +114,60 @@ static void DestroyDebugUtilsMessengerEXT(VkInstance instance,
 
 
 /**
- * @brief Helper function to add an extension to the options.
+ * @brief Internal helper function to add an extension string to a dynamic
+ * array.
  *
- * @param opts Pointer to the options structure.
- * @param extension The name of the extension to add.
- * @return true on success, false on failure (e.g. memory allocation failure).
+ * This function checks for duplicates, grows the array if needed, duplicates
+ * the extension string, and appends it to the array.
+ *
+ * @param extensions A pointer to the dynamic array of extension strings.
+ *                   (This pointer will be updated if the array is reallocated.)
+ * @param count A pointer to the current number of extensions in the array.
+ * @param capacity A pointer to the capacity of the array.
+ * @param extension The extension string to add.
+ * @return CJellyApplicationError CJELLY_APPLICATION_ERROR_NONE on success,
+ *         or an error code on failure.
  */
-static bool add_extension_internal(
-    CJellyApplicationOptions * opts, const char * extension) {
+static CJellyApplicationError add_extension_generic(const char *** extensions,
+    size_t * count, size_t * capacity, const char * extension) {
 
-  assert(opts);
-  assert(extension);
-  assert(opts->requiredExtensions);
+  assert(extensions);
+  assert(count);
+  assert(capacity);
+  assert(extensions);
 
-  // Check if the layer name is already present in the required layers.
-  for (size_t i = 0; i < opts->requiredExtensionCount; i++) {
-    if (strcmp(opts->requiredExtensions[i], extension) == 0) {
-      // Layer already exists, no need to add it again.
-      return true;
+  if (!extension)
+    return CJELLY_APPLICATION_ERROR_INVALID_OPTIONS;
+
+  // Check if the extension is already present.
+  for (size_t i = 0; i < *count; i++) {
+    if (strcmp((*extensions)[i], extension) == 0) {
+      return CJELLY_APPLICATION_ERROR_NONE;
     }
   }
 
-  // Reserve space for the new layer.
-  if (opts->requiredExtensionCount == opts->requiredExtensionCapacity) {
-    size_t newCap = opts->requiredExtensionCapacity * 2;
-    const char ** newArray =
-        realloc(opts->requiredExtensions, sizeof(char *) * newCap);
+  // Expand the array if necessary.
+  if (*count == *capacity) {
+    size_t newCap = (*capacity) * 2;
+    const char ** newArray = realloc(*extensions, sizeof(char *) * newCap);
     if (!newArray) {
-      fprintf(stderr, "Failed to reallocate memory for layers.\n");
-      return false;
+      fprintf(stderr, "Failed to reallocate memory for extensions.\n");
+      return CJELLY_APPLICATION_ERROR_INIT_FAILED;
     }
-    opts->requiredExtensions = newArray;
-    opts->requiredExtensionCapacity = newCap;
+    *extensions = newArray;
+    *capacity = newCap;
   }
 
-  // Duplicate the layer name and add it to the array.
+  // Duplicate the extension string and add it to the array.
   char * dup = strdup(extension);
   if (!dup) {
-    fprintf(stderr, "Failed to duplicate layer name.\n");
-    return false;
+    fprintf(stderr, "Failed to duplicate extension name.\n");
+    return CJELLY_APPLICATION_ERROR_INIT_FAILED;
   }
-  opts->requiredExtensions[opts->requiredExtensionCount] = dup;
-  opts->requiredExtensionCount++;
+  (*extensions)[*count] = dup;
+  (*count)++;
 
-  // Everything went well, return success.
-  return true;
-}
-
-
-/**
- * @brief Helper function to initialize internal options.
- *
- * This function initializes the options structure with default values and
- * allocates memory for the dynamic arrays for required and preferred layers.
- *
- * @param opts Pointer to the options structure to initialize.
- * @return true on success, false if a memory allocation fails.
- */
-static bool initialize_options(CJellyApplicationOptions * opts) {
-  assert(opts);
-
-  opts->enableValidation = true;
-  opts->requiredVulkanVersion = CJELLY_MINIMUM_VULKAN_VERSION;
-  opts->requiredGPUMemory = 512;
-  opts->requiredDeviceType = CJELLY_DEVICE_TYPE_ANY;
-  opts->preferredDeviceType = CJELLY_DEVICE_TYPE_ANY;
-  opts->requiredExtensionCount = 0;
-  opts->requiredExtensionCapacity = INITIAL_EXTENSION_CAPACITY;
-  opts->requiredExtensions =
-      malloc(sizeof(char *) * opts->requiredExtensionCapacity);
-  if (!opts->requiredExtensions) {
-    fprintf(stderr, "Failed to allocate memory for required layers.\n");
-    return false;
-  }
-
-  // Add extensions required by CJelly.
-  const char * cjellyRequiredExtensions[] = {
-      VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME,
-      VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME,
-      VK_KHR_MAINTENANCE3_EXTENSION_NAME,
-      VK_KHR_SURFACE_EXTENSION_NAME,
-      VK_KHR_SWAPCHAIN_EXTENSION_NAME,
-#ifdef _WIN32
-      VK_KHR_WIN32_SURFACE_EXTENSION_NAME,
-#else
-      VK_KHR_XLIB_SURFACE_EXTENSION_NAME,
-#endif
-  };
-  for (size_t i = 0; i <
-      sizeof(cjellyRequiredExtensions) / sizeof(cjellyRequiredExtensions[0]);
-      ++i) {
-    if (!add_extension_internal(opts, cjellyRequiredExtensions[i])) {
-      fprintf(stderr, "Failed to add CJelly required layer: %s\n",
-          cjellyRequiredExtensions[i]);
-      goto ERROR_FREE_OPTIONS;
-    }
-  }
-
-  return true;
-
-  // Error handling.
-ERROR_FREE_OPTIONS:
-  free(opts->requiredExtensions);
-  return false;
+  return CJELLY_APPLICATION_ERROR_NONE;
 }
 
 
@@ -230,12 +181,120 @@ ERROR_FREE_OPTIONS:
 static void free_options(CJellyApplicationOptions * opts) {
   assert(opts);
 
-  if (opts->requiredExtensions) {
-    for (size_t i = 0; i < opts->requiredExtensionCount; i++) {
-      free((void *)opts->requiredExtensions[i]);
+  // Instance Extensions.
+  if (opts->requiredInstanceExtensions) {
+    for (size_t i = 0; i < opts->requiredInstanceExtensionCount; i++) {
+      free((void *)opts->requiredInstanceExtensions[i]);
     }
-    free(opts->requiredExtensions);
+    free(opts->requiredInstanceExtensions);
   }
+  opts->requiredInstanceExtensions = NULL;
+  opts->requiredInstanceExtensionCount = 0;
+  opts->requiredInstanceExtensionCapacity = 0;
+
+  // Device Extensions.
+  if (opts->requiredDeviceExtensions) {
+    for (size_t i = 0; i < opts->requiredDeviceExtensionCount; i++) {
+      free((void *)opts->requiredDeviceExtensions[i]);
+    }
+    free(opts->requiredDeviceExtensions);
+  }
+  opts->requiredDeviceExtensions = NULL;
+  opts->requiredDeviceExtensionCount = 0;
+  opts->requiredDeviceExtensionCapacity = 0;
+}
+
+
+/**
+ * @brief Helper function to initialize internal options.
+ *
+ * This function initializes the options structure with default values and
+ * allocates memory for the dynamic arrays for required instance and device
+ * extensions.
+ *
+ * @param opts Pointer to the options structure to initialize.
+ * @return true on success, false if a memory allocation fails.
+ */
+static bool initialize_options(CJellyApplicationOptions * opts) {
+  assert(opts);
+
+  opts->enableValidation = true;
+  opts->requiredVulkanVersion = CJELLY_MINIMUM_VULKAN_VERSION;
+  opts->requiredGPUMemory = 512;
+  opts->requiredDeviceType = CJELLY_DEVICE_TYPE_ANY;
+  opts->preferredDeviceType = CJELLY_DEVICE_TYPE_ANY;
+
+  // Allocate the instance extension array.
+  opts->requiredInstanceExtensionCount = 0;
+  opts->requiredInstanceExtensionCapacity = INITIAL_EXTENSION_CAPACITY;
+  opts->requiredInstanceExtensions =
+      malloc(sizeof(char *) * opts->requiredInstanceExtensionCapacity);
+  if (!opts->requiredInstanceExtensions) {
+    fprintf(stderr,
+        "Failed to allocate memory for required instance extensions.\n");
+    goto ERROR_FREE_OPTIONS;
+  }
+
+  // Allocate the device extension array.
+  opts->requiredDeviceExtensionCount = 0;
+  opts->requiredDeviceExtensionCapacity = INITIAL_EXTENSION_CAPACITY;
+  opts->requiredDeviceExtensions =
+      malloc(sizeof(char *) * opts->requiredDeviceExtensionCapacity);
+  if (!opts->requiredDeviceExtensions) {
+    fprintf(
+        stderr, "Failed to allocate memory for required device extensions.\n");
+    goto ERROR_FREE_OPTIONS;
+  }
+
+  // Add instance extensions required by CJelly.
+  // (Instance extensions are enabled during vkCreateInstance.)
+  const char * instanceExtensions[] = {
+      VK_KHR_SURFACE_EXTENSION_NAME,
+#ifdef _WIN32
+      VK_KHR_WIN32_SURFACE_EXTENSION_NAME,
+#else
+      VK_KHR_XLIB_SURFACE_EXTENSION_NAME,
+#endif
+  };
+  size_t instanceExtCount =
+      sizeof(instanceExtensions) / sizeof(instanceExtensions[0]);
+  for (size_t i = 0; i < instanceExtCount; ++i) {
+    if (add_extension_generic(&opts->requiredInstanceExtensions,
+            &opts->requiredInstanceExtensionCount,
+            &opts->requiredInstanceExtensionCapacity,
+            instanceExtensions[i]) != CJELLY_APPLICATION_ERROR_NONE) {
+      fprintf(stderr, "Failed to add required instance extension: %s\n",
+          instanceExtensions[i]);
+      goto ERROR_FREE_OPTIONS;
+    }
+  }
+
+  // Add device extensions required by CJelly.
+  // (Device extensions are enabled during vkCreateDevice.)
+  const char * deviceExtensions[] = {
+      VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME,
+      VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME,
+      VK_KHR_MAINTENANCE3_EXTENSION_NAME,
+      VK_KHR_SWAPCHAIN_EXTENSION_NAME,
+  };
+  size_t deviceExtCount =
+      sizeof(deviceExtensions) / sizeof(deviceExtensions[0]);
+  for (size_t i = 0; i < deviceExtCount; ++i) {
+    if (add_extension_generic(&opts->requiredDeviceExtensions,
+            &opts->requiredDeviceExtensionCount,
+            &opts->requiredDeviceExtensionCapacity,
+            deviceExtensions[i]) != CJELLY_APPLICATION_ERROR_NONE) {
+      fprintf(stderr, "Failed to add required device extension: %s\n",
+          deviceExtensions[i]);
+      goto ERROR_FREE_OPTIONS;
+    }
+  }
+
+  return true;
+
+ERROR_FREE_OPTIONS:
+  free_options(opts);
+  return false;
 }
 
 
@@ -347,24 +406,31 @@ void cjelly_application_set_device_type(
 }
 
 
-CJellyApplicationError cjelly_application_add_extension(
+CJellyApplicationError cjelly_application_add_instance_extension(
     CJellyApplication * app, const char * extension) {
 
-  if (!app || !extension)
+  if (!app)
     return CJELLY_APPLICATION_ERROR_INVALID_OPTIONS;
 
-  if (!add_extension_internal(&app->options, extension)) {
-    fprintf(stderr, "Failed to add layer: %s\n", extension);
-    return CJELLY_APPLICATION_ERROR_INIT_FAILED;
-  }
-
-  return CJELLY_APPLICATION_ERROR_NONE;
+  return add_extension_generic(&app->options.requiredInstanceExtensions,
+      &app->options.requiredInstanceExtensionCount,
+      &app->options.requiredInstanceExtensionCapacity, extension);
 }
 
 
-CJellyApplicationError cjelly_application_init(
-    CJellyApplication * app, const char * appName, uint32_t appVersion) {
+CJellyApplicationError cjelly_application_add_device_extension(
+    CJellyApplication * app, const char * extension) {
 
+  if (!app)
+    return CJELLY_APPLICATION_ERROR_INVALID_OPTIONS;
+
+  return add_extension_generic(&app->options.requiredDeviceExtensions,
+      &app->options.requiredDeviceExtensionCount,
+      &app->options.requiredDeviceExtensionCapacity, extension);
+}
+
+
+CJellyApplicationError cjelly_application_init(CJellyApplication * app) {
   CJellyApplicationError err = CJELLY_APPLICATION_ERROR_NONE;
 
   if (!app) {
@@ -410,29 +476,20 @@ CJellyApplicationError cjelly_application_init(
 
   // If validation is enabled, then add the debug extension.
   if (app->options.enableValidation) {
-    if (!add_extension_internal(
-            &app->options, VK_EXT_DEBUG_UTILS_EXTENSION_NAME)) {
+    err = cjelly_application_add_instance_extension(
+        app, VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+    if (err != CJELLY_APPLICATION_ERROR_NONE) {
       fprintf(stderr, "Failed to add debug extension.\n");
       return CJELLY_APPLICATION_ERROR_OUT_OF_MEMORY;
     }
-  }
-
-  // Copy the application name to the app structure.
-  if (app->appName) {
-    free(app->appName);
-  }
-  app->appName = strdup(appName);
-  if (!app->appName) {
-    fprintf(stderr, "Failed to copy application name.\n");
-    goto ERROR_RETURN;
   }
 
   // Assemble the information needed to create the Vulkan instance.
   assert(app->instance == VK_NULL_HANDLE);
   VkApplicationInfo appInfo = {0};
   appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-  appInfo.pApplicationName = appName;
-  appInfo.applicationVersion = appVersion;
+  appInfo.pApplicationName = app->appName;
+  appInfo.applicationVersion = app->appVersion;
   appInfo.pEngineName = CJELLY_ENGINE_NAME;
   appInfo.engineVersion = CJELLY_VERSION_UINT32;
   appInfo.apiVersion = app->options.requiredVulkanVersion;
@@ -440,6 +497,10 @@ CJellyApplicationError cjelly_application_init(
   VkInstanceCreateInfo instanceCreateInfo = {0};
   instanceCreateInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
   instanceCreateInfo.pApplicationInfo = &appInfo;
+  instanceCreateInfo.enabledExtensionCount =
+      app->options.requiredInstanceExtensionCount;
+  instanceCreateInfo.ppEnabledExtensionNames =
+      (const char **)app->options.requiredInstanceExtensions;
 
   // If validation layers are enabled, add the required layers and extensions.
   const char * validationLayers[] = {
@@ -643,8 +704,8 @@ CJellyApplicationError cjelly_application_init(
 
     // For each required extension, check if it is present in the device's list.
     bool extensionsSupported = true;
-    for (size_t e = 0; e < app->options.requiredExtensionCount; ++e) {
-      const char * reqExt = app->options.requiredExtensions[e];
+    for (size_t e = 0; e < app->options.requiredDeviceExtensionCount; ++e) {
+      const char * reqExt = app->options.requiredDeviceExtensions[e];
       bool found = false;
       for (uint32_t j = 0; j < availableExtensionCount; ++j) {
         if (strcmp(reqExt, availableExtensions[j].extensionName) == 0) {
@@ -745,12 +806,6 @@ ERROR_RETURN:
   // Destroy the list of physical devices.
   if (physicalDevices) {
     free(physicalDevices);
-  }
-
-  // Free the application name if it was allocated.
-  if (app->appName) {
-    free(app->appName);
-    app->appName = NULL;
   }
 
   // Destroy the debug messenger if it was created.
@@ -953,8 +1008,10 @@ CJellyApplicationError cjelly_application_create_logical_device(
   deviceCreateInfo.pQueueCreateInfos = queueCreateInfos;
 
   // Enable the required extensions specified in the application options.
-  deviceCreateInfo.enabledExtensionCount = app->options.requiredExtensionCount;
-  deviceCreateInfo.ppEnabledExtensionNames = app->options.requiredExtensions;
+  deviceCreateInfo.enabledExtensionCount =
+      app->options.requiredDeviceExtensionCount;
+  deviceCreateInfo.ppEnabledExtensionNames =
+      app->options.requiredDeviceExtensions;
 
   // Finally, create the logical device.
   VkResult result = vkCreateDevice(

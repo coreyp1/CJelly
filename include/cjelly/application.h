@@ -74,7 +74,7 @@ typedef enum CJellyApplicationError {
  * This structure holds both required and preferred constraints for Vulkan
  * context initialization. These include flags for validation, the required
  * Vulkan API version, GPU memory, and device type, along with separate lists
- * for required and preferred layers/extensions and other options.
+ * for required instance extensions and required device extensions.
  *
  * If a required option is not met, the application will fail to initialize.
  *
@@ -97,24 +97,40 @@ typedef enum CJellyApplicationError {
  * @var preferredDeviceType
  *  The preferred device type (e.g., discrete or integrated).
  *
- * @var requiredExtensions
- *  A dynamic array of names of layers/extensions that are required.
+ * @var requiredInstanceExtensions
+ *  A dynamic array of names of instance extensions that are required.
  *
- * @var requiredExtensionCount
- *  The current number of required layers/extensions.
+ * @var requiredInstanceExtensionCount
+ *  The current number of required instance extensions.
  *
- * @var requiredExtensionCapacity
- *  The allocated capacity for the required layers array.
+ * @var requiredInstanceExtensionCapacity
+ *  The allocated capacity for the required instance extensions array.
+ *
+ * @var requiredDeviceExtensions
+ *  A dynamic array of names of device extensions that are required.
+ *
+ * @var requiredDeviceExtensionCount
+ *  The current number of required device extensions.
+ *
+ * @var requiredDeviceExtensionCapacity
+ *  The allocated capacity for the required device extensions array.
  */
 typedef struct CJellyApplicationOptions {
   uint32_t requiredVulkanVersion;
   uint32_t requiredGPUMemory;
-  const char ** requiredExtensions;
-  size_t requiredExtensionCount;
-  size_t requiredExtensionCapacity;
   CJellyApplicationDeviceType requiredDeviceType;
   CJellyApplicationDeviceType preferredDeviceType;
   bool enableValidation;
+
+  // Instance extensions (enabled during vkCreateInstance)
+  const char ** requiredInstanceExtensions;
+  size_t requiredInstanceExtensionCount;
+  size_t requiredInstanceExtensionCapacity;
+
+  // Device extensions (enabled during vkCreateDevice)
+  const char ** requiredDeviceExtensions;
+  size_t requiredDeviceExtensionCount;
+  size_t requiredDeviceExtensionCapacity;
 } CJellyApplicationOptions;
 
 
@@ -263,19 +279,36 @@ void cjelly_application_set_device_type(
 
 
 /**
- * @brief Add an extension requirement to the physical device selection.
+ * @brief Add a required instance extension to the application.
  *
- * This function adds an extension requirement to the application. The
- * application will not select a Vulkan device that does not support the
- * required extensions.
+ * This function adds a required instance extension for the Vulkan instance
+ * creation. The application will fail to initialize if the instance extension
+ * is not available.
  *
  * @param app A pointer to the application object.
- * @param extension The name of the required extension (e.g.,
- *   "VK_EXT_descriptor_indexing").
+ * @param extension The name of the required instance extension (e.g.,
+ * "VK_EXT_debug_utils").
  * @return CJellyApplicationError CJELLY_APPLICATION_ERROR_NONE on success, or
- *   an error code on failure.
+ * an error code on failure.
  */
-CJellyApplicationError cjelly_application_add_extension(
+CJellyApplicationError cjelly_application_add_instance_extension(
+    CJellyApplication * app, const char * extension);
+
+
+/**
+ * @brief Add a required device extension to the application.
+ *
+ * This function adds a required device extension for the Vulkan logical device
+ * creation. The application will not select a Vulkan device that does not
+ * support the required device extension.
+ *
+ * @param app A pointer to the application object.
+ * @param extension The name of the required device extension (e.g.,
+ * "VK_EXT_descriptor_indexing").
+ * @return CJellyApplicationError CJELLY_APPLICATION_ERROR_NONE on success, or
+ * an error code on failure.
+ */
+CJellyApplicationError cjelly_application_add_device_extension(
     CJellyApplication * app, const char * extension);
 
 
@@ -291,13 +324,10 @@ CJellyApplicationError cjelly_application_add_extension(
  * the required options, the function will return an error.
  *
  * @param app A pointer to the application object.
- * @param appName The name of the application.
- * @param appVersion The version of the application.
  * @return CJellyApplicationError CJELLY_APPLICATION_ERROR_NONE on success, or
  * an error code on failure.
  */
-CJellyApplicationError cjelly_application_init(
-    CJellyApplication * app, const char * appName, uint32_t appVersion);
+CJellyApplicationError cjelly_application_init(CJellyApplication * app);
 
 
 /**
