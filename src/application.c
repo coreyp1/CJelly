@@ -267,9 +267,14 @@ CJellyApplicationError cjelly_application_create(
   // Set the Vulkan inforation to NULL.
   newApp->instance = VK_NULL_HANDLE;
   newApp->physicalDevice = VK_NULL_HANDLE;
+  newApp->logicalDevice = VK_NULL_HANDLE;
   newApp->commandPool = VK_NULL_HANDLE;
   newApp->vkContext = NULL;
   newApp->debugMessenger = VK_NULL_HANDLE;
+  newApp->graphicsQueue = VK_NULL_HANDLE;
+  newApp->transferQueue = VK_NULL_HANDLE;
+  newApp->computeQueue = VK_NULL_HANDLE;
+  newApp->headlessSurface = VK_NULL_HANDLE;
 
   *app = newApp;
   return CJELLY_APPLICATION_ERROR_NONE;
@@ -462,7 +467,6 @@ CJellyApplicationError cjelly_application_init(
   headlessCreateInfo.flags = 0;
   headlessCreateInfo.pNext = NULL;
 
-  VkSurfaceKHR headlessSurface = VK_NULL_HANDLE;
   PFN_vkCreateHeadlessSurfaceEXT pfnCreateHeadlessSurface =
       (PFN_vkCreateHeadlessSurfaceEXT)vkGetInstanceProcAddr(
           app->instance, "vkCreateHeadlessSurfaceEXT");
@@ -472,8 +476,8 @@ CJellyApplicationError cjelly_application_init(
     goto ERROR_RETURN;
   }
   res = pfnCreateHeadlessSurface(
-      app->instance, &headlessCreateInfo, NULL, &headlessSurface);
-  if (res != VK_SUCCESS || headlessSurface == VK_NULL_HANDLE) {
+      app->instance, &headlessCreateInfo, NULL, &app->headlessSurface);
+  if (res != VK_SUCCESS || app->headlessSurface == VK_NULL_HANDLE) {
     fprintf(stderr, "Failed to create headless surface.\n");
     err = CJELLY_APPLICATION_ERROR_INIT_FAILED;
     goto ERROR_RETURN;
@@ -560,7 +564,7 @@ CJellyApplicationError cjelly_application_init(
       // }
       VkBool32 presentSupport = VK_FALSE;
       vkGetPhysicalDeviceSurfaceSupportKHR(
-          physicalDevice, j, headlessSurface, &presentSupport);
+          physicalDevice, j, app->headlessSurface, &presentSupport);
       if (presentSupport == VK_TRUE) {
         presentFound = true;
       }
@@ -687,6 +691,13 @@ CJellyApplicationError cjelly_application_init(
   }
   app->physicalDevice = bestPhysicalDevice;
 
+  // Create the logical device.
+  err = cjelly_application_create_logical_device(app);
+  if (err != CJELLY_APPLICATION_ERROR_NONE) {
+    fprintf(stderr, "Failed to create logical device.\n");
+    goto ERROR_RETURN;
+  }
+
   // Copy the application name to the app structure.
   if (app->appName) {
     free(app->appName);
@@ -725,11 +736,6 @@ CJellyApplicationError cjelly_application_init(
 ERROR_FREE_DEVICES:
   free(physicalDevices);
 ERROR_RETURN:
-  // Free the temporary headless surface.
-  if (headlessSurface != VK_NULL_HANDLE) {
-    vkDestroySurfaceKHR(app->instance, headlessSurface, NULL);
-  }
-
   // Free the application name if it was allocated.
   if (app->appName) {
     free(app->appName);
@@ -740,6 +746,18 @@ ERROR_RETURN:
   if (app->debugMessenger != VK_NULL_HANDLE) {
     DestroyDebugUtilsMessengerEXT(app->instance, app->debugMessenger, NULL);
     app->debugMessenger = VK_NULL_HANDLE;
+  }
+
+  // Free the headless surface.
+  if (app->headlessSurface != VK_NULL_HANDLE) {
+    vkDestroySurfaceKHR(app->instance, app->headlessSurface, NULL);
+    app->headlessSurface = VK_NULL_HANDLE;
+  }
+
+  // Destroy the logical device.
+  if (app->logicalDevice != VK_NULL_HANDLE) {
+    vkDestroyDevice(app->logicalDevice, NULL);
+    app->logicalDevice = VK_NULL_HANDLE;
   }
 
   // Destroy the Vulkan instance.
@@ -767,6 +785,17 @@ void cjelly_application_destroy(CJellyApplication * app) {
     app->debugMessenger = VK_NULL_HANDLE;
   }
 
+  // Free the headless surface.
+  if (app->headlessSurface != VK_NULL_HANDLE) {
+    vkDestroySurfaceKHR(app->instance, app->headlessSurface, NULL);
+  }
+
+  // Destroy the logical device.
+  if (app->logicalDevice != VK_NULL_HANDLE) {
+    vkDestroyDevice(app->logicalDevice, NULL);
+    app->logicalDevice = VK_NULL_HANDLE;
+  }
+
   // Destroy the Vulkan instance.
   if (app->instance != VK_NULL_HANDLE) {
     vkDestroyInstance(app->instance, NULL);
@@ -780,4 +809,135 @@ void cjelly_application_destroy(CJellyApplication * app) {
     free(app->appName);
   }
   free(app);
+}
+
+
+CJellyApplicationError cjelly_application_create_logical_device(
+    CJellyApplication * app) {
+  if (!app || app->physicalDevice == VK_NULL_HANDLE) {
+    fprintf(stderr, "Invalid application or physical device not set.\n");
+    return CJELLY_APPLICATION_ERROR_INVALID_OPTIONS;
+  }
+
+  // Query queue family properties.
+  uint32_t queueFamilyCount = 0;
+  vkGetPhysicalDeviceQueueFamilyProperties(
+      app->physicalDevice, &queueFamilyCount, NULL);
+  if (queueFamilyCount == 0) {
+    fprintf(stderr, "No queue families found.\n");
+    return CJELLY_APPLICATION_ERROR_INIT_FAILED;
+  }
+
+  VkQueueFamilyProperties * queueFamilies =
+      malloc(sizeof(VkQueueFamilyProperties) * queueFamilyCount);
+  if (!queueFamilies) {
+    fprintf(stderr, "Memory allocation failure for queue families.\n");
+    return CJELLY_APPLICATION_ERROR_OUT_OF_MEMORY;
+  }
+  vkGetPhysicalDeviceQueueFamilyProperties(
+      app->physicalDevice, &queueFamilyCount, queueFamilies);
+
+  // Variables to hold chosen queue family indices.
+  int graphicsFamily = -1;
+  int transferFamily = -1;
+  int computeFamily = -1;
+
+  // Loop through queue families and select candidates.
+  for (uint32_t i = 0; i < queueFamilyCount; ++i) {
+    VkQueueFlags flags = queueFamilies[i].queueFlags;
+
+    // For graphics: require VK_QUEUE_GRAPHICS_BIT and presentation support.
+    if (graphicsFamily < 0 && (flags & VK_QUEUE_GRAPHICS_BIT)) {
+      VkBool32 presentSupport = VK_FALSE;
+      vkGetPhysicalDeviceSurfaceSupportKHR(
+          app->physicalDevice, i, app->headlessSurface, &presentSupport);
+      if (presentSupport == VK_TRUE) {
+        graphicsFamily = i;
+      }
+    }
+
+    // For transfer: prefer a queue that supports transfer only.
+    if (transferFamily < 0 && (flags & VK_QUEUE_TRANSFER_BIT)) {
+      if (!(flags & VK_QUEUE_GRAPHICS_BIT) && !(flags & VK_QUEUE_COMPUTE_BIT)) {
+        transferFamily = i;
+      }
+    }
+
+    // For compute: require VK_QUEUE_COMPUTE_BIT; prefer one that doesn't
+    // support graphics.
+    if (computeFamily < 0 && (flags & VK_QUEUE_COMPUTE_BIT)) {
+      if (!(flags & VK_QUEUE_GRAPHICS_BIT)) {
+        computeFamily = i;
+      }
+    }
+  }
+  free(queueFamilies);
+
+  // Fallback: if a dedicated transfer queue wasn't found, use the graphics
+  // queue.
+  if (transferFamily < 0) {
+    transferFamily = graphicsFamily;
+  }
+  // Fallback: if a dedicated compute queue wasn't found, use the graphics
+  // queue.
+  if (computeFamily < 0) {
+    computeFamily = graphicsFamily;
+  }
+
+  // Build an array of unique queue families to be used for device creation.
+  VkDeviceQueueCreateInfo queueCreateInfos[3];
+  uint32_t queueCreateInfoCount = 0;
+  int usedFamilies[3];
+  int usedCount = 0;
+
+  // Macro to add a queue family only once.
+#define ADD_QUEUE_INFO(family)                                                 \
+  do {                                                                         \
+    bool alreadyAdded = false;                                                 \
+    for (int i = 0; i < usedCount; ++i) {                                      \
+      if (usedFamilies[i] == (family)) {                                       \
+        alreadyAdded = true;                                                   \
+        break;                                                                 \
+      }                                                                        \
+    }                                                                          \
+    if (!alreadyAdded) {                                                       \
+      float priority = 1.0f;                                                   \
+      queueCreateInfos[queueCreateInfoCount].sType =                           \
+          VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;                          \
+      queueCreateInfos[queueCreateInfoCount].queueFamilyIndex = (family);      \
+      queueCreateInfos[queueCreateInfoCount].queueCount = 1;                   \
+      queueCreateInfos[queueCreateInfoCount].pQueuePriorities = &priority;     \
+      usedFamilies[usedCount++] = (family);                                    \
+      queueCreateInfoCount++;                                                  \
+    }                                                                          \
+  } while (0)
+
+  ADD_QUEUE_INFO(graphicsFamily);
+  ADD_QUEUE_INFO(transferFamily);
+  ADD_QUEUE_INFO(computeFamily);
+#undef ADD_QUEUE_INFO
+
+  VkDeviceCreateInfo deviceCreateInfo = {0};
+  deviceCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+  deviceCreateInfo.queueCreateInfoCount = queueCreateInfoCount;
+  deviceCreateInfo.pQueueCreateInfos = queueCreateInfos;
+
+  // Enable the required extensions specified in the application options.
+  deviceCreateInfo.enabledExtensionCount = app->options.requiredExtensionCount;
+  deviceCreateInfo.ppEnabledExtensionNames = app->options.requiredExtensions;
+
+  // Finally, create the logical device.
+  VkResult result = vkCreateDevice(
+      app->physicalDevice, &deviceCreateInfo, NULL, &app->logicalDevice);
+  if (result != VK_SUCCESS) {
+    fprintf(stderr, "Failed to create logical device. VkResult: %d\n", result);
+    return CJELLY_APPLICATION_ERROR_INIT_FAILED;
+  }
+
+  // Retrieve the queues.
+  vkGetDeviceQueue(app->logicalDevice, graphicsFamily, 0, &app->graphicsQueue);
+  vkGetDeviceQueue(app->logicalDevice, transferFamily, 0, &app->transferQueue);
+  vkGetDeviceQueue(app->logicalDevice, computeFamily, 0, &app->computeQueue);
+
+  return CJELLY_APPLICATION_ERROR_NONE;
 }

@@ -122,8 +122,9 @@ typedef struct CJellyApplicationOptions {
  * @brief Internal representation of the CJelly Application.
  *
  * This structure encapsulates the state of the CJelly application, including
- * its configuration options, the associated Vulkan context, and a Vulkan
- * command pool for global command buffer allocation.
+ * its configuration options, the associated Vulkan instance, physical device,
+ * logical device, command pool, debug messenger, and individual queue handles
+ * for graphics, transfer, and compute operations.
  *
  * @var appName
  *  The name of the application.
@@ -140,6 +141,9 @@ typedef struct CJellyApplicationOptions {
  * @var physicalDevice
  *  The selected physical device handle.
  *
+ * @var logicalDevice
+ *  The Vulkan logical device handle created from the selected physical device.
+ *
  * @var commandPool
  *  A Vulkan command pool used for allocating command buffers globally.
  *
@@ -148,6 +152,18 @@ typedef struct CJellyApplicationOptions {
  *
  * @var debugMessenger
  *  The Vulkan debug messenger handle, used for validation layers.
+ *
+ * @var graphicsQueue
+ *  The Vulkan queue handle used for graphics (and presentation) operations.
+ *
+ * @var transferQueue
+ *  The Vulkan queue handle used for transfer (data copy) operations.
+ *
+ * @var computeQueue
+ *  The Vulkan queue handle used for compute operations.
+ *
+ * @var headlessSurface
+ *  A Vulkan surface handle used for headless (offscreen) rendering or testing.
  */
 struct CJellyApplication {
   char * appName;
@@ -155,9 +171,14 @@ struct CJellyApplication {
   CJellyApplicationOptions options;
   VkInstance instance;
   VkPhysicalDevice physicalDevice;
+  VkDevice logicalDevice;
   VkCommandPool commandPool;
   CJellyVulkanContext * vkContext;
   VkDebugUtilsMessengerEXT debugMessenger;
+  VkQueue graphicsQueue;
+  VkQueue transferQueue;
+  VkQueue computeQueue;
+  VkSurfaceKHR headlessSurface;
 };
 
 
@@ -263,6 +284,24 @@ CJellyApplicationError cjelly_application_init(
  */
 void cjelly_application_destroy(CJellyApplication * app);
 
+
+/**
+ * @brief Create the Vulkan logical device and retrieve queue handles.
+ *
+ * This function queries the physical device for available queue families,
+ * selects appropriate families for graphics, transfer, and compute operations,
+ * and creates a logical device. It then retrieves and stores queue handles
+ * for each type in the CJellyApplication structure.
+ *
+ * If dedicated queues are not available, the function may assign the same queue
+ * handle to more than one purpose.
+ *
+ * @param app A pointer to the CJellyApplication structure.
+ * @return CJelly_Application_Error CJELLY_APPLICATION_ERROR_NONE on success, or
+ *   an appropriate error code on failure.
+ */
+CJellyApplicationError cjelly_application_create_logical_device(
+    CJellyApplication * app);
 
 #ifdef __cplusplus
 }
