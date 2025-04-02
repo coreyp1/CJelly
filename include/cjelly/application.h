@@ -123,7 +123,7 @@ typedef struct CJellyApplicationOptions {
  *
  * This structure encapsulates the state of the CJelly application, including
  * its configuration options, the associated Vulkan instance, physical device,
- * logical device, command pool, debug messenger, and individual queue handles
+ * logical device, command pools, debug messenger, and individual queue handles
  * for graphics, transfer, and compute operations.
  *
  * @var appName
@@ -144,8 +144,17 @@ typedef struct CJellyApplicationOptions {
  * @var logicalDevice
  *  The Vulkan logical device handle created from the selected physical device.
  *
- * @var commandPool
- *  A Vulkan command pool used for allocating command buffers globally.
+ * @var graphicsCommandPool
+ *  A Vulkan command pool used for allocating command buffers for graphics
+ * operations.
+ *
+ * @var transferCommandPool
+ *  A Vulkan command pool used for allocating command buffers for transfer
+ * operations.
+ *
+ * @var computeCommandPool
+ *  A Vulkan command pool used for allocating command buffers for compute
+ * operations.
  *
  * @var vkContext
  *  The Vulkan context associated with the application.
@@ -164,6 +173,15 @@ typedef struct CJellyApplicationOptions {
  *
  * @var headlessSurface
  *  A Vulkan surface handle used for headless (offscreen) rendering or testing.
+ *
+ * @var graphicsQueueFamilyIndex
+ *  The queue family index used for graphics operations.
+ *
+ * @var transferQueueFamilyIndex
+ *  The queue family index used for transfer operations.
+ *
+ * @var computeQueueFamilyIndex
+ *  The queue family index used for compute operations.
  */
 struct CJellyApplication {
   char * appName;
@@ -172,13 +190,18 @@ struct CJellyApplication {
   VkInstance instance;
   VkPhysicalDevice physicalDevice;
   VkDevice logicalDevice;
-  VkCommandPool commandPool;
+  VkCommandPool graphicsCommandPool;
+  VkCommandPool transferCommandPool;
+  VkCommandPool computeCommandPool;
   CJellyVulkanContext * vkContext;
   VkDebugUtilsMessengerEXT debugMessenger;
   VkQueue graphicsQueue;
   VkQueue transferQueue;
   VkQueue computeQueue;
   VkSurfaceKHR headlessSurface;
+  int graphicsQueueFamilyIndex;
+  int transferQueueFamilyIndex;
+  int computeQueueFamilyIndex;
 };
 
 
@@ -297,10 +320,31 @@ void cjelly_application_destroy(CJellyApplication * app);
  * handle to more than one purpose.
  *
  * @param app A pointer to the CJellyApplication structure.
- * @return CJelly_Application_Error CJELLY_APPLICATION_ERROR_NONE on success, or
+ * @return CJellyApplicationError CJELLY_APPLICATION_ERROR_NONE on success, or
  *   an appropriate error code on failure.
  */
 CJellyApplicationError cjelly_application_create_logical_device(
+    CJellyApplication * app);
+
+
+/**
+ * @brief Create command pools for graphics, transfer, and compute operations.
+ *
+ * This function creates separate Vulkan command pools for each queue type using
+ * the queue family indices that were selected during logical device creation.
+ * If two queue types share the same family, the same command pool handle is
+ * used.
+ *
+ * The command pools are created with the flag
+ * VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT, allowing individual command
+ * buffers to be reset.
+ *
+ * @param app A pointer to the CJellyApplication structure which must have a
+ * valid logical device and valid queue family indices.
+ * @return CJellyApplicationError CJELLY_APPLICATION_ERROR_NONE on success, or
+ * an appropriate error code on failure.
+ */
+CJellyApplicationError cjelly_application_create_command_pools(
     CJellyApplication * app);
 
 #ifdef __cplusplus

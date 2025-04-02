@@ -268,7 +268,9 @@ CJellyApplicationError cjelly_application_create(
   newApp->instance = VK_NULL_HANDLE;
   newApp->physicalDevice = VK_NULL_HANDLE;
   newApp->logicalDevice = VK_NULL_HANDLE;
-  newApp->commandPool = VK_NULL_HANDLE;
+  newApp->graphicsCommandPool = VK_NULL_HANDLE;
+  newApp->transferCommandPool = VK_NULL_HANDLE;
+  newApp->computeCommandPool = VK_NULL_HANDLE;
   newApp->vkContext = NULL;
   newApp->debugMessenger = VK_NULL_HANDLE;
   newApp->graphicsQueue = VK_NULL_HANDLE;
@@ -372,7 +374,7 @@ CJellyApplicationError cjelly_application_init(
   // Check if the application has already been initialized.
   if ((app->instance != VK_NULL_HANDLE) ||
       (app->physicalDevice != VK_NULL_HANDLE) ||
-      (app->commandPool != VK_NULL_HANDLE)) {
+      (app->graphicsCommandPool != VK_NULL_HANDLE)) {
     // The application has already been initialized.
     fprintf(stderr, "Application already initialized.\n");
     return CJELLY_APPLICATION_ERROR_INIT_FAILED;
@@ -692,10 +694,6 @@ CJellyApplicationError cjelly_application_init(
     continue;
   }
 
-  // The `physicalDevices` array is no longer needed.
-  free(physicalDevices);
-  physicalDevices = NULL;
-
   // Check if a suitable physical device was found.
   if (bestPhysicalDevice == VK_NULL_HANDLE) {
     fprintf(stderr, "No physical device meets the required constraints.\n");
@@ -708,6 +706,13 @@ CJellyApplicationError cjelly_application_init(
   err = cjelly_application_create_logical_device(app);
   if (err != CJELLY_APPLICATION_ERROR_NONE) {
     fprintf(stderr, "Failed to create logical device.\n");
+    goto ERROR_RETURN;
+  }
+
+  // Create the command pool.
+  err = cjelly_application_create_command_pools(app);
+  if (err != CJELLY_APPLICATION_ERROR_NONE) {
+    fprintf(stderr, "Failed to create command pool.\n");
     goto ERROR_RETURN;
   }
 
@@ -790,6 +795,25 @@ void cjelly_application_destroy(CJellyApplication * app) {
     DestroyDebugUtilsMessengerEXT(app->instance, app->debugMessenger, NULL);
     app->debugMessenger = VK_NULL_HANDLE;
   }
+
+  // Destroy the command pools.
+  // If multiple pools are shared (i.e. point to the same handle), ensure that
+  // you only destroy them once.
+  if (app->graphicsCommandPool != VK_NULL_HANDLE) {
+    vkDestroyCommandPool(app->logicalDevice, app->graphicsCommandPool, NULL);
+  }
+  if (app->transferCommandPool != VK_NULL_HANDLE &&
+      app->transferCommandPool != app->graphicsCommandPool) {
+    vkDestroyCommandPool(app->logicalDevice, app->transferCommandPool, NULL);
+  }
+  if (app->computeCommandPool != VK_NULL_HANDLE &&
+      app->computeCommandPool != app->graphicsCommandPool &&
+      app->computeCommandPool != app->transferCommandPool) {
+    vkDestroyCommandPool(app->logicalDevice, app->computeCommandPool, NULL);
+  }
+  app->graphicsCommandPool = VK_NULL_HANDLE;
+  app->transferCommandPool = VK_NULL_HANDLE;
+  app->computeCommandPool = VK_NULL_HANDLE;
 
   // Free the headless surface.
   if (app->headlessSurface != VK_NULL_HANDLE) {
@@ -944,6 +968,71 @@ CJellyApplicationError cjelly_application_create_logical_device(
   vkGetDeviceQueue(app->logicalDevice, graphicsFamily, 0, &app->graphicsQueue);
   vkGetDeviceQueue(app->logicalDevice, transferFamily, 0, &app->transferQueue);
   vkGetDeviceQueue(app->logicalDevice, computeFamily, 0, &app->computeQueue);
+
+  return CJELLY_APPLICATION_ERROR_NONE;
+}
+
+
+CJellyApplicationError cjelly_application_create_command_pools(
+    CJellyApplication * app) {
+
+  if (!app || app->logicalDevice == VK_NULL_HANDLE) {
+    fprintf(stderr, "Invalid application or logical device not set.\n");
+    return CJELLY_APPLICATION_ERROR_INVALID_OPTIONS;
+  }
+
+  VkCommandPoolCreateInfo poolInfo = {0};
+  poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+  poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+
+  VkResult result;
+
+  // Create the graphics command pool.
+  poolInfo.queueFamilyIndex = app->graphicsQueueFamilyIndex;
+  result = vkCreateCommandPool(
+      app->logicalDevice, &poolInfo, NULL, &app->graphicsCommandPool);
+  if (result != VK_SUCCESS) {
+    fprintf(stderr, "Failed to create graphics command pool. VkResult: %d\n",
+        result);
+    return CJELLY_APPLICATION_ERROR_INIT_FAILED;
+  }
+
+  // Create the transfer command pool.
+  // If the transfer queue is in the same family as graphics, reuse the graphics
+  // pool.
+  if (app->transferQueueFamilyIndex == app->graphicsQueueFamilyIndex) {
+    app->transferCommandPool = app->graphicsCommandPool;
+  }
+  else {
+    poolInfo.queueFamilyIndex = app->transferQueueFamilyIndex;
+    result = vkCreateCommandPool(
+        app->logicalDevice, &poolInfo, NULL, &app->transferCommandPool);
+    if (result != VK_SUCCESS) {
+      fprintf(stderr, "Failed to create transfer command pool. VkResult: %d\n",
+          result);
+      return CJELLY_APPLICATION_ERROR_INIT_FAILED;
+    }
+  }
+
+  // Create the compute command pool.
+  // If the compute queue is in the same family as graphics or transfer, reuse
+  // that pool.
+  if (app->computeQueueFamilyIndex == app->graphicsQueueFamilyIndex) {
+    app->computeCommandPool = app->graphicsCommandPool;
+  }
+  else if (app->computeQueueFamilyIndex == app->transferQueueFamilyIndex) {
+    app->computeCommandPool = app->transferCommandPool;
+  }
+  else {
+    poolInfo.queueFamilyIndex = app->computeQueueFamilyIndex;
+    result = vkCreateCommandPool(
+        app->logicalDevice, &poolInfo, NULL, &app->computeCommandPool);
+    if (result != VK_SUCCESS) {
+      fprintf(stderr, "Failed to create compute command pool. VkResult: %d\n",
+          result);
+      return CJELLY_APPLICATION_ERROR_INIT_FAILED;
+    }
+  }
 
   return CJELLY_APPLICATION_ERROR_NONE;
 }
