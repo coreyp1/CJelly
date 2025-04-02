@@ -255,6 +255,7 @@ static bool initialize_options(CJellyApplicationOptions * opts) {
 #else
       VK_KHR_XLIB_SURFACE_EXTENSION_NAME,
 #endif
+      VK_EXT_HEADLESS_SURFACE_EXTENSION_NAME,
   };
   size_t instanceExtCount =
       sizeof(instanceExtensions) / sizeof(instanceExtensions[0]);
@@ -529,13 +530,12 @@ CJellyApplicationError cjelly_application_init(CJellyApplication * app) {
   // Create the Vulkan instance.
   VkResult res = vkCreateInstance(&instanceCreateInfo, NULL, &app->instance);
   if (res != VK_SUCCESS || app->instance == VK_NULL_HANDLE) {
-    fprintf(stderr,
-        "Failed to create temporary Vulkan instance for device enumeration.\n");
+    fprintf(stderr, "Failed to create Vulkan instance.\n");
     err = CJELLY_APPLICATION_ERROR_INIT_FAILED;
     goto ERROR_RETURN;
   }
 
-  // Create a temporary, headless surface for device enumeration.
+  // Create a headless surface for device enumeration.
   VkHeadlessSurfaceCreateInfoEXT headlessCreateInfo = {0};
   headlessCreateInfo.sType = VK_STRUCTURE_TYPE_HEADLESS_SURFACE_CREATE_INFO_EXT;
   headlessCreateInfo.flags = 0;
