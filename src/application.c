@@ -456,6 +456,29 @@ CJellyApplicationError cjelly_application_init(
     return CJELLY_APPLICATION_ERROR_INIT_FAILED;
   }
 
+  // Create a temporary, headless surface for device enumeration.
+  VkHeadlessSurfaceCreateInfoEXT headlessCreateInfo = {0};
+  headlessCreateInfo.sType = VK_STRUCTURE_TYPE_HEADLESS_SURFACE_CREATE_INFO_EXT;
+  headlessCreateInfo.flags = 0;
+  headlessCreateInfo.pNext = NULL;
+
+  VkSurfaceKHR headlessSurface = VK_NULL_HANDLE;
+  PFN_vkCreateHeadlessSurfaceEXT pfnCreateHeadlessSurface =
+      (PFN_vkCreateHeadlessSurfaceEXT)vkGetInstanceProcAddr(
+          app->instance, "vkCreateHeadlessSurfaceEXT");
+  if (!pfnCreateHeadlessSurface) {
+    fprintf(stderr, "Failed to load vkCreateHeadlessSurfaceEXT.\n");
+    err = CJELLY_APPLICATION_ERROR_INIT_FAILED;
+    goto ERROR_RETURN;
+  }
+  res = pfnCreateHeadlessSurface(
+      app->instance, &headlessCreateInfo, NULL, &headlessSurface);
+  if (res != VK_SUCCESS || headlessSurface == VK_NULL_HANDLE) {
+    fprintf(stderr, "Failed to create headless surface.\n");
+    err = CJELLY_APPLICATION_ERROR_INIT_FAILED;
+    goto ERROR_RETURN;
+  }
+
   // Find out how many physical devices exist.
   uint32_t deviceCount = 0;
   res = vkEnumeratePhysicalDevices(app->instance, &deviceCount, NULL);
@@ -502,6 +525,57 @@ CJellyApplicationError cjelly_application_init(
           properties.deviceType != VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU) {
         goto CONTINUE;
       }
+    }
+
+    // Check for required queue families.
+    uint32_t queueFamilyCount = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(
+        physicalDevice, &queueFamilyCount, NULL);
+    if (queueFamilyCount == 0) {
+      goto CONTINUE;
+    }
+
+    VkQueueFamilyProperties * queueFamilies =
+        malloc(sizeof(VkQueueFamilyProperties) * queueFamilyCount);
+    if (!queueFamilies) {
+      fprintf(stderr, "Memory allocation failure for queue family list.\n");
+      goto CONTINUE;
+    }
+    vkGetPhysicalDeviceQueueFamilyProperties(
+        physicalDevice, &queueFamilyCount, queueFamilies);
+
+    bool graphicsFound = false;
+    bool presentFound = false;
+    // bool computeFound = false;
+
+    // Check if the device supports graphics, compute, and presentation
+    // capabilities.
+    for (uint32_t j = 0; j < queueFamilyCount; ++j) {
+      VkQueueFlags flags = queueFamilies[j].queueFlags;
+      if (flags & VK_QUEUE_GRAPHICS_BIT) {
+        graphicsFound = true;
+      }
+      // if (flags & VK_QUEUE_COMPUTE_BIT) {
+      //   computeFound = true;
+      // }
+      VkBool32 presentSupport = VK_FALSE;
+      vkGetPhysicalDeviceSurfaceSupportKHR(
+          physicalDevice, j, headlessSurface, &presentSupport);
+      if (presentSupport == VK_TRUE) {
+        presentFound = true;
+      }
+    }
+
+    // Free the queue family properties array.
+    free(queueFamilies);
+
+    // If required, ensure that at least one graphics and presentation queue are
+    // available.
+    if (!graphicsFound) {
+      goto CONTINUE;
+    }
+    if (!presentFound) {
+      goto CONTINUE;
     }
 
     // Query memory properties.
@@ -651,6 +725,11 @@ CJellyApplicationError cjelly_application_init(
 ERROR_FREE_DEVICES:
   free(physicalDevices);
 ERROR_RETURN:
+  // Free the temporary headless surface.
+  if (headlessSurface != VK_NULL_HANDLE) {
+    vkDestroySurfaceKHR(app->instance, headlessSurface, NULL);
+  }
+
   // Free the application name if it was allocated.
   if (app->appName) {
     free(app->appName);
