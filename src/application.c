@@ -273,9 +273,6 @@ static bool initialize_options(CJellyApplicationOptions * opts) {
   // Add device extensions required by CJelly.
   // (Device extensions are enabled during vkCreateDevice.)
   const char * deviceExtensions[] = {
-      VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME,
-      VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME,
-      VK_KHR_MAINTENANCE3_EXTENSION_NAME,
       VK_KHR_SWAPCHAIN_EXTENSION_NAME,
   };
   size_t deviceExtCount =
@@ -535,28 +532,6 @@ CJellyApplicationError cjelly_application_init(CJellyApplication * app) {
     goto ERROR_RETURN;
   }
 
-  // Create a headless surface for device enumeration.
-  VkHeadlessSurfaceCreateInfoEXT headlessCreateInfo = {0};
-  headlessCreateInfo.sType = VK_STRUCTURE_TYPE_HEADLESS_SURFACE_CREATE_INFO_EXT;
-  headlessCreateInfo.flags = 0;
-  headlessCreateInfo.pNext = NULL;
-
-  PFN_vkCreateHeadlessSurfaceEXT pfnCreateHeadlessSurface =
-      (PFN_vkCreateHeadlessSurfaceEXT)vkGetInstanceProcAddr(
-          app->instance, "vkCreateHeadlessSurfaceEXT");
-  if (!pfnCreateHeadlessSurface) {
-    fprintf(stderr, "Failed to load vkCreateHeadlessSurfaceEXT.\n");
-    err = CJELLY_APPLICATION_ERROR_INIT_FAILED;
-    goto ERROR_RETURN;
-  }
-  res = pfnCreateHeadlessSurface(
-      app->instance, &headlessCreateInfo, NULL, &app->headlessSurface);
-  if (res != VK_SUCCESS || app->headlessSurface == VK_NULL_HANDLE) {
-    fprintf(stderr, "Failed to create headless surface.\n");
-    err = CJELLY_APPLICATION_ERROR_INIT_FAILED;
-    goto ERROR_RETURN;
-  }
-
   // Find out how many physical devices exist.
   uint32_t deviceCount = 0;
   res = vkEnumeratePhysicalDevices(app->instance, &deviceCount, NULL);
@@ -626,8 +601,7 @@ CJellyApplicationError cjelly_application_init(CJellyApplication * app) {
     bool presentFound = false;
     // bool computeFound = false;
 
-    // Check if the device supports graphics, compute, and presentation
-    // capabilities.
+    // Check if the device supports graphics and compute capabilities.
     for (uint32_t j = 0; j < queueFamilyCount; ++j) {
       VkQueueFlags flags = queueFamilies[j].queueFlags;
       if (flags & VK_QUEUE_GRAPHICS_BIT) {
@@ -636,12 +610,7 @@ CJellyApplicationError cjelly_application_init(CJellyApplication * app) {
       // if (flags & VK_QUEUE_COMPUTE_BIT) {
       //   computeFound = true;
       // }
-      VkBool32 presentSupport = VK_FALSE;
-      vkGetPhysicalDeviceSurfaceSupportKHR(
-          physicalDevice, j, app->headlessSurface, &presentSupport);
-      if (presentSupport == VK_TRUE) {
-        presentFound = true;
-      }
+      presentFound = true; // Assume presentation support for now
     }
 
     // Free the queue family properties array.
@@ -697,10 +666,10 @@ CJellyApplicationError cjelly_application_init(CJellyApplication * app) {
     }
 
     // Print the list of available extensions.
-    printf("Available device extensions:\n");
-    for (uint32_t j = 0; j < availableExtensionCount; ++j) {
-      printf("  %s\n", availableExtensions[j].extensionName);
-    }
+    // printf("Available device extensions:\n");
+    // for (uint32_t j = 0; j < availableExtensionCount; ++j) {
+    //   printf("  %s\n", availableExtensions[j].extensionName);
+    // }
 
     // For each required extension, check if it is present in the device's list.
     bool extensionsSupported = true;
@@ -814,12 +783,6 @@ ERROR_RETURN:
     app->debugMessenger = VK_NULL_HANDLE;
   }
 
-  // Free the headless surface.
-  if (app->headlessSurface != VK_NULL_HANDLE) {
-    vkDestroySurfaceKHR(app->instance, app->headlessSurface, NULL);
-    app->headlessSurface = VK_NULL_HANDLE;
-  }
-
   // Destroy the logical device.
   if (app->logicalDevice != VK_NULL_HANDLE) {
     vkDestroyDevice(app->logicalDevice, NULL);
@@ -869,11 +832,6 @@ void cjelly_application_destroy(CJellyApplication * app) {
   app->graphicsCommandPool = VK_NULL_HANDLE;
   app->transferCommandPool = VK_NULL_HANDLE;
   app->computeCommandPool = VK_NULL_HANDLE;
-
-  // Free the headless surface.
-  if (app->headlessSurface != VK_NULL_HANDLE) {
-    vkDestroySurfaceKHR(app->instance, app->headlessSurface, NULL);
-  }
 
   // Destroy the logical device.
   if (app->logicalDevice != VK_NULL_HANDLE) {
@@ -931,14 +889,10 @@ CJellyApplicationError cjelly_application_create_logical_device(
   for (uint32_t i = 0; i < queueFamilyCount; ++i) {
     VkQueueFlags flags = queueFamilies[i].queueFlags;
 
-    // For graphics: require VK_QUEUE_GRAPHICS_BIT and presentation support.
+    // For graphics: require VK_QUEUE_GRAPHICS_BIT.
+    // Presentation support will be checked when actual surfaces are created.
     if (graphicsFamily < 0 && (flags & VK_QUEUE_GRAPHICS_BIT)) {
-      VkBool32 presentSupport = VK_FALSE;
-      vkGetPhysicalDeviceSurfaceSupportKHR(
-          app->physicalDevice, i, app->headlessSurface, &presentSupport);
-      if (presentSupport == VK_TRUE) {
-        graphicsFamily = i;
-      }
+      graphicsFamily = i;
     }
 
     // For transfer: prefer a queue that supports transfer only.
