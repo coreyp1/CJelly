@@ -646,6 +646,38 @@ void cleanupVulkanGlobal(void);
 
 void createTexturedCommandBuffersForWindow(CJellyWindow * win);
 
+void createBindlessCommandBuffersForWindow(CJellyWindow * win);
+
+// Bindless texture management structures
+typedef struct CJellyTextureAtlas {
+  VkImage atlasImage;
+  VkDeviceMemory atlasImageMemory;
+  VkImageView atlasImageView;
+  VkSampler atlasSampler;
+  VkDescriptorSetLayout bindlessDescriptorSetLayout;
+  VkDescriptorPool bindlessDescriptorPool;
+  VkDescriptorSet bindlessDescriptorSet;
+  uint32_t atlasWidth;
+  uint32_t atlasHeight;
+  uint32_t nextTextureX;
+  uint32_t nextTextureY;
+  uint32_t currentRowHeight;
+  uint32_t textureCount;
+} CJellyTextureAtlas;
+
+typedef struct CJellyTextureEntry {
+  uint32_t textureID;
+  uint32_t x, y, width, height;
+  float uMin, uMax, vMin, vMax; // UV coordinates within the atlas
+} CJellyTextureEntry;
+
+// Bindless texture management functions
+CJellyTextureAtlas * cjelly_create_texture_atlas(uint32_t width, uint32_t height);
+void cjelly_destroy_texture_atlas(CJellyTextureAtlas * atlas);
+uint32_t cjelly_atlas_add_texture(CJellyTextureAtlas * atlas, const char * filePath);
+CJellyTextureEntry * cjelly_atlas_get_texture_entry(CJellyTextureAtlas * atlas, uint32_t textureID);
+void cjelly_atlas_update_descriptor_set(CJellyTextureAtlas * atlas);
+
 #ifdef __cplusplus
 }
 #endif // __cplusplus

@@ -125,7 +125,7 @@ TESTFLAGS := `PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --libs --cflags gtes
 CJELLYLIBRARY := -L $(APP_DIR) -l$(SUITE)-$(PROJECT)$(BRANCH)
 
 
-all: $(APP_DIR)/$(TARGET) $(APP_DIR)/cjelly$(EXE_EXTENSION) ## Build the shared library
+all: $(APP_DIR)/$(TARGET) $(APP_DIR)/main$(EXE_EXTENSION) ## Build the shared library
 
 ####################################################################
 # Test Files
@@ -175,7 +175,9 @@ $(OBJ_DIR)/%.o: src/%.cpp
 $(OBJ_DIR)/cjelly.o: \
 	$(GEN_DIR)/shaders/basic.vert.h \
 	$(GEN_DIR)/shaders/basic.frag.h \
-	$(GEN_DIR)/shaders/textured.frag.h
+	$(GEN_DIR)/shaders/textured.frag.h \
+	$(GEN_DIR)/shaders/bindless.vert.h \
+	$(GEN_DIR)/shaders/bindless.frag.h
 
 
 ####################################################################

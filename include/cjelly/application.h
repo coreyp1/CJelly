@@ -214,6 +214,7 @@ struct CJellyApplication {
   int graphicsQueueFamilyIndex;
   int transferQueueFamilyIndex;
   int computeQueueFamilyIndex;
+  bool supportsBindlessRendering;
 };
 
 
@@ -372,6 +373,18 @@ CJellyApplicationError cjelly_application_create_logical_device(
  */
 CJellyApplicationError cjelly_application_create_command_pools(
     CJellyApplication * app);
+
+
+/**
+ * @brief Check if the application supports bindless rendering.
+ *
+ * This function returns whether the current Vulkan device supports
+ * descriptor indexing (bindless rendering) capabilities.
+ *
+ * @param app A pointer to the CJellyApplication structure.
+ * @return true if bindless rendering is supported, false otherwise.
+ */
+bool cjelly_application_supports_bindless_rendering(CJellyApplication * app);
 
 #ifdef __cplusplus
 }

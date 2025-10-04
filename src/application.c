@@ -271,18 +271,18 @@ static bool initialize_options(CJellyApplicationOptions * opts) {
 
   // Add device extensions required by CJelly.
   // (Device extensions are enabled during vkCreateDevice.)
-  const char * deviceExtensions[] = {
+  const char * requiredDeviceExtensions[] = {
       VK_KHR_SWAPCHAIN_EXTENSION_NAME,
   };
-  size_t deviceExtCount =
-      sizeof(deviceExtensions) / sizeof(deviceExtensions[0]);
-  for (size_t i = 0; i < deviceExtCount; ++i) {
+  size_t requiredDeviceExtCount =
+      sizeof(requiredDeviceExtensions) / sizeof(requiredDeviceExtensions[0]);
+  for (size_t i = 0; i < requiredDeviceExtCount; ++i) {
     if (add_extension_generic(&opts->requiredDeviceExtensions,
             &opts->requiredDeviceExtensionCount,
             &opts->requiredDeviceExtensionCapacity,
-            deviceExtensions[i]) != CJELLY_APPLICATION_ERROR_NONE) {
+            requiredDeviceExtensions[i]) != CJELLY_APPLICATION_ERROR_NONE) {
       fprintf(stderr, "Failed to add required device extension: %s\n",
-          deviceExtensions[i]);
+          requiredDeviceExtensions[i]);
       goto ERROR_FREE_OPTIONS;
     }
   }
@@ -954,16 +954,17 @@ CJellyApplicationError cjelly_application_create_logical_device(
   ADD_QUEUE_INFO(computeFamily);
 #undef ADD_QUEUE_INFO
 
+  // Temporarily disable descriptor indexing for debugging
+  app->supportsBindlessRendering = false;
+
   VkDeviceCreateInfo deviceCreateInfo = {0};
   deviceCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
   deviceCreateInfo.queueCreateInfoCount = queueCreateInfoCount;
   deviceCreateInfo.pQueueCreateInfos = queueCreateInfos;
 
-  // Enable the required extensions specified in the application options.
-  deviceCreateInfo.enabledExtensionCount =
-      app->options.requiredDeviceExtensionCount;
-  deviceCreateInfo.ppEnabledExtensionNames =
-      app->options.requiredDeviceExtensions;
+  // Enable the required extensions only
+  deviceCreateInfo.enabledExtensionCount = app->options.requiredDeviceExtensionCount;
+  deviceCreateInfo.ppEnabledExtensionNames = app->options.requiredDeviceExtensions;
 
   // Finally, create the logical device.
   VkResult result = vkCreateDevice(
@@ -978,7 +979,19 @@ CJellyApplicationError cjelly_application_create_logical_device(
   vkGetDeviceQueue(app->logicalDevice, transferFamily, 0, &app->transferQueue);
   vkGetDeviceQueue(app->logicalDevice, computeFamily, 0, &app->computeQueue);
 
+  // Clean up allocated memory (temporarily disabled)
+  // free(availableExtensions);
+  // free(deviceExtensions);
+
   return CJELLY_APPLICATION_ERROR_NONE;
+}
+
+
+bool cjelly_application_supports_bindless_rendering(CJellyApplication * app) {
+  if (!app) {
+    return false;
+  }
+  return app->supportsBindlessRendering;
 }
 
 
