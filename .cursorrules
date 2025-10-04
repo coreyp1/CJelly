@@ -1,0 +1,72 @@
+# CJelly Cursor Rules
+
+## Character Encoding
+- All code files must contain only traditional ASCII characters (no Unicode symbols, emoji, or non-ASCII characters)
+- Use standard ASCII punctuation and symbols only
+- Avoid any special Unicode characters in comments, strings, or identifiers
+
+## Documentation Standards
+- All C and C++ source files (.c, .cpp, .h, .hpp) must use Doxygen-style comments
+- Test files are excluded from the Doxygen requirement
+- Use proper Doxygen tags: @file, @brief, @details, @param, @return, @author, @date, @copyright
+- Include file-level documentation with @file, @brief, and @details
+- Document all public functions, structs, enums, and macros
+- Use /** */ for multi-line Doxygen comments
+- Use /// for single-line Doxygen comments
+
+## Code Style
+- Follow C17 standard for C files
+- Use consistent indentation (spaces preferred)
+- Use descriptive variable and function names
+- Follow the existing codebase patterns for naming conventions
+- Include proper error handling with return codes
+
+## File Organization
+- Keep header files in include/ directory structure
+- Source files in src/ directory structure
+- Test files in test/ directory (excluded from Doxygen requirements)
+- Follow the existing directory layout as documented in Overview.md
+
+## Platform Support
+- Maintain cross-platform compatibility (Windows, Linux, macOS)
+- Use platform-specific code blocks with proper #ifdef guards
+- Follow the existing platform abstraction patterns
+
+## Dependencies
+- Minimize external dependencies (only Vulkan SDK, platform SDKs, ICU allowed)
+- Avoid GPL/AGPL dependencies
+- Use MIT license for all contributions
+
+## Examples
+
+### Good Doxygen Comment:
+```c
+/**
+ * @file example.c
+ * @brief Example implementation of a CJelly function
+ * @details This function demonstrates proper Doxygen documentation
+ *          and ASCII-only character usage.
+ * @author Ghoti.io
+ * @date 2025
+ * @copyright Copyright (C) 2025 Ghoti.io
+ */
+
+/**
+ * @brief Creates a new application instance
+ * @param app Pointer to store the created application
+ * @param name Application name (ASCII only)
+ * @param version Vulkan API version
+ * @return CJELLY_APPLICATION_ERROR_NONE on success, error code on failure
+ */
+CJellyApplicationError cjelly_application_create(
+    CJellyApplication** app,
+    const char* name,
+    uint32_t version
+);
+```
+
+### Bad Examples (avoid):
+- Unicode symbols: `// ✨ Magic function ✨`
+- Emoji: `// 🚀 Fast rendering`
+- Non-ASCII characters: `// Résumé function`
+- Missing Doxygen: `// Simple comment without proper documentation`
