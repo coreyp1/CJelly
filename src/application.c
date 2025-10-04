@@ -333,7 +333,6 @@ CJellyApplicationError cjelly_application_create(
   newApp->graphicsQueue = VK_NULL_HANDLE;
   newApp->transferQueue = VK_NULL_HANDLE;
   newApp->computeQueue = VK_NULL_HANDLE;
-  newApp->headlessSurface = VK_NULL_HANDLE;
 
   *app = newApp;
   return CJELLY_APPLICATION_ERROR_NONE;
