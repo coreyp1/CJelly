@@ -187,9 +187,6 @@ typedef struct CJellyApplicationOptions {
  * @var computeQueue
  *  The Vulkan queue handle used for compute operations.
  *
- * @var headlessSurface
- *  A Vulkan surface handle used for headless (offscreen) rendering or testing.
- *
  * @var graphicsQueueFamilyIndex
  *  The queue family index used for graphics operations.
  *
@@ -214,7 +211,6 @@ struct CJellyApplication {
   VkQueue graphicsQueue;
   VkQueue transferQueue;
   VkQueue computeQueue;
-  VkSurfaceKHR headlessSurface;
   int graphicsQueueFamilyIndex;
   int transferQueueFamilyIndex;
   int computeQueueFamilyIndex;
