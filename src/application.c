@@ -255,7 +255,6 @@ static bool initialize_options(CJellyApplicationOptions * opts) {
 #else
       VK_KHR_XLIB_SURFACE_EXTENSION_NAME,
 #endif
-      VK_EXT_HEADLESS_SURFACE_EXTENSION_NAME,
   };
   size_t instanceExtCount =
       sizeof(instanceExtensions) / sizeof(instanceExtensions[0]);
