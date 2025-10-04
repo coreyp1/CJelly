@@ -73,90 +73,91 @@ int main(void) {
   cjelly_application_destroy(app);
   app = NULL;
 
-  //   // Create two windows.
-  //   CJellyWindow win1 = {0}, win2 = {0};
+    // Create two windows.
+    CJellyWindow win1 = {0}, win2 = {0};
 
-  //   win1.renderCallback = renderSquare;
-  //   win1.updateMode = CJELLY_UPDATE_MODE_FIXED;
-  //   win1.fixedFramerate = 60;
+    win1.renderCallback = renderSquare;
+    win1.updateMode = CJELLY_UPDATE_MODE_FIXED;
+    win1.fixedFramerate = 60;
 
-  //   win2.renderCallback = renderSquare;
-  //   win2.updateMode = CJELLY_UPDATE_MODE_EVENT_DRIVEN;
+    win2.renderCallback = renderSquare;
+    win2.updateMode = CJELLY_UPDATE_MODE_EVENT_DRIVEN;
 
-  //   createPlatformWindow(&win1, "Vulkan Square - Window 1", WIDTH, HEIGHT);
-  //   createPlatformWindow(&win2, "Vulkan Square - Window 2", WIDTH, HEIGHT);
+    createPlatformWindow(&win1, "Vulkan Square - Window 1", WIDTH, HEIGHT);
+    createPlatformWindow(&win2, "Vulkan Square - Window 2", WIDTH, HEIGHT);
 
-  //   // Global Vulkan initialization.
-  //   initVulkanGlobal();
+    // Global Vulkan initialization.
+    initVulkanGlobal();
 
-  //   // For each window, create the per-window Vulkan objects.
-  //   createSurfaceForWindow(&win1);
-  //   createSwapChainForWindow(&win1);
-  //   createImageViewsForWindow(&win1);
-  //   createFramebuffersForWindow(&win1);
-  //   createCommandBuffersForWindow(&win1);
-  //   createSyncObjectsForWindow(&win1);
+    // For each window, create the per-window Vulkan objects.
+    createSurfaceForWindow(&win1);
+    createSwapChainForWindow(&win1);
+    createImageViewsForWindow(&win1);
+    createFramebuffersForWindow(&win1);
+    createCommandBuffersForWindow(&win1);
+    createSyncObjectsForWindow(&win1);
 
-  //   createSurfaceForWindow(&win2);
-  //   createSwapChainForWindow(&win2);
-  //   createImageViewsForWindow(&win2);
-  //   createFramebuffersForWindow(&win2);
-  //   createTexturedCommandBuffersForWindow(&win2);
-  //   createSyncObjectsForWindow(&win2);
+    createSurfaceForWindow(&win2);
+    createSwapChainForWindow(&win2);
+    createImageViewsForWindow(&win2);
+    createFramebuffersForWindow(&win2);
+    createTexturedCommandBuffersForWindow(&win2);
+    createSyncObjectsForWindow(&win2);
 
-  //   // Main render loop.
-  //   CJellyWindow * windows[] = {&win1, &win2};
-  //   while (!shouldClose) {
-  //     processWindowEvents();
-  //     uint64_t currentTime = getCurrentTimeInMilliseconds();
+    // Main render loop.
+    CJellyWindow * windows[] = {&win1, &win2};
+    while (!shouldClose) {
+      processWindowEvents();
+      uint64_t currentTime = getCurrentTimeInMilliseconds();
 
-  //     for (int i = 0; i < 2; ++i) {
-  //       CJellyWindow * win = windows[i];
-  //       // Update window 1 independently:
-  //       switch (win->updateMode) {
-  //       case CJELLY_UPDATE_MODE_VSYNC:
-  //         // For VSync mode, the present call (with FIFO) will throttle
-  //         rendering. if (win->renderCallback) {
-  //           win->renderCallback(win);
-  //         }
-  //         break;
-  //       case CJELLY_UPDATE_MODE_FIXED:
-  //         // In fixed mode, only render if it’s time for the next frame.
-  //         if (currentTime >= win->nextFrameTime) {
-  //           if (win->renderCallback) {
-  //             win->renderCallback(win);
-  //           }
-  //           win->nextFrameTime = currentTime + (1000 / win->fixedFramerate);
-  //         }
-  //         break;
-  //       case CJELLY_UPDATE_MODE_EVENT_DRIVEN:
-  //         // In event-driven mode, only render when needed.
-  //         if (win->needsRedraw) {
-  //           if (win->renderCallback) {
-  //             win->renderCallback(win);
-  //           }
-  //           win->needsRedraw = 0;
-  //         }
-  //         break;
-  //       }
-  //     }
+      for (int i = 0; i < 2; ++i) {
+        CJellyWindow * win = windows[i];
+        // Update window 1 independently:
+        switch (win->updateMode) {
+        case CJELLY_UPDATE_MODE_VSYNC:
+          // For VSync mode, the present call (with FIFO) will throttle
+          // rendering.
+          if (win->renderCallback) {
+            win->renderCallback(win);
+          }
+          break;
+        case CJELLY_UPDATE_MODE_FIXED:
+          // In fixed mode, only render if it’s time for the next frame.
+          if (currentTime >= win->nextFrameTime) {
+            if (win->renderCallback) {
+              win->renderCallback(win);
+            }
+            win->nextFrameTime = currentTime + (1000 / win->fixedFramerate);
+          }
+          break;
+        case CJELLY_UPDATE_MODE_EVENT_DRIVEN:
+          // In event-driven mode, only render when needed.
+          if (win->needsRedraw) {
+            if (win->renderCallback) {
+              win->renderCallback(win);
+            }
+            win->needsRedraw = 0;
+          }
+          break;
+        }
+      }
 
-  //     // Sleep for a short duration to avoid busy waiting.
-  // #ifdef _WIN32
-  //     Sleep(1);
-  // #else
-  //     struct timespec req = {0, 1000000}; // 1 millisecond
-  //     nanosleep(&req, NULL);
-  // #endif
-  //   }
-  //   vkDeviceWaitIdle(device);
+      // Sleep for a short duration to avoid busy waiting.
+  #ifdef _WIN32
+      Sleep(1);
+  #else
+      struct timespec req = {0, 1000000}; // 1 millisecond
+      nanosleep(&req, NULL);
+  #endif
+    }
+    vkDeviceWaitIdle(device);
 
-  //   // Clean up per-window resources.
-  //   cleanupWindow(&win1);
-  //   cleanupWindow(&win2);
+    // Clean up per-window resources.
+    cleanupWindow(&win1);
+    cleanupWindow(&win2);
 
-  //   // Clean up global Vulkan resources.
-  //   cleanupVulkanGlobal();
+    // Clean up global Vulkan resources.
+    cleanupVulkanGlobal();
 
 #ifndef _WIN32
   XCloseDisplay(display);
