@@ -38,22 +38,17 @@ void renderSquare(CJellyWindow * win) {
 }
 
 int main(void) {
-  printf("Starting CJelly demo...\n");
-  
 #ifdef _WIN32
   // Windows: hInstance is set in createPlatformWindow.
 #else
   // Linux: Open X display.
-  printf("Opening X display...\n");
   display = XOpenDisplay(NULL);
   if (!display) {
     fprintf(stderr, "Failed to open X display\n");
     exit(EXIT_FAILURE);
   }
-  printf("X display opened successfully\n");
 #endif
 
-  printf("Creating CJelly application...\n");
   CJellyApplication * app = NULL;
   CJellyApplicationError err = cjelly_application_create(
       &app, "Vulkan Square", VK_MAKE_VERSION(1, 0, 0));
@@ -61,7 +56,6 @@ int main(void) {
     fprintf(stderr, "Failed to create CJelly application: %d\n", err);
     return EXIT_FAILURE;
   }
-  printf("CJelly application created successfully\n");
   // Set up the application options.
   // cjelly_application_set_required_vulkan_version(app, VK_API_VERSION_1_0);
   // cjelly_application_set_required_gpu_memory(app, 2048);
@@ -69,13 +63,11 @@ int main(void) {
 
 
   // Initialize the application.
-  printf("Initializing CJelly application...\n");
   err = cjelly_application_init(app);
   if (err != CJELLY_APPLICATION_ERROR_NONE) {
     fprintf(stderr, "Failed to initialize CJelly application: %d\n", err);
     return EXIT_FAILURE;
   }
-  printf("CJelly application initialized successfully\n");
 
   // Destroy the application.
   cjelly_application_destroy(app);

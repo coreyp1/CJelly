@@ -29,8 +29,8 @@
 #include <shaders/basic.frag.h>
 #include <shaders/basic.vert.h>
 #include <shaders/textured.frag.h>
-// #include <shaders/bindless.vert.h>
-// #include <shaders/bindless.frag.h>
+#include <shaders/bindless.vert.h>
+#include <shaders/bindless.frag.h>
 
 // Global Vulkan objects shared among all windows.
 
@@ -73,7 +73,7 @@ VkPipeline bindlessPipeline;
 VkPipelineLayout bindlessPipelineLayout;
 VkBuffer vertexBufferBindless;
 VkDeviceMemory vertexBufferBindlessMemory;
-CJellyTextureAtlas * bindlessTextureAtlas;
+CJellyTextureAtlas * bindlessTextureAtlas = NULL;
 
 
 // Global flag to indicate that the window should close.
@@ -1250,7 +1250,6 @@ void createTexturedGraphicsPipeline() {
   vkDestroyShaderModule(device, fragShaderModule, NULL);
 }
 
-/*
 void createBindlessGraphicsPipeline() {
   // Load SPIR-V binaries and create shader modules for bindless rendering.
   VkShaderModule vertShaderModule =
@@ -1407,7 +1406,6 @@ void createBindlessGraphicsPipeline() {
   vkDestroyShaderModule(device, vertShaderModule, NULL);
   vkDestroyShaderModule(device, fragShaderModule, NULL);
 }
-*/
 
 /// Creates a texture image from a BMP file.
 void createTextureImage(const char * filePath) {
@@ -1994,27 +1992,20 @@ void initVulkanGlobal() {
   updateTextureDescriptorSet(textureDescriptorSet);
   createTexturedGraphicsPipeline();
 
-  // Bindless rendering setup (temporarily disabled for debugging)
-  printf("Skipping bindless setup for now...\n");
-  /*
-  bindlessTextureAtlas = cjelly_create_texture_atlas(2048, 2048);
+  // Bindless rendering setup (simplified approach)
+  bindlessTextureAtlas = cjelly_create_texture_atlas(2048, 2048); // Larger atlas for 1024x1024 textures
   if (bindlessTextureAtlas) {
     // Add textures to the atlas
     cjelly_atlas_add_texture(bindlessTextureAtlas, "test/images/bmp/tang.bmp");
     cjelly_atlas_add_texture(bindlessTextureAtlas, "test/images/bmp/16Color.bmp");
-    
+
     // Update the descriptor set with the atlas
     cjelly_atlas_update_descriptor_set(bindlessTextureAtlas);
-    
+
     // Create bindless vertex buffer and pipeline
     createBindlessVertexBuffer();
     createBindlessGraphicsPipeline();
-    
-    printf("Bindless rendering initialized with %d textures\n", bindlessTextureAtlas->textureCount);
-  } else {
-    printf("Failed to create bindless texture atlas\n");
   }
-  */
 }
 
 void cleanupVulkanGlobal() {
@@ -2037,16 +2028,22 @@ void cleanupVulkanGlobal() {
   vkFreeMemory(device, vertexBufferTexturedMemory, NULL);
 
   // --- Begin Bindless Cleanup ---
-  // Destroy the bindless pipeline and layout.
-  vkDestroyPipeline(device, bindlessPipeline, NULL);
-  vkDestroyPipelineLayout(device, bindlessPipelineLayout, NULL);
-
-  // Destroy the bindless vertex buffer.
-  vkDestroyBuffer(device, vertexBufferBindless, NULL);
-  vkFreeMemory(device, vertexBufferBindlessMemory, NULL);
-
-  // Destroy the bindless texture atlas.
-  cjelly_destroy_texture_atlas(bindlessTextureAtlas);
+  // Only clean up if bindless resources were created
+  if (bindlessPipeline != VK_NULL_HANDLE) {
+    vkDestroyPipeline(device, bindlessPipeline, NULL);
+  }
+  if (bindlessPipelineLayout != VK_NULL_HANDLE) {
+    vkDestroyPipelineLayout(device, bindlessPipelineLayout, NULL);
+  }
+  if (vertexBufferBindless != VK_NULL_HANDLE) {
+    vkDestroyBuffer(device, vertexBufferBindless, NULL);
+  }
+  if (vertexBufferBindlessMemory != VK_NULL_HANDLE) {
+    vkFreeMemory(device, vertexBufferBindlessMemory, NULL);
+  }
+  if (bindlessTextureAtlas != NULL) {
+    cjelly_destroy_texture_atlas(bindlessTextureAtlas);
+  }
 
   // Destroy the texture sampler and image view.
   vkDestroySampler(device, textureSampler, NULL);

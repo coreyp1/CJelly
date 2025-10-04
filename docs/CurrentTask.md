@@ -47,7 +47,7 @@ src/
   - Added `supportsBindlessRendering` field to `CJellyApplication` struct
   - Implemented `cjelly_application_supports_bindless_rendering()` function
   - Added extension detection in device creation logic
-  - **Note**: Currently disabled for hardware compatibility - crashes on systems without descriptor indexing support
+  - **Note**: Successfully implemented with descriptor indexing support - works with software renderers like llvmpipe
 
 #### Task 1.2: Bindless Shader Pipeline ✅ **COMPLETED**
 - [x] **Status**: Completed

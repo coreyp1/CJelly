@@ -922,7 +922,7 @@ CJellyApplicationError cjelly_application_create_logical_device(
   }
 
   // Build an array of unique queue families to be used for device creation.
-  VkDeviceQueueCreateInfo queueCreateInfos[3];
+  VkDeviceQueueCreateInfo queueCreateInfos[3] = {0}; // Zero-initialize the entire array
   uint32_t queueCreateInfoCount = 0;
   int usedFamilies[3];
   int usedCount = 0;
@@ -941,6 +941,8 @@ CJellyApplicationError cjelly_application_create_logical_device(
       float priority = 1.0f;                                                   \
       queueCreateInfos[queueCreateInfoCount].sType =                           \
           VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;                          \
+      queueCreateInfos[queueCreateInfoCount].pNext = NULL;                     \
+      queueCreateInfos[queueCreateInfoCount].flags = 0;                        \
       queueCreateInfos[queueCreateInfoCount].queueFamilyIndex = (family);      \
       queueCreateInfos[queueCreateInfoCount].queueCount = 1;                   \
       queueCreateInfos[queueCreateInfoCount].pQueuePriorities = &priority;     \
@@ -954,17 +956,60 @@ CJellyApplicationError cjelly_application_create_logical_device(
   ADD_QUEUE_INFO(computeFamily);
 #undef ADD_QUEUE_INFO
 
-  // Temporarily disable descriptor indexing for debugging
-  app->supportsBindlessRendering = false;
+  // Check for descriptor indexing extension support
+
+  // Query available device extensions
+  uint32_t availableExtensionCount = 0;
+  vkEnumerateDeviceExtensionProperties(app->physicalDevice, NULL, &availableExtensionCount, NULL);
+  VkExtensionProperties *availableExtensions = malloc(sizeof(VkExtensionProperties) * availableExtensionCount);
+  vkEnumerateDeviceExtensionProperties(app->physicalDevice, NULL, &availableExtensionCount, availableExtensions);
+
+  bool descriptorIndexingSupported = false;
+  for (uint32_t i = 0; i < availableExtensionCount; i++) {
+    if (strcmp(availableExtensions[i].extensionName, VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME) == 0) {
+      descriptorIndexingSupported = true;
+      break;
+    }
+  }
+
+  // Add descriptor indexing extension if supported
+  if (descriptorIndexingSupported) {
+    if (add_extension_generic(&app->options.requiredDeviceExtensions,
+            &app->options.requiredDeviceExtensionCount,
+            &app->options.requiredDeviceExtensionCapacity,
+            VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME) != CJELLY_APPLICATION_ERROR_NONE) {
+      fprintf(stderr, "Failed to add descriptor indexing extension\n");
+      free(availableExtensions);
+      return CJELLY_APPLICATION_ERROR_INIT_FAILED;
+    }
+  }
+
+  app->supportsBindlessRendering = descriptorIndexingSupported;
 
   VkDeviceCreateInfo deviceCreateInfo = {0};
   deviceCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+  deviceCreateInfo.pNext = NULL;  // Ensure clean pNext chain
+  deviceCreateInfo.flags = 0;     // No special device creation flags
   deviceCreateInfo.queueCreateInfoCount = queueCreateInfoCount;
   deviceCreateInfo.pQueueCreateInfos = queueCreateInfos;
 
-  // Enable the required extensions only
+  // Enable the required extensions
   deviceCreateInfo.enabledExtensionCount = app->options.requiredDeviceExtensionCount;
   deviceCreateInfo.ppEnabledExtensionNames = app->options.requiredDeviceExtensions;
+
+  // Chain the descriptor indexing features if supported (minimal features only)
+  if (descriptorIndexingSupported) {
+    // Set up descriptor indexing features
+    VkPhysicalDeviceDescriptorIndexingFeaturesEXT descriptorIndexingFeatures = {0};
+    descriptorIndexingFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES_EXT;
+    descriptorIndexingFeatures.pNext = NULL;
+
+    // Enable only the essential features for bindless rendering
+    descriptorIndexingFeatures.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
+    descriptorIndexingFeatures.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
+
+    deviceCreateInfo.pNext = &descriptorIndexingFeatures;
+  }
 
   // Finally, create the logical device.
   VkResult result = vkCreateDevice(
@@ -979,9 +1024,8 @@ CJellyApplicationError cjelly_application_create_logical_device(
   vkGetDeviceQueue(app->logicalDevice, transferFamily, 0, &app->transferQueue);
   vkGetDeviceQueue(app->logicalDevice, computeFamily, 0, &app->computeQueue);
 
-  // Clean up allocated memory (temporarily disabled)
-  // free(availableExtensions);
-  // free(deviceExtensions);
+  // Clean up allocated memory
+  free(availableExtensions);
 
   return CJELLY_APPLICATION_ERROR_NONE;
 }

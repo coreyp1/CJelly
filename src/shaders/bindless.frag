@@ -9,10 +9,7 @@ layout(location = 1) in vec2 fragTexCoord;
 layout(location = 2) in flat uint fragTextureID;
 
 // Bindless texture array - this is the key to bindless rendering
-layout(set = 0, binding = 0) uniform texture2D textures[];
-
-// Sampler for the textures
-layout(set = 0, binding = 1) uniform sampler textureSampler;
+layout(set = 0, binding = 0) uniform sampler2D textures[];
 
 // Output color
 layout(location = 0) out vec4 outColor;
@@ -24,7 +21,7 @@ void main() {
     } else {
         // Use the texture ID to index into the bindless texture array
         // The nonuniformEXT qualifier is required for dynamic indexing
-        vec4 texColor = texture(nonuniformEXT(sampler2D(textures[fragTextureID], textureSampler)), fragTexCoord);
+        vec4 texColor = texture(nonuniformEXT(textures[fragTextureID]), fragTexCoord);
         
         // Blend texture with vertex color
         outColor = vec4(fragColor * texColor.rgb, texColor.a);
