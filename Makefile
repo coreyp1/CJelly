@@ -30,6 +30,7 @@ ifeq ($(UNAME_S), Linux)
 	INCLUDE_INSTALL_PATH := /usr/local/include
 	LIB_INSTALL_PATH := /usr/local/lib
 	ENV_VARS += VK_LAYER_PATH=/usr/share/vulkan/explicit_layer.d
+	BUILD := linux/$(BUILD)
 
 else ifeq ($(UNAME_S), Darwin)
 	OS_NAME := Mac
@@ -39,6 +40,7 @@ else ifeq ($(UNAME_S), Darwin)
 	TARGET := $(BASE_NAME_PREFIX).dylib
 	EXE_EXTENSION :=
 	# Additional macOS-specific variables
+	BUILD := mac/$(BUILD)
 
 else ifeq ($(findstring MINGW32_NT,$(UNAME_S)),MINGW32_NT)  # 32-bit Windows
 	OS_NAME := Windows
@@ -53,6 +55,7 @@ else ifeq ($(findstring MINGW32_NT,$(UNAME_S)),MINGW32_NT)  # 32-bit Windows
 	INCLUDE_INSTALL_PATH := /mingw32/include
 	LIB_INSTALL_PATH := /mingw32/lib
 	BIN_INSTALL_PATH := /mingw32/bin
+	BUILD := win32/$(BUILD)
 
 else ifeq ($(findstring MINGW64_NT,$(UNAME_S)),MINGW64_NT)  # 64-bit Windows
 	OS_NAME := Windows
@@ -68,6 +71,7 @@ else ifeq ($(findstring MINGW64_NT,$(UNAME_S)),MINGW64_NT)  # 64-bit Windows
 	LIB_INSTALL_PATH := /mingw64/lib
 	BIN_INSTALL_PATH := /mingw64/bin
 	ENV_VARS += VK_LAYER_PATH=/mingw64/bin/VkLayer_khronos_validation.json
+	BUILD := win64/$(BUILD)
 
 else
     $(error Unsupported OS: $(UNAME_S))
@@ -105,10 +109,14 @@ else
 
 endif
 
+# The standard include directories for the project.
+INCLUDE := -I include/ -I $(GEN_DIR)/
 
-INCLUDE := -I include/cjelly -I include/ -I $(GEN_DIR)/
-LIBOBJECTS := \
-	$(OBJ_DIR)/cjelly.o
+# Automatically collect all .c source files under the src directory.
+SOURCES := $(shell find src -type f -name '*.c')
+
+# Convert each source file path to an object file path.
+LIBOBJECTS := $(patsubst src/%.c,$(OBJ_DIR)/%.o,$(SOURCES))
 
 
 TESTFLAGS := `PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --libs --cflags gtest`
@@ -120,40 +128,61 @@ CJELLYLIBRARY := -L $(APP_DIR) -l$(SUITE)-$(PROJECT)$(BRANCH)
 all: $(APP_DIR)/$(TARGET) $(APP_DIR)/cjelly$(EXE_EXTENSION) ## Build the shared library
 
 ####################################################################
-# Dependency Variables
+# Test Files
 ####################################################################
-DEP_LIBVER = \
-	include/cjelly/libver.h
-DEP_MACROS = \
-	include/cjelly/macros.h \
-	$(DEP_LIBVER)
 
-DEP_CJELLY = \
-	include/cjelly/cjelly.h \
-	$(DEP_MACROS)
+# Automatically gather all files under the test/ directory (recursively)
+TEST_FILES_SRC := $(shell find test/ -type f)
+
+# Destination files will be placed under $(APP_DIR)/ preserving the test/ folder structure.
+TEST_FILES := $(addprefix $(APP_DIR)/, $(TEST_FILES_SRC))
+
+# Pattern rule to copy each test file from the test/ directory to $(APP_DIR)/test/
+$(APP_DIR)/test/%: test/%
+	@mkdir -p $(dir $@)
+	cp -u $< $@
+
+
+####################################################################
+# Dependency Inclusion
+####################################################################
+
+# Automatically include all generated dependency files.
+-include $(wildcard $(OBJ_DIR)/*.d)
 
 
 ####################################################################
 # Object Files
 ####################################################################
 
-$(LIBOBJECTS) :
+# Pattern rule for C source files: compile .c files to .o files, generating dependency files.
+$(OBJ_DIR)/%.o: src/%.c
 	@printf "\n### Compiling $@ ###\n"
 	@mkdir -p $(@D)
-	$(CC) $(CFLAGS) $(INCLUDE) -c $< -MMD -o $@ $(OS_SPECIFIC_CXX_FLAGS)
+	$(CC) $(CFLAGS) $(INCLUDE) -c $< -MMD -MP -MF $(@:.o=.d) -o $@ $(OS_SPECIFIC_CXX_FLAGS)
 
+# Pattern rule for C++ source files (if any):
+$(OBJ_DIR)/%.o: src/%.cpp
+	@printf "\n### Compiling $@ ###\n"
+	@mkdir -p $(@D)
+	$(CXX) $(CXXFLAGS) $(INCLUDE) -c $< -MMD -MP -MF $(@:.o=.d) -o $@
 
+# Because the shaders are generated (and therefore will not exist the first
+# time that the Makefile is run), we need to explicitly add a dependency to the
+# object file.  Otherwise, the shader will not be compiled yet, meaning that
+# the generated header file will not exist yet, and the compiler error out
+# before generating the list of dependencies.
 $(OBJ_DIR)/cjelly.o: \
-	src/cjelly.c \
 	$(GEN_DIR)/shaders/basic.vert.h \
 	$(GEN_DIR)/shaders/basic.frag.h \
-	$(DEP_CJELLY)
+	$(GEN_DIR)/shaders/textured.frag.h
 
 
 ####################################################################
 # Shaders
 ####################################################################
 
+# Automatically gather all files under the src/shaders/ directory (recursively)
 $(APP_DIR)/shaders/%.spv: \
 		src/shaders/%
 	@printf "\n### Compiling $@ ###\n"
@@ -164,12 +193,14 @@ $(APP_DIR)/shaders/%.spv: \
 # Replace dots with underscores.
 VAR_NAME = $(subst .,_, $(notdir $<))
 
+# Pattern rule to generate a header file from a SPIR-V file.
 $(GEN_DIR)/shaders/%.h: $(APP_DIR)/shaders/%.spv
 	@printf "\n### Generating $@ ###\n"
 	@mkdir -p $(@D)
 	xxd -i $< \
 	  | sed "s/^\(unsigned char \)[^[]*\(\[.*\)/\1$(VAR_NAME)\2/" \
 	  | sed "s/^\(unsigned int \)[^ ]*/\1$(VAR_NAME)_len/" > $@
+
 
 ####################################################################
 # Shared Library
@@ -201,6 +232,8 @@ endif
 $(APP_DIR)/main$(EXE_EXTENSION): \
 		src/main.c \
 		$(DEP_CJELLY) \
+		$(DEP_FORMAT_3D_MTL) \
+		$(DEP_FORMAT_3D_OBJ) \
 		$(APP_DIR)/$(TARGET)
 	@printf "\n### Compiling CJelly Test ###\n"
 	@mkdir -p $(@D)
@@ -243,6 +276,7 @@ test-watch: ## Watch the file directory for changes and run the unit tests
 
 test: ## Make and run the Unit tests
 test: \
+		$(TEST_FILES) \
 		$(APP_DIR)/$(TARGET) \
 		$(APP_DIR)/main$(EXE_EXTENSION)
 #				$(APP_DIR)/test$(EXE_EXTENSION) \
@@ -255,7 +289,7 @@ test: \
 	cd $(APP_DIR) && LD_LIBRARY_PATH="./" $(ENV_VARS) ./main$(EXE_EXTENSION)
 
 clean: ## Remove all contents of the build directories.
-	-@rm -rvf ./build
+	-@rm -rvf $(BUILD_DIR)
 
 # Files will be as follows:
 # /usr/local/lib/(SUITE)/
