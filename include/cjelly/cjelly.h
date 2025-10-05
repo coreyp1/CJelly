@@ -199,6 +199,17 @@ extern const int HEIGHT;
 
 typedef struct CJellyWindow CJellyWindow;
 
+// Vulkan context passed explicitly (refactor away from globals)
+typedef struct CJellyVulkanContext {
+  VkInstance instance;
+  VkPhysicalDevice physicalDevice;
+  VkDevice device;
+  VkQueue graphicsQueue;
+  VkQueue presentQueue;
+  VkRenderPass renderPass;
+  VkCommandPool commandPool;
+} CJellyVulkanContext;
+
 /**
  * @brief Callback type for per-window rendering.
  *
@@ -643,6 +654,11 @@ void initVulkanGlobal(void);
  */
 void cleanupVulkanGlobal(void);
 
+// Context-based initialization and cleanup (preferred)
+// Returns 1 on success, 0 on failure
+int cjelly_init_context(CJellyVulkanContext* ctx, int enableValidation);
+void cjelly_destroy_context(CJellyVulkanContext* ctx);
+
 
 void createTexturedCommandBuffersForWindow(CJellyWindow * win);
 
@@ -665,6 +681,9 @@ typedef struct {
 } CJellyBindlessResources;
 
 void createBindlessCommandBuffersForWindow(CJellyWindow * win, const CJellyBindlessResources* resources, VkDevice device, VkCommandPool commandPool, VkRenderPass renderPass);
+
+// Context-based variant (preferred)
+void createBindlessCommandBuffersForWindowCtx(CJellyWindow * win, const CJellyBindlessResources* resources, const CJellyVulkanContext* ctx);
 
 // Bindless texture management structures
 typedef struct CJellyTextureAtlas {
@@ -695,10 +714,17 @@ void cjelly_destroy_texture_atlas(CJellyTextureAtlas * atlas);
 uint32_t cjelly_atlas_add_texture(CJellyTextureAtlas * atlas, const char * filePath);
 CJellyTextureEntry * cjelly_atlas_get_texture_entry(CJellyTextureAtlas * atlas, uint32_t textureID);
 
+// Context-based atlas management (preferred)
+CJellyTextureAtlas * cjelly_create_texture_atlas_ctx(const CJellyVulkanContext* ctx, uint32_t width, uint32_t height);
+void cjelly_destroy_texture_atlas_ctx(CJellyTextureAtlas * atlas, const CJellyVulkanContext* ctx);
+uint32_t cjelly_atlas_add_texture_ctx(CJellyTextureAtlas * atlas, const char * filePath, const CJellyVulkanContext* ctx);
+CJellyTextureEntry * cjelly_atlas_get_texture_entry(CJellyTextureAtlas * atlas, uint32_t textureID);
+
 // External declarations for global variables used in bindless rendering
 extern VkPipeline bindlessPipeline;
 extern VkPipelineLayout bindlessPipelineLayout;
-extern CJellyTextureAtlas * bindlessTextureAtlas;
+// Deprecated global removed: use CJellyBindlessResources::textureAtlas instead
+// extern CJellyTextureAtlas * bindlessTextureAtlas;
 extern VkBuffer vertexBufferBindless;
 extern VkDeviceMemory vertexBufferBindlessMemory;
 
@@ -708,6 +734,10 @@ void cjelly_atlas_update_descriptor_set(CJellyTextureAtlas * atlas);
 
 // Bindless resources for a color-only square (no texture sampling)
 CJellyBindlessResources* cjelly_create_bindless_color_square_resources(void);
+
+// Context-based creation (preferred)
+CJellyBindlessResources* cjelly_create_bindless_resources_ctx(const CJellyVulkanContext* ctx);
+CJellyBindlessResources* cjelly_create_bindless_color_square_resources_ctx(const CJellyVulkanContext* ctx);
 
 #ifdef __cplusplus
 }

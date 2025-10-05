@@ -119,10 +119,13 @@ int main(void) {
     createPlatformWindow(&win1, "Vulkan Square - Window 1", WIDTH, HEIGHT);
     createPlatformWindow(&win2, "Vulkan Square - Window 2", WIDTH, HEIGHT);
 
-    // Global Vulkan initialization.
+    // Initialize Vulkan via context API
     fprintf(stderr, "Initializing Vulkan...\n");
-    enableValidationLayers = 0; // disable layers for WSL/headless runs
-    initVulkanGlobal();
+    CJellyVulkanContext ctx = {0};
+    if (!cjelly_init_context(&ctx, 0)) {
+      fprintf(stderr, "Failed to initialize CJelly Vulkan context\n");
+      return EXIT_FAILURE;
+    }
     fprintf(stderr, "Vulkan initialized.\n");
 
     // For each window, create the per-window Vulkan objects.
@@ -132,13 +135,13 @@ int main(void) {
     createImageViewsForWindow(&win1);
     createFramebuffersForWindow(&win1);
     // Use bindless-capable path for window 1 as well (color-only)
-    CJellyBindlessResources* colorOnly = cjelly_create_bindless_color_square_resources();
+    CJellyBindlessResources* colorOnly = cjelly_create_bindless_color_square_resources_ctx(&ctx);
     if (colorOnly) {
       // Share the atlas descriptor from the fish path if available to ensure push constants are set
       if (bindlessResources && bindlessResources->textureAtlas) {
         colorOnly->textureAtlas = bindlessResources->textureAtlas;
       }
-      createBindlessCommandBuffersForWindow(&win1, colorOnly, device, commandPool, renderPass);
+      createBindlessCommandBuffersForWindowCtx(&win1, colorOnly, &ctx);
     } else {
       createCommandBuffersForWindow(&win1);
     }
@@ -151,11 +154,11 @@ int main(void) {
     createFramebuffersForWindow(&win2);
     // Create bindless resources now that Vulkan globals are initialized
     fprintf(stderr, "Creating bindless resources...\n");
-    bindlessResources = cjelly_create_bindless_resources();
+    bindlessResources = cjelly_create_bindless_resources_ctx(&ctx);
     fprintf(stderr, "DEBUG: bindlessResources returned %p\n", (void*)bindlessResources);
     if (bindlessResources) {
       printf("DEBUG: Calling bindless command buffer creation...\n");
-      createBindlessCommandBuffersForWindow(&win2, bindlessResources, device, commandPool, renderPass);
+      createBindlessCommandBuffersForWindowCtx(&win2, bindlessResources, &ctx);
       printf("DEBUG: Bindless command buffer creation completed\n");
     } else {
       createTexturedCommandBuffersForWindow(&win2);
@@ -230,7 +233,7 @@ int main(void) {
       nanosleep(&req, NULL);
   #endif
     }
-    vkDeviceWaitIdle(device);
+    vkDeviceWaitIdle(ctx.device);
 
     // Clean up per-window resources.
     cleanupWindow(&win1);
@@ -243,7 +246,7 @@ int main(void) {
     }
 
     // Clean up global Vulkan resources.
-    cleanupVulkanGlobal();
+    cjelly_destroy_context(&ctx);
 
 #ifndef _WIN32
   XCloseDisplay(display);

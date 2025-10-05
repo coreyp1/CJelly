@@ -74,7 +74,8 @@ VkPipelineLayout bindlessPipelineLayout;
 VkBuffer vertexBufferBindless;
 VkDeviceMemory vertexBufferBindlessMemory;
 // Bindless texture atlas global (used by pipeline creation)
-CJellyTextureAtlas * bindlessTextureAtlas = NULL;
+// Deprecated: global atlas removed in favor of resources->textureAtlas
+// CJellyTextureAtlas * bindlessTextureAtlas = NULL;
 
 
 // Global flag to indicate that the window should close.
@@ -130,6 +131,185 @@ void createBindlessGraphicsPipeline(VkDevice device, VkRenderPass renderPass);
 struct CJellyTextureAtlas;
 struct CJellyApplication;
 
+// Context-based atlas helpers (defined later)
+static void cjelly_atlas_update_descriptor_set_ctx(CJellyTextureAtlas * atlas, const CJellyVulkanContext* ctx);
+
+// === Context-based utility functions ===
+static uint32_t findMemoryTypeCtx(const CJellyVulkanContext* ctx, uint32_t typeFilter, VkMemoryPropertyFlags properties) {
+  VkPhysicalDeviceMemoryProperties memProperties;
+  vkGetPhysicalDeviceMemoryProperties(ctx->physicalDevice, &memProperties);
+  for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
+    if ((typeFilter & (1 << i)) &&
+        (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
+      return i;
+    }
+  }
+  fprintf(stderr, "Failed to find suitable memory type (ctx)!\n");
+  exit(EXIT_FAILURE);
+}
+
+static void createImageCtx(const CJellyVulkanContext* ctx, uint32_t width, uint32_t height, VkFormat format,
+    VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties,
+    VkImage * image, VkDeviceMemory * imageMemory) {
+  VkImageCreateInfo imageInfo = {0};
+  imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+  imageInfo.imageType = VK_IMAGE_TYPE_2D;
+  imageInfo.extent.width = width;
+  imageInfo.extent.height = height;
+  imageInfo.extent.depth = 1;
+  imageInfo.mipLevels = 1;
+  imageInfo.arrayLayers = 1;
+  imageInfo.format = format;
+  imageInfo.tiling = tiling;
+  imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  imageInfo.usage = usage;
+  imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+  imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+
+  if (vkCreateImage(ctx->device, &imageInfo, NULL, image) != VK_SUCCESS) {
+    fprintf(stderr, "Failed to create image (ctx)\n");
+    exit(EXIT_FAILURE);
+  }
+
+  VkMemoryRequirements memRequirements;
+  vkGetImageMemoryRequirements(ctx->device, *image, &memRequirements);
+
+  VkMemoryAllocateInfo allocInfo = {0};
+  allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+  allocInfo.allocationSize = memRequirements.size;
+  allocInfo.memoryTypeIndex = findMemoryTypeCtx(ctx, memRequirements.memoryTypeBits, properties);
+
+  if (vkAllocateMemory(ctx->device, &allocInfo, NULL, imageMemory) != VK_SUCCESS) {
+    fprintf(stderr, "Failed to allocate image memory (ctx)\n");
+    exit(EXIT_FAILURE);
+  }
+
+  vkBindImageMemory(ctx->device, *image, *imageMemory, 0);
+}
+
+static VkCommandBuffer beginSingleTimeCommandsCtx(const CJellyVulkanContext* ctx) {
+  VkCommandBufferAllocateInfo allocInfo = {0};
+  allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+  allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+  allocInfo.commandPool = ctx->commandPool;
+  allocInfo.commandBufferCount = 1;
+
+  VkCommandBuffer commandBuffer;
+  vkAllocateCommandBuffers(ctx->device, &allocInfo, &commandBuffer);
+
+  VkCommandBufferBeginInfo beginInfo = {0};
+  beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+  beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+
+  vkBeginCommandBuffer(commandBuffer, &beginInfo);
+  return commandBuffer;
+}
+
+static void endSingleTimeCommandsCtx(const CJellyVulkanContext* ctx, VkCommandBuffer commandBuffer) {
+  vkEndCommandBuffer(commandBuffer);
+
+  VkSubmitInfo submitInfo = {0};
+  submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+  submitInfo.commandBufferCount = 1;
+  submitInfo.pCommandBuffers = &commandBuffer;
+
+  vkQueueSubmit(ctx->graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
+  vkQueueWaitIdle(ctx->graphicsQueue);
+
+  vkFreeCommandBuffers(ctx->device, ctx->commandPool, 1, &commandBuffer);
+}
+
+static void transitionImageLayoutCtx(const CJellyVulkanContext* ctx, VkImage image, VkFormat format,
+    VkImageLayout oldLayout, VkImageLayout newLayout) {
+  (void)format;
+  VkCommandBuffer commandBuffer = beginSingleTimeCommandsCtx(ctx);
+
+  VkImageMemoryBarrier barrier = {0};
+  barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+  barrier.oldLayout = oldLayout;
+  barrier.newLayout = newLayout;
+  barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.image = image;
+  barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  barrier.subresourceRange.baseMipLevel = 0;
+  barrier.subresourceRange.levelCount = 1;
+  barrier.subresourceRange.baseArrayLayer = 0;
+  barrier.subresourceRange.layerCount = 1;
+
+  VkPipelineStageFlags sourceStage;
+  VkPipelineStageFlags destinationStage;
+
+  if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL) {
+    barrier.srcAccessMask = 0;
+    barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    sourceStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+    destinationStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+  } else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+    barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+    sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+    destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
+  } else {
+    fprintf(stderr, "Unsupported layout transition (ctx)!\n");
+    exit(EXIT_FAILURE);
+  }
+
+  vkCmdPipelineBarrier(commandBuffer, sourceStage, destinationStage, 0, 0, NULL, 0, NULL, 1, &barrier);
+
+  endSingleTimeCommandsCtx(ctx, commandBuffer);
+}
+
+static void copyBufferToImageCtx(const CJellyVulkanContext* ctx, VkBuffer buffer, VkImage image, uint32_t width, uint32_t height) {
+  VkCommandBuffer commandBuffer = beginSingleTimeCommandsCtx(ctx);
+
+  VkBufferImageCopy region = {0};
+  region.bufferOffset = 0;
+  region.bufferRowLength = 0;
+  region.bufferImageHeight = 0;
+  region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  region.imageSubresource.mipLevel = 0;
+  region.imageSubresource.baseArrayLayer = 0;
+  region.imageSubresource.layerCount = 1;
+  region.imageOffset = (VkOffset3D){0, 0, 0};
+  region.imageExtent = (VkExtent3D){width, height, 1};
+
+  vkCmdCopyBufferToImage(commandBuffer, buffer, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+
+  endSingleTimeCommandsCtx(ctx, commandBuffer);
+}
+// Context-friendly vertex buffer creation for bindless vertices
+static void createBindlessVertexBufferCtx(
+    VkDevice device,
+    VkCommandPool commandPool,
+    VkBuffer* outBuffer,
+    VkDeviceMemory* outMemory) {
+  (void)commandPool;
+  VertexBindless verticesBindless[] = {
+    {{-0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, 1},
+    {{ 0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, 1},
+    {{ 0.5f,  0.5f}, {1.0f, 1.0f, 1.0f}, 1},
+    {{ 0.5f,  0.5f}, {1.0f, 1.0f, 1.0f}, 1},
+    {{-0.5f,  0.5f}, {1.0f, 1.0f, 1.0f}, 1},
+    {{-0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, 1},
+  };
+  VkDeviceSize bufferSize = sizeof(verticesBindless);
+  createBuffer(bufferSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+               outBuffer, outMemory);
+  void* data = NULL;
+  vkMapMemory(device, *outMemory, 0, bufferSize, 0, &data);
+  memcpy(data, verticesBindless, (size_t)bufferSize);
+  vkUnmapMemory(device, *outMemory);
+}
+
+// Forward decl for context-friendly pipeline helper
+static VkResult createBindlessGraphicsPipelineWithLayout(
+    VkDevice device,
+    VkRenderPass renderPass,
+    VkDescriptorSetLayout descriptorSetLayout,
+    VkPipelineLayout* outPipelineLayout,
+    VkPipeline* outPipeline);
 
 // Initialize bindless rendering resources
 CJellyBindlessResources* cjelly_create_bindless_resources(void) {
@@ -186,9 +366,8 @@ CJellyBindlessResources* cjelly_create_bindless_resources(void) {
     resources->vertexBuffer = vertexBufferBindless;
     resources->vertexBufferMemory = vertexBufferBindlessMemory;
 
-    // Expose atlas to both resources and global for compatibility
+    // Expose atlas via resources only
     resources->textureAtlas = atlas;
-    bindlessTextureAtlas = atlas;
     // Initialize default push values
     resources->uv[0]=1.0f; resources->uv[1]=1.0f; resources->uv[2]=0.0f; resources->uv[3]=0.0f;
     resources->colorMul[0]=1.0f; resources->colorMul[1]=1.0f; resources->colorMul[2]=1.0f; resources->colorMul[3]=1.0f;
@@ -214,15 +393,63 @@ CJellyBindlessResources* cjelly_create_bindless_resources(void) {
     return resources;
 }
 
+// Deprecated shim removed; using full ctx version below
+
+CJellyBindlessResources* cjelly_create_bindless_resources_ctx(const CJellyVulkanContext* ctx) {
+    if (!ctx || ctx->device == VK_NULL_HANDLE || ctx->commandPool == VK_NULL_HANDLE || ctx->renderPass == VK_NULL_HANDLE) {
+        fprintf(stderr, "Invalid Vulkan context passed to cjelly_create_bindless_resources_ctx\n");
+        return NULL;
+    }
+
+    CJellyBindlessResources* resources = (CJellyBindlessResources*)calloc(1, sizeof(CJellyBindlessResources));
+    if (!resources) return NULL;
+
+    // Create atlas and add textures using context
+    CJellyTextureAtlas* atlas = cjelly_create_texture_atlas_ctx(ctx, 2048, 2048);
+    if (!atlas) {
+        free(resources);
+        return NULL;
+    }
+    uint32_t tex1 = cjelly_atlas_add_texture_ctx(atlas, "test/images/bmp/tang.bmp", ctx);
+    uint32_t tex2 = cjelly_atlas_add_texture_ctx(atlas, "test/images/bmp/16Color.bmp", ctx);
+    if (tex1 == 0 || tex2 == 0) {
+        cjelly_destroy_texture_atlas_ctx(atlas, ctx);
+        free(resources);
+        return NULL;
+    }
+    cjelly_atlas_update_descriptor_set_ctx(atlas, ctx);
+
+    // Create vertex buffer into resources using context
+    VkBuffer vb = VK_NULL_HANDLE; VkDeviceMemory vm = VK_NULL_HANDLE;
+    createBindlessVertexBufferCtx(ctx->device, ctx->commandPool, &vb, &vm);
+    resources->vertexBuffer = vb;
+    resources->vertexBufferMemory = vm;
+
+    // Create pipeline using the atlas' descriptor set layout (context-friendly)
+    VkPipelineLayout outLayout = VK_NULL_HANDLE;
+    VkPipeline outPipeline = VK_NULL_HANDLE;
+    if (createBindlessGraphicsPipelineWithLayout(ctx->device, ctx->renderPass, atlas->bindlessDescriptorSetLayout, &outLayout, &outPipeline) != VK_SUCCESS) {
+        cjelly_destroy_texture_atlas(atlas);
+        free(resources);
+        return NULL;
+    }
+    resources->pipeline = outPipeline;
+    resources->pipelineLayout = outLayout;
+
+    // Store atlas and defaults
+    resources->textureAtlas = atlas;
+    resources->uv[0]=1.0f; resources->uv[1]=1.0f; resources->uv[2]=0.0f; resources->uv[3]=0.0f;
+    resources->colorMul[0]=1.0f; resources->colorMul[1]=1.0f; resources->colorMul[2]=1.0f; resources->colorMul[3]=1.0f;
+
+    return resources;
+}
+
 // Destroy bindless rendering resources
 void cjelly_destroy_bindless_resources(CJellyBindlessResources* resources) {
     if (!resources) return;
 
     if (resources->textureAtlas) {
         cjelly_destroy_texture_atlas(resources->textureAtlas);
-        if (bindlessTextureAtlas == resources->textureAtlas) {
-            bindlessTextureAtlas = NULL;
-        }
     }
 
     free(resources);
@@ -254,7 +481,7 @@ CJellyBindlessResources* cjelly_create_bindless_color_square_resources(void) {
 
     // Prefer using the existing atlas descriptor set layout if available for layout compatibility
     VkDescriptorSetLayout tempSetLayout = VK_NULL_HANDLE;
-    if (!bindlessTextureAtlas || bindlessTextureAtlas->bindlessDescriptorSetLayout == VK_NULL_HANDLE) {
+    if (resources->textureAtlas == NULL || resources->textureAtlas->bindlessDescriptorSetLayout == VK_NULL_HANDLE) {
         VkDescriptorSetLayoutBinding layoutBinding = {0};
         layoutBinding.binding = 0;
         layoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -280,7 +507,7 @@ CJellyBindlessResources* cjelly_create_bindless_color_square_resources(void) {
 
     VkPipelineLayoutCreateInfo pli = {0};
     pli.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-    VkDescriptorSetLayout setLayouts[] = { bindlessTextureAtlas && bindlessTextureAtlas->bindlessDescriptorSetLayout ? bindlessTextureAtlas->bindlessDescriptorSetLayout : tempSetLayout };
+    VkDescriptorSetLayout setLayouts[] = { resources->textureAtlas && resources->textureAtlas->bindlessDescriptorSetLayout ? resources->textureAtlas->bindlessDescriptorSetLayout : tempSetLayout };
     pli.setLayoutCount = 1;
     pli.pSetLayouts = setLayouts;
     pli.pushConstantRangeCount = 1;
@@ -296,9 +523,7 @@ CJellyBindlessResources* cjelly_create_bindless_color_square_resources(void) {
     }
 
     // If global atlas exists, attach it so descriptor binding works
-    if (bindlessTextureAtlas) {
-        resources->textureAtlas = bindlessTextureAtlas;
-    }
+    // no-op: resources->textureAtlas already set if available
 
     // Reuse the bindless graphics pipeline creation, which expects a set 0; we skip and instead
     // create a simple color pipeline by using the existing basic shaders.
@@ -368,6 +593,59 @@ CJellyBindlessResources* cjelly_create_bindless_color_square_resources(void) {
     vkDestroyShaderModule(device, vert, NULL);
     vkDestroyShaderModule(device, frag, NULL);
     // Defaults for color-only path
+    resources->uv[0]=1.0f; resources->uv[1]=1.0f; resources->uv[2]=0.0f; resources->uv[3]=0.0f;
+    resources->colorMul[0]=1.0f; resources->colorMul[1]=1.0f; resources->colorMul[2]=1.0f; resources->colorMul[3]=1.0f;
+    return resources;
+}
+
+CJellyBindlessResources* cjelly_create_bindless_color_square_resources_ctx(const CJellyVulkanContext* ctx) {
+    if (!ctx || ctx->device == VK_NULL_HANDLE) return NULL;
+    CJellyBindlessResources* resources = (CJellyBindlessResources*)calloc(1, sizeof(CJellyBindlessResources));
+    if (!resources) return NULL;
+
+    // Build vertex buffer on ctx device
+    VertexBindless verticesBindless[] = {
+      {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, 0},
+      {{ 0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, 0},
+      {{ 0.5f,  0.5f}, {0.0f, 0.0f, 1.0f}, 0},
+      {{ 0.5f,  0.5f}, {0.0f, 0.0f, 1.0f}, 0},
+      {{-0.5f,  0.5f}, {1.0f, 1.0f, 0.0f}, 0},
+      {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, 0},
+    };
+    VkDeviceSize vbSize = sizeof(verticesBindless);
+    createBuffer(vbSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                 &resources->vertexBuffer, &resources->vertexBufferMemory);
+    void* vdata = NULL;
+    vkMapMemory(ctx->device, resources->vertexBufferMemory, 0, vbSize, 0, &vdata);
+    memcpy(vdata, verticesBindless, (size_t)vbSize);
+    vkUnmapMemory(ctx->device, resources->vertexBufferMemory);
+
+    // Pipeline layout with dummy set layout (no atlas set bound) and push constants
+    VkDescriptorSetLayoutBinding layoutBinding = {0};
+    layoutBinding.binding = 0;
+    layoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    layoutBinding.descriptorCount = 1;
+    layoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    VkDescriptorSetLayoutCreateInfo dslci = {0};
+    dslci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    dslci.bindingCount = 1; dslci.pBindings = &layoutBinding;
+    VkDescriptorSetLayout setLayout = VK_NULL_HANDLE;
+    vkCreateDescriptorSetLayout(ctx->device, &dslci, NULL, &setLayout);
+
+    VkPipelineLayout outLayout = VK_NULL_HANDLE;
+    VkPipeline outPipeline = VK_NULL_HANDLE;
+    if (createBindlessGraphicsPipelineWithLayout(ctx->device, ctx->renderPass, setLayout, &outLayout, &outPipeline) != VK_SUCCESS) {
+        if (setLayout) vkDestroyDescriptorSetLayout(ctx->device, setLayout, NULL);
+        vkDestroyBuffer(ctx->device, resources->vertexBuffer, NULL);
+        vkFreeMemory(ctx->device, resources->vertexBufferMemory, NULL);
+        free(resources);
+        return NULL;
+    }
+    if (setLayout) vkDestroyDescriptorSetLayout(ctx->device, setLayout, NULL);
+
+    resources->pipeline = outPipeline;
+    resources->pipelineLayout = outLayout;
     resources->uv[0]=1.0f; resources->uv[1]=1.0f; resources->uv[2]=0.0f; resources->uv[3]=0.0f;
     resources->colorMul[0]=1.0f; resources->colorMul[1]=1.0f; resources->colorMul[2]=1.0f; resources->colorMul[3]=1.0f;
     return resources;
@@ -1334,6 +1612,24 @@ void createTextureDescriptorPool() {
   }
 }
 
+// Context-based textured helpers (transition away from globals)
+static void createTextureDescriptorPoolCtx(const CJellyVulkanContext* ctx) {
+  VkDescriptorPoolSize poolSize = {0};
+  poolSize.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  poolSize.descriptorCount = 1;
+
+  VkDescriptorPoolCreateInfo poolInfo = {0};
+  poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+  poolInfo.poolSizeCount = 1;
+  poolInfo.pPoolSizes = &poolSize;
+  poolInfo.maxSets = 1;
+
+  if (vkCreateDescriptorPool(ctx->device, &poolInfo, NULL, &textureDescriptorPool) != VK_SUCCESS) {
+    fprintf(stderr, "Failed to create texture descriptor pool (ctx)!\n");
+    exit(EXIT_FAILURE);
+  }
+}
+
 void createDescriptorSetLayouts() {
   // Define a descriptor set layout for the texture.
   VkDescriptorSetLayoutBinding layoutBinding = {0};
@@ -1354,6 +1650,24 @@ void createDescriptorSetLayouts() {
   }
 }
 
+static void createDescriptorSetLayoutsCtx(const CJellyVulkanContext* ctx) {
+  VkDescriptorSetLayoutBinding layoutBinding = {0};
+  layoutBinding.binding = 0;
+  layoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  layoutBinding.descriptorCount = 1;
+  layoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+
+  VkDescriptorSetLayoutCreateInfo layoutInfo = {0};
+  layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+  layoutInfo.bindingCount = 1;
+  layoutInfo.pBindings = &layoutBinding;
+
+  if (vkCreateDescriptorSetLayout(ctx->device, &layoutInfo, NULL, &textureDescriptorSetLayout) != VK_SUCCESS) {
+    fprintf(stderr, "Failed to create texture descriptor set layout (ctx)\n");
+    exit(EXIT_FAILURE);
+  }
+}
+
 /**
  * @brief Allocates a descriptor set for the texture.
  *
@@ -1370,6 +1684,19 @@ void allocateTextureDescriptorSet() {
   if (vkAllocateDescriptorSets(device, &allocInfo, &textureDescriptorSet) !=
       VK_SUCCESS) {
     fprintf(stderr, "Failed to allocate texture descriptor set!\n");
+    exit(EXIT_FAILURE);
+  }
+}
+
+static void allocateTextureDescriptorSetCtx(const CJellyVulkanContext* ctx) {
+  VkDescriptorSetAllocateInfo allocInfo = {0};
+  allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+  allocInfo.descriptorPool = textureDescriptorPool;
+  allocInfo.descriptorSetCount = 1;
+  allocInfo.pSetLayouts = &textureDescriptorSetLayout;
+
+  if (vkAllocateDescriptorSets(ctx->device, &allocInfo, &textureDescriptorSet) != VK_SUCCESS) {
+    fprintf(stderr, "Failed to allocate texture descriptor set (ctx)!\n");
     exit(EXIT_FAILURE);
   }
 }
@@ -1518,6 +1845,107 @@ void createTexturedGraphicsPipeline() {
   vkDestroyShaderModule(device, fragShaderModule, NULL);
 }
 
+static void createTexturedGraphicsPipelineCtx(const CJellyVulkanContext* ctx) {
+  VkShaderModule vertShaderModule =
+      createShaderModuleFromMemory(ctx->device, basic_vert_spv, basic_vert_spv_len);
+  VkShaderModule fragShaderModule = createShaderModuleFromMemory(
+      ctx->device, textured_frag_spv, textured_frag_spv_len);
+  if (vertShaderModule == VK_NULL_HANDLE || fragShaderModule == VK_NULL_HANDLE) {
+    fprintf(stderr, "Failed to create textured shader modules (ctx)\n");
+    exit(EXIT_FAILURE);
+  }
+
+  VkPipelineShaderStageCreateInfo shaderStages[2] = {0};
+  shaderStages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  shaderStages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+  shaderStages[0].module = vertShaderModule;
+  shaderStages[0].pName = "main";
+  shaderStages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  shaderStages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+  shaderStages[1].module = fragShaderModule;
+  shaderStages[1].pName = "main";
+
+  VkVertexInputBindingDescription bindingDescription = {0};
+  bindingDescription.binding = 0;
+  bindingDescription.stride = sizeof(VertexTextured);
+  bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+  VkVertexInputAttributeDescription attributeDescriptions[2] = {0};
+  attributeDescriptions[0].binding = 0; attributeDescriptions[0].location = 0; attributeDescriptions[0].format = VK_FORMAT_R32G32_SFLOAT; attributeDescriptions[0].offset = offsetof(VertexTextured, pos);
+  attributeDescriptions[1].binding = 0; attributeDescriptions[1].location = 1; attributeDescriptions[1].format = VK_FORMAT_R32G32_SFLOAT; attributeDescriptions[1].offset = offsetof(VertexTextured, texCoord);
+
+  VkPipelineVertexInputStateCreateInfo vertexInputInfo = {0};
+  vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+  vertexInputInfo.vertexBindingDescriptionCount = 1;
+  vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+  vertexInputInfo.vertexAttributeDescriptionCount = 2;
+  vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions;
+
+  VkPipelineInputAssemblyStateCreateInfo inputAssembly = {0};
+  inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+  inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+  VkPipelineViewportStateCreateInfo viewportState = {0};
+  viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+  viewportState.viewportCount = 1;
+  viewportState.scissorCount = 1;
+
+  VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+  VkPipelineDynamicStateCreateInfo dynamicState = {0};
+  dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+  dynamicState.dynamicStateCount = 2;
+  dynamicState.pDynamicStates = dynamicStates;
+
+  VkPipelineRasterizationStateCreateInfo rasterizer = {0};
+  rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+  rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+  rasterizer.lineWidth = 1.0f;
+  rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+  rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+
+  VkPipelineMultisampleStateCreateInfo multisampling = {0};
+  multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+  multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+  VkPipelineColorBlendAttachmentState colorBlendAttachment = {0};
+  colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+  VkPipelineColorBlendStateCreateInfo colorBlending = {0};
+  colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+  colorBlending.attachmentCount = 1;
+  colorBlending.pAttachments = &colorBlendAttachment;
+
+  VkDescriptorSetLayout descriptorSetLayouts[] = {textureDescriptorSetLayout};
+  VkPipelineLayoutCreateInfo pipelineLayoutInfo = {0};
+  pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+  pipelineLayoutInfo.setLayoutCount = 1;
+  pipelineLayoutInfo.pSetLayouts = descriptorSetLayouts;
+  if (vkCreatePipelineLayout(ctx->device, &pipelineLayoutInfo, NULL, &texturedPipelineLayout) != VK_SUCCESS) {
+    fprintf(stderr, "Failed to create textured pipeline layout (ctx)\n");
+    exit(EXIT_FAILURE);
+  }
+
+  VkGraphicsPipelineCreateInfo pipelineInfo = {0};
+  pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+  pipelineInfo.stageCount = 2; pipelineInfo.pStages = shaderStages;
+  pipelineInfo.pVertexInputState = &vertexInputInfo;
+  pipelineInfo.pInputAssemblyState = &inputAssembly;
+  pipelineInfo.pViewportState = &viewportState;
+  pipelineInfo.pDynamicState = &dynamicState;
+  pipelineInfo.pRasterizationState = &rasterizer;
+  pipelineInfo.pMultisampleState = &multisampling;
+  pipelineInfo.pColorBlendState = &colorBlending;
+  pipelineInfo.layout = texturedPipelineLayout;
+  pipelineInfo.renderPass = ctx->renderPass;
+  pipelineInfo.subpass = 0;
+  if (vkCreateGraphicsPipelines(ctx->device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &texturedPipeline) != VK_SUCCESS) {
+    fprintf(stderr, "Failed to create textured graphics pipeline (ctx)\n");
+    exit(EXIT_FAILURE);
+  }
+
+  vkDestroyShaderModule(ctx->device, vertShaderModule, NULL);
+  vkDestroyShaderModule(ctx->device, fragShaderModule, NULL);
+}
+
 void createBindlessGraphicsPipeline(VkDevice device __attribute__((unused)), VkRenderPass renderPass) {
   fprintf(stderr, "DEBUG: enter createBindlessGraphicsPipeline\n");
   // Load SPIR-V binaries and create shader modules for bindless rendering.
@@ -1635,13 +2063,8 @@ void createBindlessGraphicsPipeline(VkDevice device __attribute__((unused)), VkR
   colorBlending.pAttachments = &colorBlendAttachment;
 
   // Use the bindless descriptor set layout
-  if (!bindlessTextureAtlas) {
-    fprintf(stderr, "Bindless texture atlas not initialized\n");
-    exit(EXIT_FAILURE);
-  }
-  fprintf(stderr, "DEBUG: atlas=%p layout=%p\n", (void*)bindlessTextureAtlas, (void*)bindlessTextureAtlas->bindlessDescriptorSetLayout);
-  
-  VkDescriptorSetLayout descriptorSetLayouts[] = {bindlessTextureAtlas->bindlessDescriptorSetLayout};
+  // Legacy path retained but global atlas removed; do nothing here
+  VkDescriptorSetLayout descriptorSetLayouts[] = {VK_NULL_HANDLE};
   VkPushConstantRange pushRange = {0};
   pushRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
   pushRange.offset = 0;
@@ -1687,8 +2110,124 @@ void createBindlessGraphicsPipeline(VkDevice device __attribute__((unused)), VkR
   fprintf(stderr, "DEBUG: exit createBindlessGraphicsPipeline\n");
 }
 
+// Context-friendly pipeline creation that does not touch globals for layout or atlas
+static VkResult createBindlessGraphicsPipelineWithLayout(
+    VkDevice device,
+    VkRenderPass renderPass,
+    VkDescriptorSetLayout descriptorSetLayout,
+    VkPipelineLayout* outPipelineLayout,
+    VkPipeline* outPipeline) {
+  // Load SPIR-V binaries and create shader modules for bindless rendering.
+  VkShaderModule vertShaderModule =
+      createShaderModuleFromMemory(device, bindless_vert_spv, bindless_vert_spv_len);
+  VkShaderModule fragShaderModule = createShaderModuleFromMemory(
+      device, bindless_frag_spv, bindless_frag_spv_len);
+  if (vertShaderModule == VK_NULL_HANDLE || fragShaderModule == VK_NULL_HANDLE) {
+    return VK_ERROR_INITIALIZATION_FAILED;
+  }
+
+  VkPipelineShaderStageCreateInfo shaderStages[2] = {0};
+  shaderStages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  shaderStages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+  shaderStages[0].module = vertShaderModule;
+  shaderStages[0].pName = "main";
+  shaderStages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  shaderStages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+  shaderStages[1].module = fragShaderModule;
+  shaderStages[1].pName = "main";
+
+  VkVertexInputBindingDescription bindingDescription = {0};
+  bindingDescription.binding = 0;
+  bindingDescription.stride = sizeof(VertexBindless);
+  bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+
+  VkVertexInputAttributeDescription attributeDescriptions[3] = {0};
+  attributeDescriptions[0].binding = 0; attributeDescriptions[0].location = 0; attributeDescriptions[0].format = VK_FORMAT_R32G32_SFLOAT; attributeDescriptions[0].offset = offsetof(VertexBindless, pos);
+  attributeDescriptions[1].binding = 0; attributeDescriptions[1].location = 1; attributeDescriptions[1].format = VK_FORMAT_R32G32B32_SFLOAT; attributeDescriptions[1].offset = offsetof(VertexBindless, color);
+  attributeDescriptions[2].binding = 0; attributeDescriptions[2].location = 2; attributeDescriptions[2].format = VK_FORMAT_R32_UINT; attributeDescriptions[2].offset = offsetof(VertexBindless, textureID);
+
+  VkPipelineVertexInputStateCreateInfo vertexInputInfo = {0};
+  vertexInputInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+  vertexInputInfo.vertexBindingDescriptionCount = 1;
+  vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
+  vertexInputInfo.vertexAttributeDescriptionCount = 3;
+  vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions;
+
+  VkPipelineInputAssemblyStateCreateInfo inputAssembly = {0};
+  inputAssembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+  inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+  inputAssembly.primitiveRestartEnable = VK_FALSE;
+
+  VkViewport viewport = {0};
+  viewport.x = 0.0f; viewport.y = 0.0f; viewport.width = (float)WIDTH; viewport.height = (float)HEIGHT; viewport.minDepth = 0.0f; viewport.maxDepth = 1.0f;
+  VkRect2D scissor = {0}; scissor.offset.x = 0; scissor.offset.y = 0; scissor.extent.width = WIDTH; scissor.extent.height = HEIGHT;
+  VkPipelineViewportStateCreateInfo viewportState = {0};
+  viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+  viewportState.viewportCount = 1; viewportState.pViewports = &viewport;
+  viewportState.scissorCount = 1; viewportState.pScissors = &scissor;
+
+  VkPipelineRasterizationStateCreateInfo rasterizer = {0};
+  rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+  rasterizer.depthClampEnable = VK_FALSE;
+  rasterizer.rasterizerDiscardEnable = VK_FALSE;
+  rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
+  rasterizer.lineWidth = 1.0f;
+  rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+  rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
+  rasterizer.depthBiasEnable = VK_FALSE;
+
+  VkPipelineMultisampleStateCreateInfo multisampling = {0};
+  multisampling.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+  multisampling.sampleShadingEnable = VK_FALSE;
+  multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+
+  VkPipelineColorBlendAttachmentState colorBlendAttachment = {0};
+  colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+  colorBlendAttachment.blendEnable = VK_FALSE;
+  VkPipelineColorBlendStateCreateInfo colorBlending = {0};
+  colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+  colorBlending.logicOpEnable = VK_FALSE;
+  colorBlending.attachmentCount = 1;
+  colorBlending.pAttachments = &colorBlendAttachment;
+
+  VkPushConstantRange pushRange = {0};
+  pushRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+  pushRange.offset = 0;
+  pushRange.size = sizeof(float) * 8;
+
+  VkPipelineLayoutCreateInfo pipelineLayoutInfo = {0};
+  pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+  pipelineLayoutInfo.setLayoutCount = 1;
+  pipelineLayoutInfo.pSetLayouts = &descriptorSetLayout;
+  pipelineLayoutInfo.pushConstantRangeCount = 1;
+  pipelineLayoutInfo.pPushConstantRanges = &pushRange;
+  if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, NULL, outPipelineLayout) != VK_SUCCESS) {
+    vkDestroyShaderModule(device, vertShaderModule, NULL);
+    vkDestroyShaderModule(device, fragShaderModule, NULL);
+    return VK_ERROR_INITIALIZATION_FAILED;
+  }
+
+  VkGraphicsPipelineCreateInfo pipelineInfo = {0};
+  pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+  pipelineInfo.stageCount = 2; pipelineInfo.pStages = shaderStages;
+  pipelineInfo.pVertexInputState = &vertexInputInfo;
+  pipelineInfo.pInputAssemblyState = &inputAssembly;
+  pipelineInfo.pViewportState = &viewportState;
+  pipelineInfo.pRasterizationState = &rasterizer;
+  pipelineInfo.pMultisampleState = &multisampling;
+  pipelineInfo.pColorBlendState = &colorBlending;
+  pipelineInfo.layout = *outPipelineLayout;
+  pipelineInfo.renderPass = renderPass;
+  pipelineInfo.subpass = 0;
+
+  VkResult res = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, outPipeline);
+  vkDestroyShaderModule(device, vertShaderModule, NULL);
+  vkDestroyShaderModule(device, fragShaderModule, NULL);
+  return res;
+}
+
 /// Creates a texture image from a BMP file.
-void createTextureImage(const char * filePath) {
+static void createTextureImageCtx(const CJellyVulkanContext* ctx, const char * filePath) {
   // Load BMP data (assumed to be in 24-bit RGB format)
   CJellyFormatImage * image;
   CJellyFormatImageError error = cjelly_format_image_load(filePath, &image);
@@ -1737,36 +2276,34 @@ void createTextureImage(const char * filePath) {
 
   // Map memory and copy the pixel data.
   void * data;
-  vkMapMemory(device, stagingBufferMemory, 0, bufferSize, 0, &data);
+  vkMapMemory(ctx->device, stagingBufferMemory, 0, bufferSize, 0, &data);
   memcpy(data, pixels, (size_t)bufferSize);
-  vkUnmapMemory(device, stagingBufferMemory);
+  vkUnmapMemory(ctx->device, stagingBufferMemory);
   free(pixels);
 
   // Create the Vulkan texture image.
   // We choose VK_FORMAT_R8G8B8A8_UNORM for the RGBA data.
-  createImage(texWidth, texHeight, VK_FORMAT_R8G8B8A8_UNORM,
-      VK_IMAGE_TILING_OPTIMAL,
-      VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+  createImageCtx(ctx, texWidth, texHeight, VK_FORMAT_R8G8B8A8_UNORM,
+      VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &textureImage, &textureImageMemory);
 
   // Transition image layout to prepare for the data copy.
-  transitionImageLayout(textureImage, VK_FORMAT_R8G8B8A8_UNORM,
+  transitionImageLayoutCtx(ctx, textureImage, VK_FORMAT_R8G8B8A8_UNORM,
       VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
   // Copy the pixel data from the staging buffer into the texture image.
-  copyBufferToImage(stagingBuffer, textureImage, texWidth, texHeight);
+  copyBufferToImageCtx(ctx, stagingBuffer, textureImage, texWidth, texHeight);
 
   // Transition the image layout for shader access.
-  transitionImageLayout(textureImage, VK_FORMAT_R8G8B8A8_UNORM,
-      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-      VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+  transitionImageLayoutCtx(ctx, textureImage, VK_FORMAT_R8G8B8A8_UNORM,
+      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
-  vkDestroyBuffer(device, stagingBuffer, NULL);
-  vkFreeMemory(device, stagingBufferMemory, NULL);
+  vkDestroyBuffer(ctx->device, stagingBuffer, NULL);
+  vkFreeMemory(ctx->device, stagingBufferMemory, NULL);
 }
 
 /// Creates an image view for the texture image.
-void createTextureImageView() {
+static void createTextureImageViewCtx(const CJellyVulkanContext* ctx) {
   VkImageViewCreateInfo viewInfo = {0};
   viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
   viewInfo.image = textureImage;
@@ -1778,7 +2315,7 @@ void createTextureImageView() {
   viewInfo.subresourceRange.baseArrayLayer = 0;
   viewInfo.subresourceRange.layerCount = 1;
 
-  if (vkCreateImageView(device, &viewInfo, NULL, &textureImageView) !=
+  if (vkCreateImageView(ctx->device, &viewInfo, NULL, &textureImageView) !=
       VK_SUCCESS) {
     fprintf(stderr, "Failed to create texture image view\n");
     exit(EXIT_FAILURE);
@@ -1786,7 +2323,7 @@ void createTextureImageView() {
 }
 
 /// Creates a texture sampler.
-void createTextureSampler() {
+static void createTextureSamplerCtx(const CJellyVulkanContext* ctx) {
   VkSamplerCreateInfo samplerInfo = {0};
   samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
   samplerInfo.magFilter = VK_FILTER_LINEAR;
@@ -1810,7 +2347,7 @@ void createTextureSampler() {
   samplerInfo.minLod = 0.0f;
   samplerInfo.maxLod = 0.0f;
 
-  if (vkCreateSampler(device, &samplerInfo, NULL, &textureSampler) !=
+  if (vkCreateSampler(ctx->device, &samplerInfo, NULL, &textureSampler) !=
       VK_SUCCESS) {
     fprintf(stderr, "Failed to create texture sampler\n");
     exit(EXIT_FAILURE);
@@ -1818,7 +2355,7 @@ void createTextureSampler() {
 }
 
 /// Updates a descriptor set with the texture image view and sampler.
-void updateTextureDescriptorSet(VkDescriptorSet descriptorSet) {
+static void updateTextureDescriptorSetCtx(const CJellyVulkanContext* ctx, VkDescriptorSet descriptorSet) {
   VkDescriptorImageInfo imageInfo = {0};
   imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
   imageInfo.imageView = textureImageView;
@@ -1834,7 +2371,7 @@ void updateTextureDescriptorSet(VkDescriptorSet descriptorSet) {
   descriptorWrite.descriptorCount = 1;
   descriptorWrite.pImageInfo = &imageInfo;
 
-  vkUpdateDescriptorSets(device, 1, &descriptorWrite, 0, NULL);
+  vkUpdateDescriptorSets(ctx->device, 1, &descriptorWrite, 0, NULL);
 }
 
 void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
@@ -2223,6 +2760,10 @@ void createBindlessCommandBuffersForWindow(CJellyWindow * win, const CJellyBindl
   }
 }
 
+void createBindlessCommandBuffersForWindowCtx(CJellyWindow * win, const CJellyBindlessResources* resources, const CJellyVulkanContext* ctx) {
+  createBindlessCommandBuffersForWindow(win, resources, ctx->device, ctx->commandPool, ctx->renderPass);
+}
+
 /**
  * @brief Creates a vertex buffer for a textured square.
  *
@@ -2319,20 +2860,53 @@ void initVulkanGlobal() {
   createVertexBuffer();
   createGraphicsPipeline();
 
-  // Textured square setup.
-  createTextureImage("test/images/bmp/tang.bmp");
+  // Textured square setup (context-based)
+  CJellyVulkanContext ctx_local = {0};
+  ctx_local.instance = instance;
+  ctx_local.physicalDevice = physicalDevice;
+  ctx_local.device = device;
+  ctx_local.graphicsQueue = graphicsQueue;
+  ctx_local.presentQueue = presentQueue;
+  ctx_local.renderPass = renderPass;
+  ctx_local.commandPool = commandPool;
+
+  createTextureImageCtx(&ctx_local, "test/images/bmp/tang.bmp");
   createTexturedVertexBuffer();
-  createTextureImageView();
-  createTextureSampler();
-  createDescriptorSetLayouts();
-  createTextureDescriptorPool();
-  allocateTextureDescriptorSet();
-  updateTextureDescriptorSet(textureDescriptorSet);
-  createTexturedGraphicsPipeline();
+  createTextureImageViewCtx(&ctx_local);
+  createTextureSamplerCtx(&ctx_local);
+  createDescriptorSetLayoutsCtx(&ctx_local);
+  createTextureDescriptorPoolCtx(&ctx_local);
+  allocateTextureDescriptorSetCtx(&ctx_local);
+  updateTextureDescriptorSetCtx(&ctx_local, textureDescriptorSet);
+  createTexturedGraphicsPipelineCtx(&ctx_local);
 
   // Bindless resources are created by the app via cjelly_create_bindless_resources()
 }
 
+int cjelly_init_context(CJellyVulkanContext* ctx, int useValidation) {
+  if (!ctx) return 0;
+  memset(ctx, 0, sizeof(*ctx));
+  enableValidationLayers = useValidation ? 1 : 0;
+  createInstance();
+  if (enableValidationLayers) createDebugMessenger();
+  pickPhysicalDevice();
+  createLogicalDevice();
+  createRenderPass();
+  createCommandPool();
+  ctx->instance = instance;
+  ctx->physicalDevice = physicalDevice;
+  ctx->device = device;
+  ctx->graphicsQueue = graphicsQueue;
+  ctx->presentQueue = presentQueue;
+  ctx->renderPass = renderPass;
+  ctx->commandPool = commandPool;
+  return 1;
+}
+
+void cjelly_destroy_context(CJellyVulkanContext* ctx) {
+  (void)ctx; // for now reuse global cleanup
+  cleanupVulkanGlobal();
+}
 void cleanupVulkanGlobal() {
   // Destroy pipeline and related objects.
   vkDestroyPipeline(device, graphicsPipeline, NULL);
@@ -2366,9 +2940,7 @@ void cleanupVulkanGlobal() {
   if (vertexBufferBindlessMemory != VK_NULL_HANDLE) {
     vkFreeMemory(device, vertexBufferBindlessMemory, NULL);
   }
-  if (bindlessTextureAtlas != NULL) {
-    cjelly_destroy_texture_atlas(bindlessTextureAtlas);
-  }
+  // Atlas lifetime is owned by CJellyBindlessResources; no global to clean here
 
   // Destroy the texture sampler and image view.
   vkDestroySampler(device, textureSampler, NULL);
@@ -2412,7 +2984,7 @@ CJellyTextureAtlas * cjelly_create_texture_atlas(uint32_t width, uint32_t height
     fprintf(stderr, "Failed to allocate memory for texture atlas\n");
     return NULL;
   }
-  
+
   memset(atlas, 0, sizeof(CJellyTextureAtlas));
   atlas->atlasWidth = width;
   atlas->atlasHeight = height;
@@ -2420,7 +2992,7 @@ CJellyTextureAtlas * cjelly_create_texture_atlas(uint32_t width, uint32_t height
   atlas->nextTextureY = 0;
   atlas->currentRowHeight = 0;
   atlas->textureCount = 0;
-  
+
   // Allocate memory for texture entries
   textureEntries = malloc(sizeof(CJellyTextureEntry) * maxTextures);
   if (!textureEntries) {
@@ -2538,20 +3110,198 @@ CJellyTextureAtlas * cjelly_create_texture_atlas(uint32_t width, uint32_t height
   return atlas;
 }
 
+// Context-based atlas creation (uses context device instead of global)
+CJellyTextureAtlas * cjelly_create_texture_atlas_ctx(const CJellyVulkanContext* ctx, uint32_t width, uint32_t height) {
+  CJellyTextureAtlas * atlas = malloc(sizeof(CJellyTextureAtlas));
+  if (!atlas) {
+    fprintf(stderr, "Failed to allocate memory for texture atlas\n");
+    return NULL;
+  }
+
+  memset(atlas, 0, sizeof(CJellyTextureAtlas));
+  atlas->atlasWidth = width;
+  atlas->atlasHeight = height;
+  atlas->nextTextureX = 0;
+  atlas->nextTextureY = 0;
+  atlas->currentRowHeight = 0;
+  atlas->textureCount = 0;
+
+  // Allocate memory for texture entries
+  textureEntries = malloc(sizeof(CJellyTextureEntry) * maxTextures);
+  if (!textureEntries) {
+    fprintf(stderr, "Failed to allocate memory for texture entries\n");
+    free(atlas);
+    return NULL;
+  }
+  memset(textureEntries, 0, sizeof(CJellyTextureEntry) * maxTextures);
+
+  // Create the atlas image using context device
+  createImageCtx(ctx, width, height, VK_FORMAT_R8G8B8A8_UNORM,
+                  VK_IMAGE_TILING_OPTIMAL,
+                  VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                  VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+                  &atlas->atlasImage, &atlas->atlasImageMemory);
+  // Transition to TRANSFER_DST for subsequent copies
+  transitionImageLayoutCtx(ctx, atlas->atlasImage, VK_FORMAT_R8G8B8A8_UNORM,
+                            VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+
+  // Create image view using context device
+  VkImageViewCreateInfo viewInfo = {0};
+  viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+  viewInfo.image = atlas->atlasImage;
+  viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+  viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
+  viewInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+  viewInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+  viewInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+  viewInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+  viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  viewInfo.subresourceRange.baseMipLevel = 0;
+  viewInfo.subresourceRange.levelCount = 1;
+  viewInfo.subresourceRange.baseArrayLayer = 0;
+  viewInfo.subresourceRange.layerCount = 1;
+
+  if (vkCreateImageView(ctx->device, &viewInfo, NULL, &atlas->atlasImageView) != VK_SUCCESS) {
+    fprintf(stderr, "Failed to create atlas image view (ctx)\n");
+    vkDestroyImage(ctx->device, atlas->atlasImage, NULL);
+    vkFreeMemory(ctx->device, atlas->atlasImageMemory, NULL);
+    free(textureEntries);
+    free(atlas);
+    return NULL;
+  }
+
+  // Create sampler using context device
+  VkSamplerCreateInfo samplerInfo = {0};
+  samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+  samplerInfo.magFilter = VK_FILTER_LINEAR;
+  samplerInfo.minFilter = VK_FILTER_LINEAR;
+  samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+  samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+  samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
+  samplerInfo.anisotropyEnable = VK_FALSE;
+  samplerInfo.maxAnisotropy = 1;
+  samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+  samplerInfo.unnormalizedCoordinates = VK_FALSE;
+  samplerInfo.compareEnable = VK_FALSE;
+  samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
+  samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+  samplerInfo.mipLodBias = 0.0f;
+  samplerInfo.minLod = 0.0f;
+  samplerInfo.maxLod = 0.0f;
+
+  if (vkCreateSampler(ctx->device, &samplerInfo, NULL, &atlas->atlasSampler) != VK_SUCCESS) {
+    fprintf(stderr, "Failed to create atlas sampler (ctx)\n");
+    vkDestroyImageView(ctx->device, atlas->atlasImageView, NULL);
+    vkDestroyImage(ctx->device, atlas->atlasImage, NULL);
+    vkFreeMemory(ctx->device, atlas->atlasImageMemory, NULL);
+    free(textureEntries);
+    free(atlas);
+    return NULL;
+  }
+
+  // Create descriptor set layout using context device
+  VkDescriptorSetLayoutBinding layoutBinding = {0};
+  layoutBinding.binding = 0;
+  layoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  layoutBinding.descriptorCount = 1;
+  layoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+  layoutBinding.pImmutableSamplers = NULL;
+
+  VkDescriptorSetLayoutCreateInfo layoutInfo = {0};
+  layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+  layoutInfo.bindingCount = 1;
+  layoutInfo.pBindings = &layoutBinding;
+  layoutInfo.pNext = NULL;
+
+  if (vkCreateDescriptorSetLayout(ctx->device, &layoutInfo, NULL, &atlas->bindlessDescriptorSetLayout) != VK_SUCCESS) {
+    fprintf(stderr, "Failed to create bindless descriptor set layout (ctx)\n");
+    vkDestroyImageView(ctx->device, atlas->atlasImageView, NULL);
+    vkDestroyImage(ctx->device, atlas->atlasImage, NULL);
+    vkFreeMemory(ctx->device, atlas->atlasImageMemory, NULL);
+    free(textureEntries);
+    free(atlas);
+    return NULL;
+  }
+
+  // Create descriptor pool using context device
+  VkDescriptorPoolSize poolSize = {0};
+  poolSize.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  poolSize.descriptorCount = maxTextures;
+
+  VkDescriptorPoolCreateInfo poolInfo = {0};
+  poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+  poolInfo.poolSizeCount = 1;
+  poolInfo.pPoolSizes = &poolSize;
+  poolInfo.maxSets = 1;
+  poolInfo.flags = 0;
+
+  if (vkCreateDescriptorPool(ctx->device, &poolInfo, NULL, &atlas->bindlessDescriptorPool) != VK_SUCCESS) {
+    fprintf(stderr, "Failed to create bindless descriptor pool (ctx)\n");
+    vkDestroyDescriptorSetLayout(ctx->device, atlas->bindlessDescriptorSetLayout, NULL);
+    vkDestroyImageView(ctx->device, atlas->atlasImageView, NULL);
+    vkDestroyImage(ctx->device, atlas->atlasImage, NULL);
+    vkFreeMemory(ctx->device, atlas->atlasImageMemory, NULL);
+    free(textureEntries);
+    free(atlas);
+    return NULL;
+  }
+
+  // Allocate descriptor set using context device
+  VkDescriptorSetAllocateInfo allocInfo = {0};
+  allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+  allocInfo.descriptorPool = atlas->bindlessDescriptorPool;
+  allocInfo.descriptorSetCount = 1;
+  allocInfo.pSetLayouts = &atlas->bindlessDescriptorSetLayout;
+  allocInfo.pNext = NULL;
+
+  if (vkAllocateDescriptorSets(ctx->device, &allocInfo, &atlas->bindlessDescriptorSet) != VK_SUCCESS) {
+    fprintf(stderr, "Failed to allocate bindless descriptor set (ctx)\n");
+    vkDestroyDescriptorPool(ctx->device, atlas->bindlessDescriptorPool, NULL);
+    vkDestroyDescriptorSetLayout(ctx->device, atlas->bindlessDescriptorSetLayout, NULL);
+    vkDestroyImageView(ctx->device, atlas->atlasImageView, NULL);
+    vkDestroyImage(ctx->device, atlas->atlasImage, NULL);
+    vkFreeMemory(ctx->device, atlas->atlasImageMemory, NULL);
+    free(textureEntries);
+    free(atlas);
+    return NULL;
+  }
+
+  return atlas;
+}
+
+// Context-based atlas destruction (uses context device instead of global)
+void cjelly_destroy_texture_atlas_ctx(CJellyTextureAtlas * atlas, const CJellyVulkanContext* ctx) {
+  if (!atlas) return;
+
+  vkDestroySampler(ctx->device, atlas->atlasSampler, NULL);
+  vkDestroyDescriptorSetLayout(ctx->device, atlas->bindlessDescriptorSetLayout, NULL);
+  vkDestroyDescriptorPool(ctx->device, atlas->bindlessDescriptorPool, NULL);
+  vkDestroyImageView(ctx->device, atlas->atlasImageView, NULL);
+  vkDestroyImage(ctx->device, atlas->atlasImage, NULL);
+  vkFreeMemory(ctx->device, atlas->atlasImageMemory, NULL);
+
+  if (textureEntries) {
+    free(textureEntries);
+    textureEntries = NULL;
+  }
+
+  free(atlas);
+}
+
 void cjelly_destroy_texture_atlas(CJellyTextureAtlas * atlas) {
   if (!atlas) return;
-  
+
   vkDestroyDescriptorSetLayout(device, atlas->bindlessDescriptorSetLayout, NULL);
   vkDestroyDescriptorPool(device, atlas->bindlessDescriptorPool, NULL);
   vkDestroyImageView(device, atlas->atlasImageView, NULL);
   vkDestroyImage(device, atlas->atlasImage, NULL);
   vkFreeMemory(device, atlas->atlasImageMemory, NULL);
-  
+
   if (textureEntries) {
     free(textureEntries);
     textureEntries = NULL;
   }
-  
+
   free(atlas);
 }
 
@@ -2664,6 +3414,116 @@ uint32_t cjelly_atlas_add_texture(CJellyTextureAtlas * atlas, const char * fileP
   return textureID;
 }
 
+// Context-based texture addition (uses context device instead of global)
+uint32_t cjelly_atlas_add_texture_ctx(CJellyTextureAtlas * atlas, const char * filePath, const CJellyVulkanContext* ctx) {
+  if (!atlas || atlas->textureCount >= maxTextures) {
+    return 0; // Invalid texture ID
+  }
+
+  // Load the image
+  CJellyFormatImage * image;
+  if (cjelly_format_image_load(filePath, &image) != CJELLY_FORMAT_IMAGE_SUCCESS) {
+    fprintf(stderr, "Failed to load texture: %s\n", filePath);
+    return 0;
+  }
+
+  uint32_t texWidth = image->raw->width;
+  uint32_t texHeight = image->raw->height;
+
+  // Check if texture fits in current row
+  if (atlas->nextTextureX + texWidth > atlas->atlasWidth) {
+    // Move to next row
+    atlas->nextTextureX = 0;
+    atlas->nextTextureY += atlas->currentRowHeight;
+    atlas->currentRowHeight = 0;
+  }
+
+  // Check if texture fits in atlas
+  if (atlas->nextTextureY + texHeight > atlas->atlasHeight) {
+    fprintf(stderr, "Texture atlas is full\n");
+    cjelly_format_image_free(image);
+    return 0;
+  }
+
+  // Create staging buffer for the texture using context device
+  VkDeviceSize imageSize = texWidth * texHeight * 4; // RGBA
+  VkBuffer stagingBuffer;
+  VkDeviceMemory stagingBufferMemory;
+
+  createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+               &stagingBuffer, &stagingBufferMemory);
+
+  // Copy image data to staging buffer using context device
+  void * data;
+  vkMapMemory(ctx->device, stagingBufferMemory, 0, imageSize, 0, &data);
+
+  // Convert RGB to RGBA and copy to staging buffer
+  uint8_t * pixels = (uint8_t *)data;
+  for (uint32_t y = 0; y < texHeight; y++) {
+    for (uint32_t x = 0; x < texWidth; x++) {
+      uint32_t srcIndex = (y * texWidth + x) * 3; // RGB
+      uint32_t dstIndex = (y * texWidth + x) * 4; // RGBA
+      pixels[dstIndex] = image->raw->data[srcIndex];     // R
+      pixels[dstIndex + 1] = image->raw->data[srcIndex + 1]; // G
+      pixels[dstIndex + 2] = image->raw->data[srcIndex + 2]; // B
+      pixels[dstIndex + 3] = 255; // A
+    }
+  }
+
+  vkUnmapMemory(ctx->device, stagingBufferMemory);
+
+  // Copy staging buffer to atlas image at the correct position using context command buffer
+  VkBufferImageCopy region = {0};
+  region.bufferOffset = 0;
+  region.bufferRowLength = 0;
+  region.bufferImageHeight = 0;
+  region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  region.imageSubresource.mipLevel = 0;
+  region.imageSubresource.baseArrayLayer = 0;
+  region.imageSubresource.layerCount = 1;
+  region.imageOffset.x = atlas->nextTextureX;
+  region.imageOffset.y = atlas->nextTextureY;
+  region.imageOffset.z = 0;
+  region.imageExtent.width = texWidth;
+  region.imageExtent.height = texHeight;
+  region.imageExtent.depth = 1;
+
+  VkCommandBuffer commandBuffer = beginSingleTimeCommandsCtx(ctx);
+  vkCmdCopyBufferToImage(commandBuffer, stagingBuffer, atlas->atlasImage,
+                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+  endSingleTimeCommandsCtx(ctx, commandBuffer);
+
+  // Store texture entry
+  uint32_t textureID = atlas->textureCount + 1; // Start from 1, 0 means no texture
+  CJellyTextureEntry * entry = &textureEntries[atlas->textureCount];
+  entry->textureID = textureID;
+  entry->x = atlas->nextTextureX;
+  entry->y = atlas->nextTextureY;
+  entry->width = texWidth;
+  entry->height = texHeight;
+
+  // Calculate UV coordinates
+  entry->uMin = (float)atlas->nextTextureX / (float)atlas->atlasWidth;
+  entry->uMax = (float)(atlas->nextTextureX + texWidth) / (float)atlas->atlasWidth;
+  entry->vMin = (float)atlas->nextTextureY / (float)atlas->atlasHeight;
+  entry->vMax = (float)(atlas->nextTextureY + texHeight) / (float)atlas->atlasHeight;
+
+  // Update atlas position
+  atlas->nextTextureX += texWidth;
+  if (texHeight > atlas->currentRowHeight) {
+    atlas->currentRowHeight = texHeight;
+  }
+  atlas->textureCount++;
+
+  // Clean up
+  vkDestroyBuffer(ctx->device, stagingBuffer, NULL);
+  vkFreeMemory(ctx->device, stagingBufferMemory, NULL);
+  cjelly_format_image_free(image);
+
+  return textureID;
+}
+
 CJellyTextureEntry * cjelly_atlas_get_texture_entry(CJellyTextureAtlas * atlas, uint32_t textureID) {
   if (!atlas || textureID == 0 || textureID > atlas->textureCount) {
     return NULL;
@@ -2691,4 +3551,26 @@ void cjelly_atlas_update_descriptor_set(CJellyTextureAtlas * atlas) {
   descriptorWrite.pImageInfo = &imageInfo;
   
   vkUpdateDescriptorSets(device, 1, &descriptorWrite, 0, NULL);
+}
+
+// Context-based descriptor set update (uses context device instead of global)
+static void cjelly_atlas_update_descriptor_set_ctx(CJellyTextureAtlas * atlas, const CJellyVulkanContext* ctx) {
+  if (!atlas) return;
+
+  // Update the descriptor set with the atlas image view
+  VkDescriptorImageInfo imageInfo = {0};
+  imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  imageInfo.imageView = atlas->atlasImageView;
+  imageInfo.sampler = atlas->atlasSampler;
+
+  VkWriteDescriptorSet descriptorWrite = {0};
+  descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+  descriptorWrite.dstSet = atlas->bindlessDescriptorSet;
+  descriptorWrite.dstBinding = 0;
+  descriptorWrite.dstArrayElement = 0;
+  descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  descriptorWrite.descriptorCount = 1;
+  descriptorWrite.pImageInfo = &imageInfo;
+
+  vkUpdateDescriptorSets(ctx->device, 1, &descriptorWrite, 0, NULL);
 }
