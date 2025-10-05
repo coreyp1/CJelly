@@ -73,6 +73,7 @@ VkPipeline bindlessPipeline;
 VkPipelineLayout bindlessPipelineLayout;
 VkBuffer vertexBufferBindless;
 VkDeviceMemory vertexBufferBindlessMemory;
+// Bindless texture atlas global (used by pipeline creation)
 CJellyTextureAtlas * bindlessTextureAtlas = NULL;
 
 
@@ -114,6 +115,263 @@ typedef struct VertexBindless {
 void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
     VkMemoryPropertyFlags properties, VkBuffer * buffer,
     VkDeviceMemory * bufferMemory);
+VkCommandBuffer beginSingleTimeCommands(void);
+void endSingleTimeCommands(VkCommandBuffer commandBuffer);
+void transitionImageLayout(VkImage image, VkFormat format,
+    VkImageLayout oldLayout, VkImageLayout newLayout);
+void copyBufferToImage(
+    VkBuffer buffer, VkImage image, uint32_t width, uint32_t height);
+
+// Forward declarations for bindless functions:
+void createBindlessVertexBuffer(VkDevice device, VkCommandPool commandPool);
+void createBindlessGraphicsPipeline(VkDevice device, VkRenderPass renderPass);
+
+// Forward declarations for texture atlas
+struct CJellyTextureAtlas;
+struct CJellyApplication;
+
+
+// Initialize bindless rendering resources
+CJellyBindlessResources* cjelly_create_bindless_resources(void) {
+    printf("DEBUG: Creating bindless resources...\n");
+    const char* stageEnv = getenv("CJELLY_BINDLESS_STAGE");
+    int stage = stageEnv ? atoi(stageEnv) : 2; // default full
+    fprintf(stderr, "DEBUG: CJELLY_BINDLESS_STAGE=%d\n", stage);
+
+    CJellyBindlessResources* resources = malloc(sizeof(CJellyBindlessResources));
+    if (!resources) {
+        fprintf(stderr, "Failed to allocate bindless resources\n");
+        return NULL;
+    }
+
+    memset(resources, 0, sizeof(CJellyBindlessResources));
+
+    // Create texture atlas
+    CJellyTextureAtlas* atlas = cjelly_create_texture_atlas(2048, 2048);
+    if (!atlas) {
+        fprintf(stderr, "Failed to create texture atlas\n");
+        free(resources);
+        return NULL;
+    }
+
+    printf("DEBUG: Texture atlas created\n");
+
+    // Add textures to atlas
+    fprintf(stderr, "DEBUG: Adding textures to atlas...\n");
+    uint32_t tex1 = cjelly_atlas_add_texture(atlas, "test/images/bmp/tang.bmp");
+    fprintf(stderr, "DEBUG: tex1 id=%u\n", tex1);
+    uint32_t tex2 = cjelly_atlas_add_texture(atlas, "test/images/bmp/16Color.bmp");
+    fprintf(stderr, "DEBUG: tex2 id=%u\n", tex2);
+
+    if (tex1 == 0 || tex2 == 0) {
+        fprintf(stderr, "Failed to add textures to atlas\n");
+        cjelly_destroy_texture_atlas(atlas);
+        free(resources);
+        return NULL;
+    }
+
+    fprintf(stderr, "DEBUG: Textures added to atlas\n");
+
+    fprintf(stderr, "DEBUG: Transition atlas to SHADER_READ_ONLY\n");
+    // Atlas image was created and filled per-texture via copyBufferToImage; ensure final layout
+    transitionImageLayout(atlas->atlasImage, VK_FORMAT_R8G8B8A8_UNORM,
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    fprintf(stderr, "DEBUG: Update descriptor set\n");
+    // Update descriptor set
+    cjelly_atlas_update_descriptor_set(atlas);
+
+    // Create vertex buffer
+    fprintf(stderr, "DEBUG: Create bindless vertex buffer\n");
+    createBindlessVertexBuffer(device, commandPool);
+    resources->vertexBuffer = vertexBufferBindless;
+    resources->vertexBufferMemory = vertexBufferBindlessMemory;
+
+    // Expose atlas to both resources and global for compatibility
+    resources->textureAtlas = atlas;
+    bindlessTextureAtlas = atlas;
+    // Initialize default push values
+    resources->uv[0]=1.0f; resources->uv[1]=1.0f; resources->uv[2]=0.0f; resources->uv[3]=0.0f;
+    resources->colorMul[0]=1.0f; resources->colorMul[1]=1.0f; resources->colorMul[2]=1.0f; resources->colorMul[3]=1.0f;
+
+    if (stage >= 2) {
+      // Create graphics pipeline
+      fprintf(stderr, "DEBUG: Create bindless graphics pipeline\n");
+      createBindlessGraphicsPipeline(device, renderPass);
+      fprintf(stderr, "DEBUG: After pipeline creation, bindlessPipeline=%p layout=%p\n", (void*)bindlessPipeline, (void*)bindlessPipelineLayout);
+      resources->pipeline = bindlessPipeline;
+      fprintf(stderr, "DEBUG: Assigned resources->pipeline\n");
+      resources->pipelineLayout = bindlessPipelineLayout;
+      fprintf(stderr, "DEBUG: Assigned resources->pipelineLayout\n");
+    } else {
+      fprintf(stderr, "DEBUG: Skipping bindless pipeline creation due to stage %d\n", stage);
+      resources->pipeline = VK_NULL_HANDLE;
+      resources->pipelineLayout = VK_NULL_HANDLE;
+    }
+
+
+    printf("DEBUG: Bindless resources created successfully\n");
+    fprintf(stderr, "DEBUG: About to return resources=%p\n", (void*)resources);
+    return resources;
+}
+
+// Destroy bindless rendering resources
+void cjelly_destroy_bindless_resources(CJellyBindlessResources* resources) {
+    if (!resources) return;
+
+    if (resources->textureAtlas) {
+        cjelly_destroy_texture_atlas(resources->textureAtlas);
+        if (bindlessTextureAtlas == resources->textureAtlas) {
+            bindlessTextureAtlas = NULL;
+        }
+    }
+
+    free(resources);
+}
+
+// Minimal bindless-capable resources for a color-only square (no texture)
+CJellyBindlessResources* cjelly_create_bindless_color_square_resources(void) {
+    CJellyBindlessResources* resources = malloc(sizeof(CJellyBindlessResources));
+    if (!resources) return NULL;
+    memset(resources, 0, sizeof(CJellyBindlessResources));
+
+    // Create a dedicated vertex buffer with textureID=0 (no sampling) and multicolor vertices
+    VertexBindless verticesBindless[] = {
+      {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, 0},
+      {{ 0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, 0},
+      {{ 0.5f,  0.5f}, {0.0f, 0.0f, 1.0f}, 0},
+      {{ 0.5f,  0.5f}, {0.0f, 0.0f, 1.0f}, 0},
+      {{-0.5f,  0.5f}, {1.0f, 1.0f, 0.0f}, 0},
+      {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, 0},
+    };
+    VkDeviceSize vbSize = sizeof(verticesBindless);
+    createBuffer(vbSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+                 &resources->vertexBuffer, &resources->vertexBufferMemory);
+    void* vdata = NULL;
+    vkMapMemory(device, resources->vertexBufferMemory, 0, vbSize, 0, &vdata);
+    memcpy(vdata, verticesBindless, (size_t)vbSize);
+    vkUnmapMemory(device, resources->vertexBufferMemory);
+
+    // Prefer using the existing atlas descriptor set layout if available for layout compatibility
+    VkDescriptorSetLayout tempSetLayout = VK_NULL_HANDLE;
+    if (!bindlessTextureAtlas || bindlessTextureAtlas->bindlessDescriptorSetLayout == VK_NULL_HANDLE) {
+        VkDescriptorSetLayoutBinding layoutBinding = {0};
+        layoutBinding.binding = 0;
+        layoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        layoutBinding.descriptorCount = 1;
+        layoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+        VkDescriptorSetLayoutCreateInfo dslci = {0};
+        dslci.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+        dslci.bindingCount = 1;
+        dslci.pBindings = &layoutBinding;
+        if (vkCreateDescriptorSetLayout(device, &dslci, NULL, &tempSetLayout) != VK_SUCCESS) {
+            vkDestroyBuffer(device, resources->vertexBuffer, NULL);
+            vkFreeMemory(device, resources->vertexBufferMemory, NULL);
+            free(resources);
+            return NULL;
+        }
+    }
+
+    // Create a pipeline layout with that set layout and push constants allowed
+    VkPushConstantRange pushRange = {0};
+    pushRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    pushRange.offset = 0;
+    pushRange.size = sizeof(float) * 8; // uv vec4 + colorMul vec4
+
+    VkPipelineLayoutCreateInfo pli = {0};
+    pli.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    VkDescriptorSetLayout setLayouts[] = { bindlessTextureAtlas && bindlessTextureAtlas->bindlessDescriptorSetLayout ? bindlessTextureAtlas->bindlessDescriptorSetLayout : tempSetLayout };
+    pli.setLayoutCount = 1;
+    pli.pSetLayouts = setLayouts;
+    pli.pushConstantRangeCount = 1;
+    pli.pPushConstantRanges = &pushRange;
+    if (vkCreatePipelineLayout(device, &pli, NULL, &resources->pipelineLayout) != VK_SUCCESS) {
+        vkDestroyDescriptorSetLayout(device, tempSetLayout, NULL);
+        free(resources);
+        return NULL;
+    }
+    // Descriptor set layout can be destroyed after pipeline layout creation if we created a temp one
+    if (tempSetLayout != VK_NULL_HANDLE) {
+        vkDestroyDescriptorSetLayout(device, tempSetLayout, NULL);
+    }
+
+    // If global atlas exists, attach it so descriptor binding works
+    if (bindlessTextureAtlas) {
+        resources->textureAtlas = bindlessTextureAtlas;
+    }
+
+    // Reuse the bindless graphics pipeline creation, which expects a set 0; we skip and instead
+    // create a simple color pipeline by using the existing basic shaders.
+    VkShaderModule vert = createShaderModuleFromMemory(device, bindless_vert_spv, bindless_vert_spv_len);
+    VkShaderModule frag = createShaderModuleFromMemory(device, bindless_frag_spv, bindless_frag_spv_len);
+    if (vert == VK_NULL_HANDLE || frag == VK_NULL_HANDLE) {
+        vkDestroyPipelineLayout(device, resources->pipelineLayout, NULL);
+        free(resources);
+        return NULL;
+    }
+
+    VkPipelineShaderStageCreateInfo stages[2] = {0};
+    stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+    stages[0].module = vert;
+    stages[0].pName = "main";
+    stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    stages[1].module = frag;
+    stages[1].pName = "main";
+
+    VkVertexInputBindingDescription binding = {0};
+    binding.binding = 0;
+    binding.stride = sizeof(VertexBindless);
+    binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+    VkVertexInputAttributeDescription attrs[3] = {0};
+    attrs[0].binding = 0; attrs[0].location = 0; attrs[0].format = VK_FORMAT_R32G32_SFLOAT; attrs[0].offset = offsetof(VertexBindless, pos);
+    attrs[1].binding = 0; attrs[1].location = 1; attrs[1].format = VK_FORMAT_R32G32B32_SFLOAT; attrs[1].offset = offsetof(VertexBindless, color);
+    attrs[2].binding = 0; attrs[2].location = 2; attrs[2].format = VK_FORMAT_R32_UINT; attrs[2].offset = offsetof(VertexBindless, textureID);
+    VkPipelineVertexInputStateCreateInfo vi = {0};
+    vi.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+    vi.vertexBindingDescriptionCount = 1;
+    vi.pVertexBindingDescriptions = &binding;
+    vi.vertexAttributeDescriptionCount = 3;
+    vi.pVertexAttributeDescriptions = attrs;
+
+    VkPipelineInputAssemblyStateCreateInfo ia = {0};
+    ia.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+
+    VkViewport vp = {0}; vp.x=0; vp.y=0; vp.width=(float)WIDTH; vp.height=(float)HEIGHT; vp.minDepth=0; vp.maxDepth=1;
+    VkRect2D sc = {0}; sc.extent.width = WIDTH; sc.extent.height = HEIGHT;
+    VkPipelineViewportStateCreateInfo vps = {0};
+    vps.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    vps.viewportCount = 1; vps.pViewports = &vp; vps.scissorCount = 1; vps.pScissors = &sc;
+    VkPipelineRasterizationStateCreateInfo rs = {0};
+    rs.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO; rs.polygonMode = VK_POLYGON_MODE_FILL; rs.lineWidth = 1.0f; rs.cullMode = VK_CULL_MODE_BACK_BIT; rs.frontFace = VK_FRONT_FACE_CLOCKWISE;
+    VkPipelineMultisampleStateCreateInfo ms = {0};
+    ms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO; ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    VkPipelineColorBlendAttachmentState cba = {0};
+    cba.colorWriteMask = VK_COLOR_COMPONENT_R_BIT|VK_COLOR_COMPONENT_G_BIT|VK_COLOR_COMPONENT_B_BIT|VK_COLOR_COMPONENT_A_BIT;
+    VkPipelineColorBlendStateCreateInfo cb = {0}; cb.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO; cb.attachmentCount = 1; cb.pAttachments = &cba;
+
+    VkGraphicsPipelineCreateInfo gp = {0};
+    gp.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    gp.stageCount = 2; gp.pStages = stages;
+    gp.pVertexInputState = &vi; gp.pInputAssemblyState = &ia; gp.pViewportState = &vps; gp.pRasterizationState = &rs; gp.pMultisampleState = &ms; gp.pColorBlendState = &cb;
+    gp.layout = resources->pipelineLayout; gp.renderPass = renderPass; gp.subpass = 0;
+    if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &gp, NULL, &resources->pipeline) != VK_SUCCESS) {
+        vkDestroyPipelineLayout(device, resources->pipelineLayout, NULL);
+        vkDestroyShaderModule(device, vert, NULL);
+        vkDestroyShaderModule(device, frag, NULL);
+        free(resources);
+        return NULL;
+    }
+
+    vkDestroyShaderModule(device, vert, NULL);
+    vkDestroyShaderModule(device, frag, NULL);
+    // Defaults for color-only path
+    resources->uv[0]=1.0f; resources->uv[1]=1.0f; resources->uv[2]=0.0f; resources->uv[3]=0.0f;
+    resources->colorMul[0]=1.0f; resources->colorMul[1]=1.0f; resources->colorMul[2]=1.0f; resources->colorMul[3]=1.0f;
+    return resources;
+}
 void createImage(uint32_t width, uint32_t height, VkFormat format,
     VkImageTiling tiling, VkImageUsageFlags usage,
     VkMemoryPropertyFlags properties, VkImage * image,
@@ -778,13 +1036,23 @@ void createLogicalDevice() {
   queueCreateInfo.pQueuePriorities = &queuePriority;
 
   // Specify the swapchain extension.
-  const char * deviceExtensions[] = {"VK_KHR_swapchain"};
+  const char * deviceExtensions[] = {"VK_KHR_swapchain", "VK_EXT_descriptor_indexing"};
+
+  // Enable descriptor indexing features minimally required for bindless
+  VkPhysicalDeviceDescriptorIndexingFeaturesEXT descriptorIndexingFeatures = {0};
+  descriptorIndexingFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES_EXT;
+  descriptorIndexingFeatures.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
+  descriptorIndexingFeatures.descriptorBindingPartiallyBound = VK_TRUE;
+  descriptorIndexingFeatures.runtimeDescriptorArray = VK_TRUE;
+  descriptorIndexingFeatures.descriptorBindingVariableDescriptorCount = VK_TRUE;
+  descriptorIndexingFeatures.descriptorBindingSampledImageUpdateAfterBind = VK_TRUE;
 
   VkDeviceCreateInfo createInfo = {0};
   createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+  createInfo.pNext = &descriptorIndexingFeatures;
   createInfo.queueCreateInfoCount = 1;
   createInfo.pQueueCreateInfos = &queueCreateInfo;
-  createInfo.enabledExtensionCount = 1;
+  createInfo.enabledExtensionCount = 2;
   createInfo.ppEnabledExtensionNames = deviceExtensions;
 
   if (vkCreateDevice(physicalDevice, &createInfo, NULL, &device) !=
@@ -969,7 +1237,7 @@ void createGraphicsPipeline() {
   rasterizer.rasterizerDiscardEnable = VK_FALSE;
   rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
   rasterizer.lineWidth = 1.0f;
-  rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
+  rasterizer.cullMode = VK_CULL_MODE_NONE;
   rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
 
   VkPipelineMultisampleStateCreateInfo multisampling = {0};
@@ -1250,7 +1518,8 @@ void createTexturedGraphicsPipeline() {
   vkDestroyShaderModule(device, fragShaderModule, NULL);
 }
 
-void createBindlessGraphicsPipeline() {
+void createBindlessGraphicsPipeline(VkDevice device __attribute__((unused)), VkRenderPass renderPass) {
+  fprintf(stderr, "DEBUG: enter createBindlessGraphicsPipeline\n");
   // Load SPIR-V binaries and create shader modules for bindless rendering.
   VkShaderModule vertShaderModule =
       createShaderModuleFromMemory(device, bindless_vert_spv, bindless_vert_spv_len);
@@ -1262,6 +1531,7 @@ void createBindlessGraphicsPipeline() {
     fprintf(stderr, "Failed to create bindless shader modules\n");
     exit(EXIT_FAILURE);
   }
+  fprintf(stderr, "DEBUG: shader modules created\n");
 
   VkPipelineShaderStageCreateInfo shaderStages[2] = {0};
 
@@ -1369,18 +1639,27 @@ void createBindlessGraphicsPipeline() {
     fprintf(stderr, "Bindless texture atlas not initialized\n");
     exit(EXIT_FAILURE);
   }
+  fprintf(stderr, "DEBUG: atlas=%p layout=%p\n", (void*)bindlessTextureAtlas, (void*)bindlessTextureAtlas->bindlessDescriptorSetLayout);
   
   VkDescriptorSetLayout descriptorSetLayouts[] = {bindlessTextureAtlas->bindlessDescriptorSetLayout};
+  VkPushConstantRange pushRange = {0};
+  pushRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+  pushRange.offset = 0;
+  pushRange.size = sizeof(float) * 8; // uv vec4 + colorMul vec4
+
   VkPipelineLayoutCreateInfo pipelineLayoutInfo = {0};
   pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
   pipelineLayoutInfo.setLayoutCount = 1;
   pipelineLayoutInfo.pSetLayouts = descriptorSetLayouts;
+  pipelineLayoutInfo.pushConstantRangeCount = 1;
+  pipelineLayoutInfo.pPushConstantRanges = &pushRange;
 
   if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, NULL,
           &bindlessPipelineLayout) != VK_SUCCESS) {
     fprintf(stderr, "Failed to create bindless pipeline layout\n");
     exit(EXIT_FAILURE);
   }
+  fprintf(stderr, "DEBUG: pipeline layout created\n");
 
   VkGraphicsPipelineCreateInfo pipelineInfo = {0};
   pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
@@ -1405,6 +1684,7 @@ void createBindlessGraphicsPipeline() {
 
   vkDestroyShaderModule(device, vertShaderModule, NULL);
   vkDestroyShaderModule(device, fragShaderModule, NULL);
+  fprintf(stderr, "DEBUG: exit createBindlessGraphicsPipeline\n");
 }
 
 /// Creates a texture image from a BMP file.
@@ -1808,7 +2088,17 @@ void createTexturedCommandBuffersForWindow(CJellyWindow * win) {
   }
 }
 
-void createBindlessCommandBuffersForWindow(CJellyWindow * win) {
+void createBindlessCommandBuffersForWindow(CJellyWindow * win, const CJellyBindlessResources* resources, VkDevice device, VkCommandPool commandPool, VkRenderPass renderPass) {
+  printf("DEBUG: Starting bindless command buffer creation for window...\n");
+  printf("DEBUG: win = %p, swapChainImageCount = %d\n", (void*)win, win->swapChainImageCount);
+
+  // Check if bindless resources are available
+  if (!resources || resources->pipeline == VK_NULL_HANDLE) {
+    printf("DEBUG: bindless resources are NULL, falling back to textured rendering\n");
+    createTexturedCommandBuffersForWindow(win);
+    return;
+  }
+
   win->commandBuffers =
       malloc(sizeof(VkCommandBuffer) * win->swapChainImageCount);
 
@@ -1818,13 +2108,17 @@ void createBindlessCommandBuffersForWindow(CJellyWindow * win) {
   allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
   allocInfo.commandBufferCount = win->swapChainImageCount;
 
+  printf("DEBUG: About to allocate %d bindless command buffers...\n", win->swapChainImageCount);
   if (vkAllocateCommandBuffers(device, &allocInfo, win->commandBuffers) !=
       VK_SUCCESS) {
-    fprintf(stderr, "Failed to allocate bindless command buffers\n");
-    exit(EXIT_FAILURE);
+    fprintf(stderr, "Failed to allocate bindless command buffers, falling back to textured\n");
+    createTexturedCommandBuffersForWindow(win);
+    return;
   }
+  printf("DEBUG: Bindless command buffers allocated successfully\n");
 
   for (size_t i = 0; i < win->swapChainImageCount; i++) {
+    printf("DEBUG: Recording bindless command buffer %zu...\n", i);
     VkCommandBufferBeginInfo beginInfo = {0};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
 
@@ -1833,6 +2127,7 @@ void createBindlessCommandBuffersForWindow(CJellyWindow * win) {
       fprintf(stderr, "Failed to begin bindless command buffer\n");
       exit(EXIT_FAILURE);
     }
+    printf("DEBUG: Command buffer %zu begun successfully\n", i);
 
     VkRenderPassBeginInfo renderPassInfo = {0};
     renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -1849,24 +2144,75 @@ void createBindlessCommandBuffersForWindow(CJellyWindow * win) {
     vkCmdBeginRenderPass(win->commandBuffers[i], &renderPassInfo,
                          VK_SUBPASS_CONTENTS_INLINE);
 
-    // Bind the bindless pipeline.
-    vkCmdBindPipeline(win->commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS,
-        bindlessPipeline);
+    // Check if bindless resources are properly initialized
+    printf("DEBUG: Checking bindless resources...\n");
+    printf("DEBUG: resources->pipeline = %p\n", (void*)resources->pipeline);
+    printf("DEBUG: resources->pipelineLayout = %p\n", (void*)resources->pipelineLayout);
+    printf("DEBUG: resources->textureAtlas = %p\n", (void*)resources->textureAtlas);
+    printf("DEBUG: resources->vertexBuffer = %p\n", (void*)resources->vertexBuffer);
 
-    // Bind descriptor sets containing the bindless texture atlas.
-    if (bindlessTextureAtlas && bindlessTextureAtlas->bindlessDescriptorSet != VK_NULL_HANDLE) {
-      vkCmdBindDescriptorSets(win->commandBuffers[i],
-          VK_PIPELINE_BIND_POINT_GRAPHICS, bindlessPipelineLayout, 0, 1,
-          &bindlessTextureAtlas->bindlessDescriptorSet, 0, NULL);
+    // Check global variables too
+    printf("DEBUG: Checking global variables...\n");
+    printf("DEBUG: device = %p\n", (void*)device);
+    printf("DEBUG: commandPool = %p\n", (void*)commandPool);
+    printf("DEBUG: renderPass = %p\n", (void*)renderPass);
+
+    if (resources->pipeline == VK_NULL_HANDLE) {
+      fprintf(stderr, "ERROR: bindless pipeline is NULL!\n");
+      exit(EXIT_FAILURE);
     }
 
-    VkDeviceSize offsets[] = {0};
-    // Bind the vertex buffer containing bindless vertices.
-    vkCmdBindVertexBuffers(
-        win->commandBuffers[i], 0, 1, &vertexBufferBindless, offsets);
+    if (device == VK_NULL_HANDLE) {
+      fprintf(stderr, "ERROR: device is NULL!\n");
+      exit(EXIT_FAILURE);
+    }
 
-    // Issue draw call for multiple squares with different textures.
-    vkCmdDraw(win->commandBuffers[i], 12, 1, 0, 0); // 12 vertices for 2 squares
+    if (commandPool == VK_NULL_HANDLE) {
+      fprintf(stderr, "ERROR: commandPool is NULL!\n");
+      exit(EXIT_FAILURE);
+    }
+
+    if (renderPass == VK_NULL_HANDLE) {
+      fprintf(stderr, "ERROR: renderPass is NULL!\n");
+      exit(EXIT_FAILURE);
+    }
+
+    // Bind the bindless pipeline.
+    printf("DEBUG: Binding bindless pipeline...\n");
+    vkCmdBindPipeline(win->commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS,
+        resources->pipeline);
+
+    // Bind descriptor set when available, and push UV/colorMul from resources (or atlas entry)
+    float push[8] = { resources->uv[0], resources->uv[1], resources->uv[2], resources->uv[3],
+                      resources->colorMul[0], resources->colorMul[1], resources->colorMul[2], resources->colorMul[3] };
+    if (resources->textureAtlas && resources->textureAtlas->bindlessDescriptorSet != VK_NULL_HANDLE) {
+      printf("DEBUG: Binding bindless descriptor set...\n");
+      vkCmdBindDescriptorSets(win->commandBuffers[i],
+          VK_PIPELINE_BIND_POINT_GRAPHICS, resources->pipelineLayout, 0, 1,
+          &resources->textureAtlas->bindlessDescriptorSet, 0, NULL);
+      // If uv not set, derive from atlas entry 1
+      CJellyTextureEntry *entry = cjelly_atlas_get_texture_entry(resources->textureAtlas, 1);
+      if (entry) {
+        push[0] = (entry->uMax - entry->uMin);
+        push[1] = (entry->vMax - entry->vMin);
+        push[2] = entry->uMin;
+        push[3] = entry->vMin;
+      }
+    } else {
+      printf("DEBUG: WARNING: Bindless descriptor set not available\n");
+    }
+    vkCmdPushConstants(win->commandBuffers[i], resources->pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), push);
+
+    VkDeviceSize offsets[] = {0};
+    // (push constants already handled above per path)
+
+    // Bind the vertex buffer containing bindless vertices.
+    printf("DEBUG: Binding bindless vertex buffer...\n");
+    vkCmdBindVertexBuffers(
+        win->commandBuffers[i], 0, 1, &resources->vertexBuffer, offsets);
+
+    // Issue draw call for single square with dynamic texture
+    vkCmdDraw(win->commandBuffers[i], 6, 1, 0, 0); // 6 vertices for 1 square
 
     vkCmdEndRenderPass(win->commandBuffers[i]);
 
@@ -1933,24 +2279,16 @@ void createTexturedVertexBuffer() {
   vkUnmapMemory(device, vertexBufferTexturedMemory);
 }
 
-void createBindlessVertexBuffer() {
-  // Create vertices for bindless rendering - multiple squares with different textures
+void createBindlessVertexBuffer(VkDevice device __attribute__((unused)), VkCommandPool commandPool __attribute__((unused))) {
+  // Create vertices for bindless rendering - single square with dynamic color switching
   VertexBindless verticesBindless[] = {
-    // Square 1 - Red with texture ID 1
-    {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, 1},
-    {{0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, 1},
-    {{0.5f, 0.5f}, {1.0f, 0.0f, 0.0f}, 1},
-    {{0.5f, 0.5f}, {1.0f, 0.0f, 0.0f}, 1},
-    {{-0.5f, 0.5f}, {1.0f, 0.0f, 0.0f}, 1},
-    {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, 1},
-    
-    // Square 2 - Green with texture ID 2 (if available)
-    {{-0.3f, -0.3f}, {0.0f, 1.0f, 0.0f}, 2},
-    {{0.3f, -0.3f}, {0.0f, 1.0f, 0.0f}, 2},
-    {{0.3f, 0.3f}, {0.0f, 1.0f, 0.0f}, 2},
-    {{0.3f, 0.3f}, {0.0f, 1.0f, 0.0f}, 2},
-    {{-0.3f, 0.3f}, {0.0f, 1.0f, 0.0f}, 2},
-    {{-0.3f, -0.3f}, {0.0f, 1.0f, 0.0f}, 2},
+    // Single square - use white so texture colors pass through
+    {{-0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, 1},
+    {{0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, 1},
+    {{0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}, 1},
+    {{0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}, 1},
+    {{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}, 1},
+    {{-0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, 1},
   };
 
   VkDeviceSize bufferSize = sizeof(verticesBindless);
@@ -1992,20 +2330,7 @@ void initVulkanGlobal() {
   updateTextureDescriptorSet(textureDescriptorSet);
   createTexturedGraphicsPipeline();
 
-  // Bindless rendering setup (simplified approach)
-  bindlessTextureAtlas = cjelly_create_texture_atlas(2048, 2048); // Larger atlas for 1024x1024 textures
-  if (bindlessTextureAtlas) {
-    // Add textures to the atlas
-    cjelly_atlas_add_texture(bindlessTextureAtlas, "test/images/bmp/tang.bmp");
-    cjelly_atlas_add_texture(bindlessTextureAtlas, "test/images/bmp/16Color.bmp");
-
-    // Update the descriptor set with the atlas
-    cjelly_atlas_update_descriptor_set(bindlessTextureAtlas);
-
-    // Create bindless vertex buffer and pipeline
-    createBindlessVertexBuffer();
-    createBindlessGraphicsPipeline();
-  }
+  // Bindless resources are created by the app via cjelly_create_bindless_resources()
 }
 
 void cleanupVulkanGlobal() {
@@ -2111,6 +2436,9 @@ CJellyTextureAtlas * cjelly_create_texture_atlas(uint32_t width, uint32_t height
               VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
               VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
               &atlas->atlasImage, &atlas->atlasImageMemory);
+  // Transition to TRANSFER_DST for subsequent copies
+  transitionImageLayout(atlas->atlasImage, VK_FORMAT_R8G8B8A8_UNORM,
+                        VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
   
   // Create image view
   VkImageViewCreateInfo viewInfo = {0};
@@ -2140,11 +2468,11 @@ CJellyTextureAtlas * cjelly_create_texture_atlas(uint32_t width, uint32_t height
   // Create sampler (reuse the existing texture sampler for now)
   atlas->atlasSampler = textureSampler;
   
-  // Create bindless descriptor set layout
+  // Create descriptor set layout (single combined sampler)
   VkDescriptorSetLayoutBinding layoutBinding = {0};
   layoutBinding.binding = 0;
-  layoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-  layoutBinding.descriptorCount = maxTextures; // Maximum number of textures
+  layoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+  layoutBinding.descriptorCount = 1;
   layoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
   layoutBinding.pImmutableSamplers = NULL;
   
@@ -2152,15 +2480,7 @@ CJellyTextureAtlas * cjelly_create_texture_atlas(uint32_t width, uint32_t height
   layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
   layoutInfo.bindingCount = 1;
   layoutInfo.pBindings = &layoutBinding;
-  
-  // Enable descriptor indexing features
-  VkDescriptorSetLayoutBindingFlagsCreateInfoEXT bindingFlags = {0};
-  bindingFlags.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_BINDING_FLAGS_CREATE_INFO_EXT;
-  bindingFlags.bindingCount = 1;
-  VkDescriptorBindingFlagsEXT flags = VK_DESCRIPTOR_BINDING_PARTIALLY_BOUND_BIT_EXT | 
-                                      VK_DESCRIPTOR_BINDING_UPDATE_AFTER_BIND_BIT_EXT;
-  bindingFlags.pBindingFlags = &flags;
-  layoutInfo.pNext = &bindingFlags;
+  layoutInfo.pNext = NULL;
   
   if (vkCreateDescriptorSetLayout(device, &layoutInfo, NULL, &atlas->bindlessDescriptorSetLayout) != VK_SUCCESS) {
     fprintf(stderr, "Failed to create bindless descriptor set layout\n");
@@ -2174,7 +2494,7 @@ CJellyTextureAtlas * cjelly_create_texture_atlas(uint32_t width, uint32_t height
   
   // Create descriptor pool
   VkDescriptorPoolSize poolSize = {0};
-  poolSize.type = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+  poolSize.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   poolSize.descriptorCount = maxTextures;
   
   VkDescriptorPoolCreateInfo poolInfo = {0};
@@ -2182,7 +2502,7 @@ CJellyTextureAtlas * cjelly_create_texture_atlas(uint32_t width, uint32_t height
   poolInfo.poolSizeCount = 1;
   poolInfo.pPoolSizes = &poolSize;
   poolInfo.maxSets = 1;
-  poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_UPDATE_AFTER_BIND_BIT_EXT;
+  poolInfo.flags = 0;
   
   if (vkCreateDescriptorPool(device, &poolInfo, NULL, &atlas->bindlessDescriptorPool) != VK_SUCCESS) {
     fprintf(stderr, "Failed to create bindless descriptor pool\n");
@@ -2201,6 +2521,7 @@ CJellyTextureAtlas * cjelly_create_texture_atlas(uint32_t width, uint32_t height
   allocInfo.descriptorPool = atlas->bindlessDescriptorPool;
   allocInfo.descriptorSetCount = 1;
   allocInfo.pSetLayouts = &atlas->bindlessDescriptorSetLayout;
+  allocInfo.pNext = NULL;
   
   if (vkAllocateDescriptorSets(device, &allocInfo, &atlas->bindlessDescriptorSet) != VK_SUCCESS) {
     fprintf(stderr, "Failed to allocate bindless descriptor set\n");
@@ -2358,14 +2679,14 @@ void cjelly_atlas_update_descriptor_set(CJellyTextureAtlas * atlas) {
   VkDescriptorImageInfo imageInfo = {0};
   imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
   imageInfo.imageView = atlas->atlasImageView;
-  imageInfo.sampler = VK_NULL_HANDLE; // No sampler for sampled images
+  imageInfo.sampler = atlas->atlasSampler;
   
   VkWriteDescriptorSet descriptorWrite = {0};
   descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
   descriptorWrite.dstSet = atlas->bindlessDescriptorSet;
   descriptorWrite.dstBinding = 0;
   descriptorWrite.dstArrayElement = 0;
-  descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
+  descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   descriptorWrite.descriptorCount = 1;
   descriptorWrite.pImageInfo = &imageInfo;
   

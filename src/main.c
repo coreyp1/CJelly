@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 
 #include <cjelly/application.h>
 
@@ -9,6 +10,7 @@
 // #include <cjelly/format/3d/mtl.h>
 #include <cjelly/format/image.h>
 #include <cjelly/format/image/bmp.h>
+
 
 #ifdef _WIN32
 #include <stdint.h>
@@ -32,46 +34,77 @@ uint64_t getCurrentTimeInMilliseconds(void) {
 
 #include <cjelly/cjelly.h>
 
+// Forward declarations for global variables used by bindless rendering
+extern VkBuffer vertexBufferBindless;
+extern VkDeviceMemory vertexBufferBindlessMemory;
+extern VkDevice device;
+extern VkRenderPass renderPass;
+extern VkCommandPool commandPool;
+
+// Vertex structure for bindless rendering (must match cjelly.c)
+typedef struct {
+    float pos[2];      // Position (x, y)
+    float color[3];    // Color (r, g, b)
+    uint32_t textureID; // Texture ID for bindless rendering
+} VertexBindless;
+
+// Update bindless color for square based on current time
+void updateBindlessColor(uint64_t currentTime) {
+  // Get current second and determine color (red or green)
+  time_t currentSeconds = currentTime / 1000; // Convert ms to seconds
+  int colorIndex = (currentSeconds % 2); // 0 = red, 1 = green
+
+  // Define colors
+  float redColor[3] = {1.0f, 0.0f, 0.0f};   // Red
+  float greenColor[3] = {0.0f, 1.0f, 0.0f}; // Green
+
+  // Choose color based on time
+  float *selectedColor = (colorIndex == 0) ? redColor : greenColor;
+
+  // Update the vertex buffer data with the new color
+  if (vertexBufferBindless != VK_NULL_HANDLE && vertexBufferBindlessMemory != VK_NULL_HANDLE && device != VK_NULL_HANDLE) {
+    void * data;
+    VkResult result = vkMapMemory(device, vertexBufferBindlessMemory, 0, sizeof(VertexBindless) * 6, 0, &data);
+    if (result == VK_SUCCESS) {
+      // Update color for all vertices
+      VertexBindless *vertices = (VertexBindless *)data;
+      for (int i = 0; i < 6; i++) {
+        // Update the color component of each vertex
+        vertices[i].color[0] = selectedColor[0]; // R
+        vertices[i].color[1] = selectedColor[1]; // G
+        vertices[i].color[2] = selectedColor[2]; // B
+      }
+
+      vkUnmapMemory(device, vertexBufferBindlessMemory);
+    }
+  }
+}
 
 void renderSquare(CJellyWindow * win) {
   drawFrameForWindow(win);
 }
 
 int main(void) {
+#ifndef _WIN32
+  fprintf(stderr, "Starting CJelly demo...\n");
+#endif
 #ifdef _WIN32
   // Windows: hInstance is set in createPlatformWindow.
 #else
   // Linux: Open X display.
+  fprintf(stderr, "Opening X display...\n");
   display = XOpenDisplay(NULL);
   if (!display) {
     fprintf(stderr, "Failed to open X display\n");
     exit(EXIT_FAILURE);
   }
+  fprintf(stderr, "X display opened successfully\n");
 #endif
 
-  CJellyApplication * app = NULL;
-  CJellyApplicationError err = cjelly_application_create(
-      &app, "Vulkan Square", VK_MAKE_VERSION(1, 0, 0));
-  if (err != CJELLY_APPLICATION_ERROR_NONE) {
-    fprintf(stderr, "Failed to create CJelly application: %d\n", err);
-    return EXIT_FAILURE;
-  }
-  // Set up the application options.
-  // cjelly_application_set_required_vulkan_version(app, VK_API_VERSION_1_0);
-  // cjelly_application_set_required_gpu_memory(app, 2048);
-  // cjelly_application_set_device_type(app, CJELLY_DEVICE_TYPE_DISCRETE, true);
+  // Defer bindless resource creation until after global Vulkan init
+  CJellyBindlessResources* bindlessResources = NULL;
 
-
-  // Initialize the application.
-  err = cjelly_application_init(app);
-  if (err != CJELLY_APPLICATION_ERROR_NONE) {
-    fprintf(stderr, "Failed to initialize CJelly application: %d\n", err);
-    return EXIT_FAILURE;
-  }
-
-  // Destroy the application.
-  cjelly_application_destroy(app);
-  app = NULL;
+  // No application object used in this sample
 
     // Create two windows.
     CJellyWindow win1 = {0}, win2 = {0};
@@ -87,36 +120,64 @@ int main(void) {
     createPlatformWindow(&win2, "Vulkan Square - Window 2", WIDTH, HEIGHT);
 
     // Global Vulkan initialization.
+    fprintf(stderr, "Initializing Vulkan...\n");
+    enableValidationLayers = 0; // disable layers for WSL/headless runs
     initVulkanGlobal();
+    fprintf(stderr, "Vulkan initialized.\n");
 
     // For each window, create the per-window Vulkan objects.
+    fprintf(stderr, "Creating per-window resources for win1...\n");
     createSurfaceForWindow(&win1);
     createSwapChainForWindow(&win1);
     createImageViewsForWindow(&win1);
     createFramebuffersForWindow(&win1);
-    createCommandBuffersForWindow(&win1);
+    // Use bindless-capable path for window 1 as well (color-only)
+    CJellyBindlessResources* colorOnly = cjelly_create_bindless_color_square_resources();
+    if (colorOnly) {
+      // Share the atlas descriptor from the fish path if available to ensure push constants are set
+      if (bindlessResources && bindlessResources->textureAtlas) {
+        colorOnly->textureAtlas = bindlessResources->textureAtlas;
+      }
+      createBindlessCommandBuffersForWindow(&win1, colorOnly, device, commandPool, renderPass);
+    } else {
+      createCommandBuffersForWindow(&win1);
+    }
     createSyncObjectsForWindow(&win1);
 
+    fprintf(stderr, "Creating per-window resources for win2...\n");
     createSurfaceForWindow(&win2);
     createSwapChainForWindow(&win2);
     createImageViewsForWindow(&win2);
     createFramebuffersForWindow(&win2);
-    createTexturedCommandBuffersForWindow(&win2);
+    // Create bindless resources now that Vulkan globals are initialized
+    fprintf(stderr, "Creating bindless resources...\n");
+    bindlessResources = cjelly_create_bindless_resources();
+    fprintf(stderr, "DEBUG: bindlessResources returned %p\n", (void*)bindlessResources);
+    if (bindlessResources) {
+      printf("DEBUG: Calling bindless command buffer creation...\n");
+      createBindlessCommandBuffersForWindow(&win2, bindlessResources, device, commandPool, renderPass);
+      printf("DEBUG: Bindless command buffer creation completed\n");
+    } else {
+      createTexturedCommandBuffersForWindow(&win2);
+    }
     createSyncObjectsForWindow(&win2);
 
     // Main render loop.
     CJellyWindow * windows[] = {&win1, &win2};
+    // Track last color toggle state for window 1
+    int lastColorIndex = -1;
     while (!shouldClose) {
       processWindowEvents();
       uint64_t currentTime = getCurrentTimeInMilliseconds();
+
+      // Color switching is implemented for bindless rendering (when enabled)
 
       for (int i = 0; i < 2; ++i) {
         CJellyWindow * win = windows[i];
         // Update window 1 independently:
         switch (win->updateMode) {
         case CJELLY_UPDATE_MODE_VSYNC:
-          // For VSync mode, the present call (with FIFO) will throttle
-          // rendering.
+          // For VSync mode, the present call (with FIFO) will throttle rendering.
           if (win->renderCallback) {
             win->renderCallback(win);
           }
@@ -125,6 +186,25 @@ int main(void) {
           // In fixed mode, only render if it’s time for the next frame.
           if (currentTime >= win->nextFrameTime) {
             if (win->renderCallback) {
+              // For Window 1, toggle color via push constant by re-recording command buffers when the second changes
+              if (win == &win1 && colorOnly) {
+                int colorIndex = ((currentTime / 1000) % 2);
+                if (colorIndex != lastColorIndex) {
+                  // Update push constant color multiplier (red/green)
+                  colorOnly->colorMul[0] = (colorIndex == 0) ? 1.0f : 0.0f; // R
+                  colorOnly->colorMul[1] = (colorIndex == 0) ? 0.0f : 1.0f; // G
+                  colorOnly->colorMul[2] = 0.0f;                              // B
+                  colorOnly->colorMul[3] = 1.0f;                              // A
+                  // Re-record command buffers for win1 with updated push constants
+                  if (win1.commandBuffers) {
+                    vkFreeCommandBuffers(device, commandPool, win1.swapChainImageCount, win1.commandBuffers);
+                    free(win1.commandBuffers);
+                    win1.commandBuffers = NULL;
+                  }
+                  createBindlessCommandBuffersForWindow(&win1, colorOnly, device, commandPool, renderPass);
+                  lastColorIndex = colorIndex;
+                }
+              }
               win->renderCallback(win);
             }
             win->nextFrameTime = currentTime + (1000 / win->fixedFramerate);
@@ -155,6 +235,12 @@ int main(void) {
     // Clean up per-window resources.
     cleanupWindow(&win1);
     cleanupWindow(&win2);
+
+    // Destroy bindless resources before global cleanup
+    if (bindlessResources) {
+      cjelly_destroy_bindless_resources(bindlessResources);
+      bindlessResources = NULL;
+    }
 
     // Clean up global Vulkan resources.
     cleanupVulkanGlobal();

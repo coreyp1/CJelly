@@ -646,7 +646,25 @@ void cleanupVulkanGlobal(void);
 
 void createTexturedCommandBuffersForWindow(CJellyWindow * win);
 
-void createBindlessCommandBuffersForWindow(CJellyWindow * win);
+// Forward declarations
+struct CJellyTextureAtlas;
+struct CJellyApplication;
+
+// Include application header for CJellyApplication definition
+#include <cjelly/application.h>
+
+// Bindless rendering resources management
+typedef struct {
+    VkPipeline pipeline;
+    VkPipelineLayout pipelineLayout;
+    struct CJellyTextureAtlas* textureAtlas;
+    VkBuffer vertexBuffer;
+    VkDeviceMemory vertexBufferMemory;
+    float uv[4];        // xy scale, zw offset (for atlas or identity)
+    float colorMul[4];  // rgba multiplier for color-only or tint
+} CJellyBindlessResources;
+
+void createBindlessCommandBuffersForWindow(CJellyWindow * win, const CJellyBindlessResources* resources, VkDevice device, VkCommandPool commandPool, VkRenderPass renderPass);
 
 // Bindless texture management structures
 typedef struct CJellyTextureAtlas {
@@ -676,7 +694,20 @@ CJellyTextureAtlas * cjelly_create_texture_atlas(uint32_t width, uint32_t height
 void cjelly_destroy_texture_atlas(CJellyTextureAtlas * atlas);
 uint32_t cjelly_atlas_add_texture(CJellyTextureAtlas * atlas, const char * filePath);
 CJellyTextureEntry * cjelly_atlas_get_texture_entry(CJellyTextureAtlas * atlas, uint32_t textureID);
+
+// External declarations for global variables used in bindless rendering
+extern VkPipeline bindlessPipeline;
+extern VkPipelineLayout bindlessPipelineLayout;
+extern CJellyTextureAtlas * bindlessTextureAtlas;
+extern VkBuffer vertexBufferBindless;
+extern VkDeviceMemory vertexBufferBindlessMemory;
+
+CJellyBindlessResources* cjelly_create_bindless_resources(void);
+void cjelly_destroy_bindless_resources(CJellyBindlessResources* resources);
 void cjelly_atlas_update_descriptor_set(CJellyTextureAtlas * atlas);
+
+// Bindless resources for a color-only square (no texture sampling)
+CJellyBindlessResources* cjelly_create_bindless_color_square_resources(void);
 
 #ifdef __cplusplus
 }
