@@ -1,3 +1,64 @@
+# CurrentTask.md — CJelly Work Tracker
+
+This document is the single source of truth for what we’re doing now and what’s next. It’s organized in three levels so we can guide the immediate work while keeping the roadmap visible.
+
+## Level 1 — High-level Overview (Engine/Window split v0.1)
+- **Goal**: Stand-alone GUI library with clean Engine (device/resources/jobs/assets) vs Window (OS surface/swapchain/input) separation.
+- **State**: Headers migrated; engine/window skeletons in place; demo uses new API; most legacy globals removed.
+- **Outcome**: All apps use public `cj_*.h` C-first API with opaque handles; platform details hidden; per-window rendering via render graph.
+
+## Level 2 — Mid-level Roadmap (actionable tracks)
+1) Engine/Window split hardening
+   - Eliminate legacy drawing paths in `src/cjelly.c` and move per-window recording to `src/window.c`.
+   - Remove any remaining reads/writes of legacy globals.
+
+2) Cleanup/teardown correctness (validation clean)
+   - Destroy per-window resources and app-owned resources before device/context.
+   - Ensure pipelines, layouts, buffers, descriptor pools/sets, images, image views, and memory are fully released.
+
+3) Public API finalization (C-first, handles)
+   - Switch resources to 64-bit opaque handles `(index:32 | generation:32)`.
+   - Centralize bindless descriptor arrays in the Engine.
+
+4) Resource managers
+   - Implement alloc/free and lifetime tracking for buffers/images/samplers/pipelines.
+   - Remove ad-hoc globals and scattered ownership.
+
+5) Render graph
+   - Implement `cj_rgraph_t` and `cj_window_set_render_graph`.
+   - Windows render via the graph, not direct helper functions.
+
+6) Platform separation
+   - Move Xlib/Win32 specifics into platform modules per `cj_platform.h`.
+   - Window owns OS surface + swapchain only.
+
+7) Diagnostics/logging
+   - Gate debug prints (env/build flag); quiet by default.
+   - Trim validation layer spam in release.
+
+8) Shader hot-reload
+   - File watch → recompile → swap pipeline, plumbed through Engine.
+
+9) Headers/Docs
+   - Public headers finalized (`include/cjelly/cj_*.h`); document API.
+   - Remove any stale legacy references.
+
+10) Test/demo app hygiene
+   - Use only public headers (`cjelly.h`, `cj_*`, `runtime.h`).
+   - Avoid `engine_internal.h`/OS globals; destroy app resources before context.
+
+## Level 3 — Detailed current task (execution checklist)
+Focus: 2) Cleanup/teardown correctness (validation clean)
+1. Audit live objects on shutdown (pipelines, layouts, buffers, descriptor pools/sets, images, image views, memory).
+2. Ensure `cj_window_destroy` frees swapchain-dependent resources and command buffers before device idle.
+3. Ensure app-dynamic resources (e.g., color-only bindless) are destroyed before `cjelly_destroy_context`.
+4. Verify queues idle (`vkDeviceWaitIdle`) before tearing down per-window resources.
+5. Re-run with validation; iterate until no leaks are reported.
+
+---
+
+## Archive — Previous plan (kept for context)
+
 # CurrentTask.md - CJelly Library Development Plan
 
 ## Current State Analysis
@@ -200,19 +261,8 @@ src/
 - [ ] Cross-platform compatibility (Windows/Linux)
 
 ## Next Immediate Steps
-
-1. **Begin Phase 2**: Start library architecture refactoring
-2. **Design Core API**: Create clean C API for widget creation and management
-3. **Refactor resource management**: Move away from global state
-4. **Implement rendering backend abstraction**: Create pluggable backend interface
+1. Execute Level 3 checklist above (cleanup/teardown correctness).
+2. Review and choose the next Level 2 track to promote to Level 3.
 
 ## Notes
-
-- **Phase 1 Complete**: Bindless rendering POC fully implemented and ready for hardware with descriptor indexing support
-- **Hardware Compatibility**: Descriptor indexing extension currently disabled due to compatibility issues on test hardware
-- **Infrastructure Ready**: Complete texture atlas system, bindless shaders, and rendering pipeline implemented
-- **Next Phase**: Focus on library architecture refactoring to abstract POC into proper library structure
-- Architecture should be designed to support both retained-mode and immediate-mode APIs
-- CPU fallback is important but can be implemented after GPU path is solid
-- **Build System**: Makefile updated to automatically compile bindless shaders
-- **Code Quality**: All bindless code follows existing patterns and includes proper error handling
+- This file supersedes Refactor.md; that document is removed now that its content is reflected here.

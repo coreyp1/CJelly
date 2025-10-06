@@ -21,7 +21,7 @@ UNAME_S := $(shell uname -s)
 ifeq ($(UNAME_S), Linux)
 	OS_NAME := Linux
 	LIB_EXTENSION := so
-	OS_SPECIFIC_CXX_FLAGS := -shared -fPIC
+	OS_SPECIFIC_CXX_FLAGS := -shared
 	OS_SPECIFIC_LIBRARY_NAME_FLAG := -Wl,-soname,$(SO_NAME)
 	TARGET := $(SO_NAME).$(MINOR_VERSION)
 	EXE_EXTENSION :=
@@ -83,6 +83,8 @@ CXX := g++
 CXXFLAGS := -pedantic-errors -Wall -Wextra -Werror -Wno-error=unused-function -Wfatal-errors -std=c++20 -O1 -g
 CC := cc
 CFLAGS := -pedantic-errors -Wall -Wextra -Werror -Wno-error=unused-function -Wfatal-errors -std=c17 -O0 -g `PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --cflags vulkan`
+# Library-specific compile flags (export symbols on Windows, PIC on Linux)
+LIB_CFLAGS := $(CFLAGS) -DCJELLY_BUILD
 # -DGHOTIIO_CUTIL_ENABLE_MEMORY_DEBUG
 LDFLAGS := -L /usr/lib -lstdc++ -lm `PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --libs --cflags vulkan`
 BUILD_DIR := ./build/$(BUILD)
@@ -95,6 +97,7 @@ APP_DIR := $(BUILD_DIR)/apps
 ifeq ($(UNAME_S), Linux)
 	CFLAGS += `PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --cflags x11`
 	LDFLAGS += `PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --libs x11`
+	LIB_CFLAGS += -fPIC
 
 else ifeq ($(UNAME_S), Darwin)
 
@@ -159,7 +162,7 @@ $(APP_DIR)/test/%: test/%
 $(OBJ_DIR)/%.o: src/%.c
 	@printf "\n### Compiling $@ ###\n"
 	@mkdir -p $(@D)
-	$(CC) $(CFLAGS) $(INCLUDE) -c $< -MMD -MP -MF $(@:.o=.d) -o $@ $(OS_SPECIFIC_CXX_FLAGS)
+	$(CC) $(LIB_CFLAGS) $(INCLUDE) -c $< -MMD -MP -MF $(@:.o=.d) -o $@
 
 # Pattern rule for C++ source files (if any):
 $(OBJ_DIR)/%.o: src/%.cpp
@@ -177,7 +180,9 @@ $(OBJ_DIR)/cjelly.o: \
 	$(GEN_DIR)/shaders/basic.frag.h \
 	$(GEN_DIR)/shaders/textured.frag.h \
 	$(GEN_DIR)/shaders/bindless.vert.h \
-	$(GEN_DIR)/shaders/bindless.frag.h
+	$(GEN_DIR)/shaders/bindless.frag.h \
+	$(GEN_DIR)/shaders/color.vert.h \
+	$(GEN_DIR)/shaders/color.frag.h
 
 
 ####################################################################
