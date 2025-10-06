@@ -15,7 +15,7 @@ void createSurfaceForWindow(CJellyWindow * win);
 void createSwapChainForWindow(CJellyWindow * win);
 void createImageViewsForWindow(CJellyWindow * win);
 void createFramebuffersForWindow(CJellyWindow * win);
-void createTexturedCommandBuffersForWindow(CJellyWindow * win);
+void createTexturedCommandBuffersForWindowCtx(CJellyWindow * win, const CJellyVulkanContext* ctx);
 void createSyncObjectsForWindow(CJellyWindow * win);
 void drawFrameForWindow(CJellyWindow * win);
 void cleanupWindow(CJellyWindow * win);
@@ -61,8 +61,8 @@ CJ_API cj_window_t* cj_window_create(cj_engine_t* engine, const cj_window_desc_t
   ctx.commandPool = cj_engine_command_pool(e);
   cjelly_init_textured_pipeline_ctx(&ctx);
 
-  /* Record textured command buffers and sync using legacy helpers */
-  createTexturedCommandBuffersForWindow(win->legacy);
+  /* Record textured command buffers using ctx variants */
+  createTexturedCommandBuffersForWindowCtx(win->legacy, &ctx);
   createSyncObjectsForWindow(win->legacy);
 
   win->frame_index = 0u;

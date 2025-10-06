@@ -177,7 +177,7 @@ typedef struct CJellyTextureEntry {
   float uMin, uMax, vMin, vMax;
 } CJellyTextureEntry;
 
-/* Forward declarations for atlas helpers used before their definitions */
+/* Forward declarations for atlas/helpers used before their definitions */
 CJellyTextureAtlas * cjelly_create_texture_atlas(uint32_t width, uint32_t height);
 void cjelly_destroy_texture_atlas(CJellyTextureAtlas * atlas);
 uint32_t cjelly_atlas_add_texture(CJellyTextureAtlas * atlas, const char * filePath);
@@ -188,6 +188,9 @@ CJellyTextureAtlas * cjelly_create_texture_atlas_ctx(const CJellyVulkanContext* 
 void cjelly_destroy_texture_atlas_ctx(CJellyTextureAtlas * atlas, const CJellyVulkanContext* ctx);
 uint32_t cjelly_atlas_add_texture_ctx(CJellyTextureAtlas * atlas, const char * filePath, const CJellyVulkanContext* ctx);
 static void cjelly_atlas_update_descriptor_set_ctx(CJellyTextureAtlas * atlas, const CJellyVulkanContext* ctx);
+/* Forward declaration for ctx-based textured command recording used earlier */
+struct CJellyWindow; /* opaque forward */
+void createTexturedCommandBuffersForWindowCtx(struct CJellyWindow * win, const CJellyVulkanContext* ctx);
 
 /* duplicate removed */
 
@@ -2777,94 +2780,20 @@ void copyBufferToImage(
   endSingleTimeCommands(commandBuffer);
 }
 
-void createTexturedCommandBuffersForWindow(CJellyWindow * win) {
-  win->commandBuffers =
-      malloc(sizeof(VkCommandBuffer) * win->swapChainImageCount);
-  VkCommandBufferAllocateInfo allocInfo = {0};
-  allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-  allocInfo.commandPool = commandPool;
-  allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-  allocInfo.commandBufferCount = win->swapChainImageCount;
+/* legacy textured recorder removed */
 
-  if (vkAllocateCommandBuffers(device, &allocInfo, win->commandBuffers) !=
-      VK_SUCCESS) {
-    fprintf(stderr, "Failed to allocate textured command buffers\n");
-    exit(EXIT_FAILURE);
-  }
-
-  for (uint32_t i = 0; i < win->swapChainImageCount; i++) {
-    VkCommandBufferBeginInfo beginInfo = {0};
-    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    if (vkBeginCommandBuffer(win->commandBuffers[i], &beginInfo) !=
-        VK_SUCCESS) {
-      fprintf(stderr, "Failed to begin textured command buffer\n");
-      exit(EXIT_FAILURE);
-    }
-
-    VkRenderPassBeginInfo renderPassInfo = {0};
-    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    renderPassInfo.renderPass = cur_render_pass(); // Assume same render pass is used.
-    renderPassInfo.framebuffer = win->swapChainFramebuffers[i];
-    renderPassInfo.renderArea.offset = (VkOffset2D){0, 0};
-    renderPassInfo.renderArea.extent = win->swapChainExtent;
-    VkClearValue clearColor = {{{0.1f, 0.1f, 0.1f, 1.0f}}};
-    renderPassInfo.clearValueCount = 1;
-    renderPassInfo.pClearValues = &clearColor;
-    vkCmdBeginRenderPass(
-        win->commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-
-    // Set dynamic viewport and scissor.
-    VkViewport viewport = {0};
-    viewport.x = 0.0f;
-    viewport.y = 0.0f;
-    viewport.width = (float)win->swapChainExtent.width;
-    viewport.height = (float)win->swapChainExtent.height;
-    viewport.minDepth = 0.0f;
-    viewport.maxDepth = 1.0f;
-    vkCmdSetViewport(win->commandBuffers[i], 0, 1, &viewport);
-
-    VkRect2D scissor = {0};
-    scissor.offset = (VkOffset2D){0, 0};
-    scissor.extent = win->swapChainExtent;
-    vkCmdSetScissor(win->commandBuffers[i], 0, 1, &scissor);
-
-    VkDeviceSize offsets[] = {0};
-    // Bind the vertex buffer containing textured vertices.
-    vkCmdBindVertexBuffers(
-        win->commandBuffers[i], 0, 1, &vertexBufferTextured, offsets);
-
-    // Bind the textured pipeline instead of the original one.
-    vkCmdBindPipeline(win->commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS,
-        texturedPipeline);
-
-    // Bind descriptor sets containing the texture (assuming descriptor set is
-    // allocated and updated).
-    assert(textureDescriptorSet != VK_NULL_HANDLE);
-    assert(texturedPipelineLayout != VK_NULL_HANDLE);
-    vkCmdBindDescriptorSets(win->commandBuffers[i],
-        VK_PIPELINE_BIND_POINT_GRAPHICS, texturedPipelineLayout, 0, 1,
-        &textureDescriptorSet, 0, NULL);
-
-    // Issue draw call (the count may vary based on your vertex buffer).
-    vkCmdDraw(win->commandBuffers[i], 6, 1, 0, 0);
-
-    vkCmdEndRenderPass(win->commandBuffers[i]);
-
-    if (vkEndCommandBuffer(win->commandBuffers[i]) != VK_SUCCESS) {
-      fprintf(stderr, "Failed to record textured command buffer\n");
-      exit(EXIT_FAILURE);
-    }
-  }
-}
-
-void createBindlessCommandBuffersForWindow(CJellyWindow * win, const CJellyBindlessResources* resources, VkDevice device, VkCommandPool commandPool, VkRenderPass renderPass) {
+void createBindlessCommandBuffersForWindow(struct CJellyWindow * win, const CJellyBindlessResources* resources, VkDevice device, VkCommandPool commandPool, VkRenderPass renderPass) {
   /*DEBUG*/ if(getenv("CJELLY_DEBUG")) printf("DEBUG: Starting bindless command buffer creation for window...\n");
   /*DEBUG*/ if(getenv("CJELLY_DEBUG")) printf("DEBUG: win = %p, swapChainImageCount = %d\n", (void*)win, win->swapChainImageCount);
 
   // Check if bindless resources are available
   if (!resources || resources->pipeline == VK_NULL_HANDLE) {
-    /*DEBUG*/ if(getenv("CJELLY_DEBUG")) printf("DEBUG: bindless resources are NULL, falling back to textured rendering\n");
-    createTexturedCommandBuffersForWindow(win);
+    /*DEBUG*/ if(getenv("CJELLY_DEBUG")) printf("DEBUG: bindless resources are NULL, falling back to textured rendering (ctx)\n");
+    CJellyVulkanContext tmp = {0};
+    tmp.device = device;
+    tmp.commandPool = commandPool;
+    tmp.renderPass = renderPass;
+    createTexturedCommandBuffersForWindowCtx(win, &tmp);
     return;
   }
 
@@ -2880,8 +2809,12 @@ void createBindlessCommandBuffersForWindow(CJellyWindow * win, const CJellyBindl
   /*DEBUG*/ if(getenv("CJELLY_DEBUG")) printf("DEBUG: About to allocate %d bindless command buffers...\n", win->swapChainImageCount);
   if (vkAllocateCommandBuffers(device, &allocInfo, win->commandBuffers) !=
       VK_SUCCESS) {
-    fprintf(stderr, "Failed to allocate bindless command buffers, falling back to textured\n");
-    createTexturedCommandBuffersForWindow(win);
+    fprintf(stderr, "Failed to allocate bindless command buffers, falling back to textured (ctx)\n");
+    CJellyVulkanContext tmp = {0};
+    tmp.device = device;
+    tmp.commandPool = commandPool;
+    tmp.renderPass = renderPass;
+    createTexturedCommandBuffersForWindowCtx(win, &tmp);
     return;
   }
   /*DEBUG*/ if(getenv("CJELLY_DEBUG")) printf("DEBUG: Bindless command buffers allocated successfully\n");
@@ -3050,6 +2983,76 @@ void createTexturedVertexBuffer() {
   vkMapMemory(cur_device(), vertexBufferTexturedMemory, 0, bufferSize, 0, &data);
   memcpy(data, verticesTextured, (size_t)bufferSize);
   vkUnmapMemory(cur_device(), vertexBufferTexturedMemory);
+}
+
+/* Context-based textured command buffers for a window */
+void createTexturedCommandBuffersForWindowCtx(CJellyWindow * win, const CJellyVulkanContext* ctx) {
+  if (!win || !ctx || ctx->device == VK_NULL_HANDLE || ctx->commandPool == VK_NULL_HANDLE || ctx->renderPass == VK_NULL_HANDLE) return;
+  win->commandBuffers =
+      malloc(sizeof(VkCommandBuffer) * win->swapChainImageCount);
+
+  VkCommandBufferAllocateInfo allocInfo = {0};
+  allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+  allocInfo.commandPool = ctx->commandPool;
+  allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+  allocInfo.commandBufferCount = win->swapChainImageCount;
+
+  if (vkAllocateCommandBuffers(ctx->device, &allocInfo, win->commandBuffers) !=
+      VK_SUCCESS) {
+    fprintf(stderr, "Failed to allocate textured (ctx) command buffers\n");
+    exit(EXIT_FAILURE);
+  }
+
+  for (uint32_t i = 0; i < win->swapChainImageCount; i++) {
+    VkCommandBufferBeginInfo beginInfo = {0};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    if (vkBeginCommandBuffer(win->commandBuffers[i], &beginInfo) != VK_SUCCESS) {
+      fprintf(stderr, "Failed to begin textured (ctx) command buffer\n");
+      exit(EXIT_FAILURE);
+    }
+
+    VkRenderPassBeginInfo renderPassInfo = {0};
+    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    renderPassInfo.renderPass = ctx->renderPass;
+    renderPassInfo.framebuffer = win->swapChainFramebuffers[i];
+    renderPassInfo.renderArea.offset = (VkOffset2D){0, 0};
+    renderPassInfo.renderArea.extent = win->swapChainExtent;
+    VkClearValue clearColor = {{{0.1f, 0.1f, 0.1f, 1.0f}}};
+    renderPassInfo.clearValueCount = 1;
+    renderPassInfo.pClearValues = &clearColor;
+    vkCmdBeginRenderPass(win->commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+    VkViewport viewport = {0};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = (float)win->swapChainExtent.width;
+    viewport.height = (float)win->swapChainExtent.height;
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    vkCmdSetViewport(win->commandBuffers[i], 0, 1, &viewport);
+
+    VkRect2D scissor = {0};
+    scissor.offset = (VkOffset2D){0, 0};
+    scissor.extent = win->swapChainExtent;
+    vkCmdSetScissor(win->commandBuffers[i], 0, 1, &scissor);
+
+    VkDeviceSize offsets[] = {0};
+    vkCmdBindVertexBuffers(win->commandBuffers[i], 0, 1, &vertexBufferTextured, offsets);
+
+    vkCmdBindPipeline(win->commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, texturedPipeline);
+
+    assert(textureDescriptorSet != VK_NULL_HANDLE);
+    assert(texturedPipelineLayout != VK_NULL_HANDLE);
+    vkCmdBindDescriptorSets(win->commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, texturedPipelineLayout, 0, 1, &textureDescriptorSet, 0, NULL);
+
+    vkCmdDraw(win->commandBuffers[i], 6, 1, 0, 0);
+    vkCmdEndRenderPass(win->commandBuffers[i]);
+
+    if (vkEndCommandBuffer(win->commandBuffers[i]) != VK_SUCCESS) {
+      fprintf(stderr, "Failed to record textured (ctx) command buffer\n");
+      exit(EXIT_FAILURE);
+    }
+  }
 }
 
 void createBindlessVertexBuffer(VkDevice device __attribute__((unused)), VkCommandPool commandPool __attribute__((unused))) {
