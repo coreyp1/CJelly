@@ -5,8 +5,6 @@
 
 /* Internal engine API during migration */
 
-/* Bind current legacy globals into the engine instance (temporary) */
-CJ_API void cj_engine_bind_legacy_globals(cj_engine_t* engine);
 
 /* Import a CJellyVulkanContext into the engine (preferred) */
 CJ_API void cj_engine_import_context(cj_engine_t* engine, const CJellyVulkanContext* ctx);
@@ -29,8 +27,6 @@ CJ_API int cj_engine_ensure_render_pass(cj_engine_t* e, VkFormat fmt);
 /* Vulkan lifecycle owned by the engine */
 CJ_API int  cj_engine_init_vulkan(cj_engine_t* engine, int use_validation);
 CJ_API void cj_engine_shutdown_vulkan(cj_engine_t* engine);
-/* Temporary: bind legacy globals in cjelly.c to engine state (migration) */
-CJ_API void cjelly_legacy_bind_from_engine(cj_engine_t* e);
 
 /* Access to internal textured resources during migration */
 struct CJellyTexturedResources;

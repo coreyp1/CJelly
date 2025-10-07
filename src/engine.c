@@ -195,9 +195,53 @@ CJ_API int cj_engine_init_vulkan(cj_engine_t* engine, int use_validation) {
 
 /* Shutdown Vulkan from the engine */
 CJ_API void cj_engine_shutdown_vulkan(cj_engine_t* engine) {
-  (void)engine;
-  CJellyVulkanContext ctx = {0};
-  cjelly_destroy_context(&ctx);
+  if (!engine) return;
+  VkDevice dev = engine->device;
+  if (dev != VK_NULL_HANDLE) {
+    vkDeviceWaitIdle(dev);
+    /* Destroy internal pipelines/buffers owned by engine (migration containers) */
+    /* Textured */
+    {
+      CJellyTexturedResources* tx = &engine->textured;
+      if (tx->pipeline) vkDestroyPipeline(dev, tx->pipeline, NULL);
+      if (tx->pipelineLayout) vkDestroyPipelineLayout(dev, tx->pipelineLayout, NULL);
+      if (tx->vertexBuffer) vkDestroyBuffer(dev, tx->vertexBuffer, NULL);
+      if (tx->vertexBufferMemory) vkFreeMemory(dev, tx->vertexBufferMemory, NULL);
+      if (tx->imageView) vkDestroyImageView(dev, tx->imageView, NULL);
+      if (tx->sampler) vkDestroySampler(dev, tx->sampler, NULL);
+      if (tx->image) vkDestroyImage(dev, tx->image, NULL);
+      if (tx->imageMemory) vkFreeMemory(dev, tx->imageMemory, NULL);
+      if (tx->descriptorPool) vkDestroyDescriptorPool(dev, tx->descriptorPool, NULL);
+      if (tx->descriptorSetLayout) vkDestroyDescriptorSetLayout(dev, tx->descriptorSetLayout, NULL);
+      memset(tx, 0, sizeof(*tx));
+    }
+    /* Bindless */
+    {
+      CJellyBindlessState* bl = &engine->bindless;
+      if (bl->pipeline) vkDestroyPipeline(dev, bl->pipeline, NULL);
+      if (bl->pipelineLayout) vkDestroyPipelineLayout(dev, bl->pipelineLayout, NULL);
+      if (bl->vertexBuffer) vkDestroyBuffer(dev, bl->vertexBuffer, NULL);
+      if (bl->vertexBufferMemory) vkFreeMemory(dev, bl->vertexBufferMemory, NULL);
+      memset(bl, 0, sizeof(*bl));
+    }
+    /* Basic */
+    {
+      CJellyBasicState* bs = &engine->basic;
+      if (bs->pipeline) vkDestroyPipeline(dev, bs->pipeline, NULL);
+      if (bs->pipelineLayout) vkDestroyPipelineLayout(dev, bs->pipelineLayout, NULL);
+      if (bs->vertexBuffer) vkDestroyBuffer(dev, bs->vertexBuffer, NULL);
+      if (bs->vertexBufferMemory) vkFreeMemory(dev, bs->vertexBufferMemory, NULL);
+      memset(bs, 0, sizeof(*bs));
+    }
+    if (engine->command_pool) { vkDestroyCommandPool(dev, engine->command_pool, NULL); engine->command_pool = VK_NULL_HANDLE; }
+    if (engine->render_pass) { vkDestroyRenderPass(dev, engine->render_pass, NULL); engine->render_pass = VK_NULL_HANDLE; }
+    vkDestroyDevice(dev, NULL);
+    engine->device = VK_NULL_HANDLE;
+  }
+  if (engine->instance != VK_NULL_HANDLE) {
+    vkDestroyInstance(engine->instance, NULL);
+    engine->instance = VK_NULL_HANDLE;
+  }
 }
 
 CJ_API uint32_t cj_engine_device_index(const cj_engine_t* engine) {
@@ -211,9 +255,6 @@ CJ_API void cj_engine_get_bindless_info(const cj_engine_t* engine, cj_bindless_i
   out_info->buffers_capacity = 0u;
   out_info->samplers_capacity = 0u;
 }
-
-/* === Migration helpers === */
-CJ_API void cj_engine_bind_legacy_globals(cj_engine_t* engine) { (void)engine; }
 
 CJ_API void cj_engine_set_current(cj_engine_t* engine) { g_current_engine = engine; }
 CJ_API cj_engine_t* cj_engine_get_current(void) { return g_current_engine; }
