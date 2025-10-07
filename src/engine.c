@@ -8,6 +8,8 @@
 #include <cjelly/runtime.h>
 #include <vulkan/vulkan.h>
 #include <cjelly/textured_internal.h>
+#include <cjelly/bindless_state_internal.h>
+#include <cjelly/basic_state_internal.h>
 
 /* Internal definition of the opaque engine type */
 struct cj_engine_t {
@@ -22,6 +24,7 @@ struct cj_engine_t {
   VkQueue present_queue;
   VkRenderPass render_pass;
   VkCommandPool command_pool;
+  VkFormat color_format;
 
   /* Phase 3: simple resource tables */
   cj_res_entry_t textures[CJ_ENGINE_MAX_TEXTURES];
@@ -30,9 +33,130 @@ struct cj_engine_t {
 
   /* Internal-only textured resources (migration) */
   CJellyTexturedResources textured;
+  /* Internal-only bindless state (migration) */
+  CJellyBindlessState bindless;
+  /* Internal-only basic pipeline state (migration) */
+  CJellyBasicState basic;
 };
 
 static cj_engine_t* g_current_engine = NULL;
+
+/* --- Engine-owned Vulkan bootstrap (migration of legacy init) --- */
+static int eng_create_instance(cj_engine_t* e, int use_validation) {
+  VkApplicationInfo appInfo = {0};
+  appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+  appInfo.pApplicationName = "CJelly";
+  appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
+  appInfo.pEngineName = "CJellyEngine";
+  appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
+  appInfo.apiVersion = VK_API_VERSION_1_0;
+
+  const char* extensions[8];
+  uint32_t extCount = 0;
+  extensions[extCount++] = "VK_KHR_surface";
+#ifdef _WIN32
+  extensions[extCount++] = "VK_KHR_win32_surface";
+#else
+  extensions[extCount++] = "VK_KHR_xlib_surface";
+#endif
+
+  VkInstanceCreateInfo ci = {0};
+  ci.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+  ci.pApplicationInfo = &appInfo;
+  ci.enabledExtensionCount = extCount;
+  ci.ppEnabledExtensionNames = extensions;
+  const char* layers[] = { "VK_LAYER_KHRONOS_validation" };
+  if (use_validation) {
+    ci.enabledLayerCount = 1;
+    ci.ppEnabledLayerNames = layers;
+  }
+  if (vkCreateInstance(&ci, NULL, &e->instance) != VK_SUCCESS) return 0;
+  return 1;
+}
+
+static int eng_pick_physical_device(cj_engine_t* e) {
+  uint32_t count = 0;
+  vkEnumeratePhysicalDevices(e->instance, &count, NULL);
+  if (count == 0) return 0;
+  VkPhysicalDevice devices[16];
+  if (count > 16) count = 16;
+  vkEnumeratePhysicalDevices(e->instance, &count, devices);
+
+  /* Simple selection: prefer discrete, else first */
+  VkPhysicalDevice best = devices[0];
+  int bestScore = -1;
+  for (uint32_t i = 0; i < count; ++i) {
+    VkPhysicalDeviceProperties props; vkGetPhysicalDeviceProperties(devices[i], &props);
+    int score = (props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU) ? 1000 : 0;
+    score += (int)props.limits.maxImageDimension2D;
+    if (score > bestScore) { bestScore = score; best = devices[i]; }
+  }
+  e->physical_device = best;
+  return 1;
+}
+
+static int eng_create_logical_device(cj_engine_t* e) {
+  uint32_t qCount = 0; VkQueueFamilyProperties qProps[16];
+  vkGetPhysicalDeviceQueueFamilyProperties(e->physical_device, &qCount, NULL);
+  if (qCount > 16) qCount = 16;
+  vkGetPhysicalDeviceQueueFamilyProperties(e->physical_device, &qCount, qProps);
+  uint32_t gfxIndex = 0; int found = 0;
+  for (uint32_t i = 0; i < qCount; ++i) {
+    if (qProps[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) { gfxIndex = i; found = 1; break; }
+  }
+  if (!found) return 0;
+  float prio = 1.0f;
+  VkDeviceQueueCreateInfo qci = {0};
+  qci.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+  qci.queueFamilyIndex = gfxIndex;
+  qci.queueCount = 1;
+  qci.pQueuePriorities = &prio;
+  const char* devExt[] = { VK_KHR_SWAPCHAIN_EXTENSION_NAME };
+  VkDeviceCreateInfo dci = {0};
+  dci.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+  dci.queueCreateInfoCount = 1;
+  dci.pQueueCreateInfos = &qci;
+  dci.enabledExtensionCount = 1;
+  dci.ppEnabledExtensionNames = devExt;
+  if (vkCreateDevice(e->physical_device, &dci, NULL, &e->device) != VK_SUCCESS) return 0;
+  vkGetDeviceQueue(e->device, gfxIndex, 0, &e->graphics_queue);
+  e->present_queue = e->graphics_queue;
+  return 1;
+}
+
+static int eng_create_render_pass(cj_engine_t* e) {
+  VkAttachmentDescription color = {0};
+  VkFormat fmt = (e->color_format != 0) ? e->color_format : VK_FORMAT_B8G8R8A8_SRGB;
+  color.format = fmt;
+  color.samples = VK_SAMPLE_COUNT_1_BIT;
+  color.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+  color.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+  color.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  color.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+  VkAttachmentReference colorRef = {0}; colorRef.attachment = 0; colorRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+  VkSubpassDescription sub = {0}; sub.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS; sub.colorAttachmentCount = 1; sub.pColorAttachments = &colorRef;
+  VkRenderPassCreateInfo rp = {0}; rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO; rp.attachmentCount = 1; rp.pAttachments = &color; rp.subpassCount = 1; rp.pSubpasses = &sub;
+  if (vkCreateRenderPass(e->device, &rp, NULL, &e->render_pass) != VK_SUCCESS) return 0;
+  return 1;
+}
+
+/* Recreate engine render pass if format changed or not created */
+CJ_API int cj_engine_ensure_render_pass(cj_engine_t* e, VkFormat fmt) {
+  if (!e) return 0;
+  if (e->render_pass != VK_NULL_HANDLE && e->color_format == fmt) return 1;
+  if (e->render_pass != VK_NULL_HANDLE) {
+    vkDestroyRenderPass(e->device, e->render_pass, NULL);
+    e->render_pass = VK_NULL_HANDLE;
+  }
+  e->color_format = fmt;
+  return eng_create_render_pass(e);
+}
+
+static int eng_create_command_pool(cj_engine_t* e) {
+  VkCommandPoolCreateInfo pci = {0}; pci.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO; pci.queueFamilyIndex = 0;
+  if (vkCreateCommandPool(e->device, &pci, NULL, &e->command_pool) != VK_SUCCESS) return 0;
+  return 1;
+}
 
 CJ_API cj_engine_t* cj_engine_create(const cj_engine_desc_t* desc) {
   cj_engine_t* engine = (cj_engine_t*)malloc(sizeof(*engine));
@@ -60,9 +184,12 @@ CJ_API void cj_engine_wait_idle(cj_engine_t* engine) {
 /* Initialize Vulkan into the engine using the existing context bootstrap */
 CJ_API int cj_engine_init_vulkan(cj_engine_t* engine, int use_validation) {
   if (!engine) return 0;
-  CJellyVulkanContext ctx = {0};
-  if (!cjelly_init_context(&ctx, use_validation)) return 0;
-  cj_engine_import_context(engine, &ctx);
+  if (!eng_create_instance(engine, use_validation)) return 0;
+  if (!eng_pick_physical_device(engine)) return 0;
+  if (!eng_create_logical_device(engine)) return 0;
+  if (!eng_create_render_pass(engine)) return 0;
+  if (!eng_create_command_pool(engine)) return 0;
+  /* All code paths now use engine getters; legacy bind removed */
   return 1;
 }
 
@@ -101,6 +228,8 @@ CJ_API VkCommandPool cj_engine_command_pool(const cj_engine_t* e) { return e ? e
 
 /* Internal access to textured resources */
 CJ_API CJellyTexturedResources* cj_engine_textured(const cj_engine_t* e) { return (CJellyTexturedResources*)(e ? &e->textured : NULL); }
+CJ_API CJellyBindlessState* cj_engine_bindless(const cj_engine_t* e) { return (CJellyBindlessState*)(e ? &e->bindless : NULL); }
+CJ_API CJellyBasicState* cj_engine_basic(const cj_engine_t* e) { return (CJellyBasicState*)(e ? &e->basic : NULL); }
 
 CJ_API void cj_engine_import_context(cj_engine_t* engine, const CJellyVulkanContext* ctx) {
   if (!engine || !ctx) return;
@@ -119,6 +248,10 @@ CJ_API void cj_engine_import_context(cj_engine_t* engine, const CJellyVulkanCont
 
   /* Initialize internal textured container */
   memset(&engine->textured, 0, sizeof(engine->textured));
+  /* Initialize internal bindless container */
+  memset(&engine->bindless, 0, sizeof(engine->bindless));
+  /* Initialize internal basic container */
+  memset(&engine->basic, 0, sizeof(engine->basic));
 }
 
 static inline cj_res_entry_t* table_for(cj_engine_t* e, cj_res_kind_t kind, size_t* out_cap) {

@@ -23,14 +23,22 @@ CJ_API VkQueue cj_engine_graphics_queue(const cj_engine_t*);
 CJ_API VkQueue cj_engine_present_queue(const cj_engine_t*);
 CJ_API VkRenderPass cj_engine_render_pass(const cj_engine_t*);
 CJ_API VkCommandPool cj_engine_command_pool(const cj_engine_t*);
+/* Ensure render pass in engine matches specified color format */
+CJ_API int cj_engine_ensure_render_pass(cj_engine_t* e, VkFormat fmt);
 
 /* Vulkan lifecycle owned by the engine */
 CJ_API int  cj_engine_init_vulkan(cj_engine_t* engine, int use_validation);
 CJ_API void cj_engine_shutdown_vulkan(cj_engine_t* engine);
+/* Temporary: bind legacy globals in cjelly.c to engine state (migration) */
+CJ_API void cjelly_legacy_bind_from_engine(cj_engine_t* e);
 
 /* Access to internal textured resources during migration */
 struct CJellyTexturedResources;
 CJ_API struct CJellyTexturedResources* cj_engine_textured(const cj_engine_t*);
+struct CJellyBindlessState;
+CJ_API struct CJellyBindlessState* cj_engine_bindless(const cj_engine_t*);
+struct CJellyBasicState;
+CJ_API struct CJellyBasicState* cj_engine_basic(const cj_engine_t*);
 
 /* === Internal resource tables for Phase 3 === */
 typedef struct cj_res_entry_t {
