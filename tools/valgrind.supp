@@ -17,6 +17,12 @@
    obj:/usr/lib/x86_64-linux-gnu/libvulkan.so.*
 }
 {
+   vulkan_loader_definite
+   Memcheck:Leak
+   match-leak-kinds: definite
+   obj:/usr/lib/x86_64-linux-gnu/libvulkan.so.*
+}
+{
    rtld_reachable
    Memcheck:Leak
    match-leak-kinds: reachable

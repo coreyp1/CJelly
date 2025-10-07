@@ -1313,41 +1313,53 @@ void drawFrameForWindow(CJellyWindow * win) {
 //
 
 void cleanupWindow(CJellyWindow * win) {
-  // Ensure GPU is idle before releasing per-window resources recorded on queues
-  vkDeviceWaitIdle(cur_device());
+  if (!win) return;
+  VkDevice dev = cur_device();
+  VkCommandPool pool = cur_cmd_pool();
+  VkInstance inst = cj_engine_instance(cur_eng());
 
-  vkDestroySemaphore(cur_device(), win->renderFinishedSemaphore, NULL);
-  vkDestroySemaphore(cur_device(), win->imageAvailableSemaphore, NULL);
-  vkDestroyFence(cur_device(), win->inFlightFence, NULL);
-
-  // Free command buffers allocated from the global/engine command pool
-  if (win->commandBuffers && win->swapChainImageCount > 0) {
-    vkFreeCommandBuffers(cur_device(), cur_cmd_pool(), win->swapChainImageCount, win->commandBuffers);
-    free(win->commandBuffers);
-    win->commandBuffers = NULL;
+  if (dev != VK_NULL_HANDLE) {
+    vkDeviceWaitIdle(dev);
   }
 
-  for (uint32_t i = 0; i < win->swapChainImageCount; i++) {
-    vkDestroyFramebuffer(cur_device(), win->swapChainFramebuffers[i], NULL);
-    vkDestroyImageView(cur_device(), win->swapChainImageViews[i], NULL);
+  if (dev != VK_NULL_HANDLE) {
+    if (win->renderFinishedSemaphore) { vkDestroySemaphore(dev, win->renderFinishedSemaphore, NULL); win->renderFinishedSemaphore = VK_NULL_HANDLE; }
+    if (win->imageAvailableSemaphore) { vkDestroySemaphore(dev, win->imageAvailableSemaphore, NULL); win->imageAvailableSemaphore = VK_NULL_HANDLE; }
+    if (win->inFlightFence) { vkDestroyFence(dev, win->inFlightFence, NULL); win->inFlightFence = VK_NULL_HANDLE; }
   }
 
-  free(win->swapChainFramebuffers);
-  free(win->swapChainImageViews);
-  free(win->swapChainImages);
+  // Free command buffers allocated from the engine command pool
+  if (dev != VK_NULL_HANDLE && pool != VK_NULL_HANDLE && win->commandBuffers && win->swapChainImageCount > 0) {
+    vkFreeCommandBuffers(dev, pool, win->swapChainImageCount, win->commandBuffers);
+  }
+  if (win->commandBuffers) { free(win->commandBuffers); win->commandBuffers = NULL; }
 
-  vkDestroySwapchainKHR(cur_device(), win->swapChain, NULL);
-  vkDestroySurfaceKHR(cj_engine_instance(cur_eng()), win->surface, NULL);
+  if (dev != VK_NULL_HANDLE) {
+    if (win->swapChainFramebuffers) {
+      for (uint32_t i = 0; i < win->swapChainImageCount; i++) {
+        if (win->swapChainFramebuffers[i]) vkDestroyFramebuffer(dev, win->swapChainFramebuffers[i], NULL);
+      }
+    }
+    if (win->swapChainImageViews) {
+      for (uint32_t i = 0; i < win->swapChainImageCount; i++) {
+        if (win->swapChainImageViews[i]) vkDestroyImageView(dev, win->swapChainImageViews[i], NULL);
+      }
+    }
+  }
+  if (win->swapChainFramebuffers) { free(win->swapChainFramebuffers); win->swapChainFramebuffers = NULL; }
+  if (win->swapChainImageViews) { free(win->swapChainImageViews); win->swapChainImageViews = NULL; }
+  if (win->swapChainImages) { free(win->swapChainImages); win->swapChainImages = NULL; }
+
+  if (dev != VK_NULL_HANDLE && win->swapChain) { vkDestroySwapchainKHR(dev, win->swapChain, NULL); win->swapChain = VK_NULL_HANDLE; }
+  if (inst != VK_NULL_HANDLE && win->surface) { vkDestroySurfaceKHR(inst, win->surface, NULL); win->surface = VK_NULL_HANDLE; }
 
 #ifdef _WIN32
-
-  DestroyWindow(win->handle);
-
+  if (win->handle) { DestroyWindow(win->handle); win->handle = NULL; }
 #else
-
-  XDestroyWindow(display, win->handle);
-
+  extern Display* display;
+  if (display && win->handle) { XDestroyWindow(display, win->handle); win->handle = 0; }
 #endif
+  win->swapChainImageCount = 0;
 }
 
 
