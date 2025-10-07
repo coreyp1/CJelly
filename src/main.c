@@ -140,5 +140,7 @@ int main(void) {
 #ifndef _WIN32
   XCloseDisplay(display);
 #endif
+  // Free engine last (owns no Vulkan handles)
+  cj_engine_shutdown(engine);
   return 0;
 }

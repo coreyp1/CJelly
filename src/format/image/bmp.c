@@ -556,3 +556,10 @@ void cjelly_format_image_bmp_dump(const CJellyFormatImageBMP * imageBmp) {
   //   printf("\n");
   // }
 }
+
+void cjelly_format_image_bmp_free(CJellyFormatImageBMP * imageBmp) {
+  // Everything that needs to be freed is handled in the
+  // cjelly_format_image_free() function.
+  (void)imageBmp;
+  return;
+}

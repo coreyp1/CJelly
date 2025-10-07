@@ -39,6 +39,11 @@ typedef struct CJellyFormatImageBMP {
 CJellyFormatImageError cjelly_format_image_bmp_load(const char * filename, CJellyFormatImage * * out_image);
 
 /**
+ * @brief Frees a BMP image and all associated memory.
+ */
+void cjelly_format_image_bmp_free(struct CJellyFormatImageBMP * imageBmp);
+
+/**
  * @brief Dump BMP header and pixel data to stdout for debugging.
  *
  * The header dump prints the image type, width, height, bit depth, number of channels,

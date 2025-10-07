@@ -1,0 +1,30 @@
+{
+   llvm_loader_reachable
+   Memcheck:Leak
+   match-leak-kinds: reachable
+   obj:/usr/lib/x86_64-linux-gnu/libLLVM-*.so.*
+}
+{
+   llvm_loader_possible
+   Memcheck:Leak
+   match-leak-kinds: possible
+   obj:/usr/lib/x86_64-linux-gnu/libLLVM-*.so.*
+}
+{
+   vulkan_loader_reachable
+   Memcheck:Leak
+   match-leak-kinds: reachable
+   obj:/usr/lib/x86_64-linux-gnu/libvulkan.so.*
+}
+{
+   rtld_reachable
+   Memcheck:Leak
+   match-leak-kinds: reachable
+   obj:/lib/x86_64-linux-gnu/ld-*.so
+}
+{
+   libstdcxx_reachable
+   Memcheck:Leak
+   match-leak-kinds: reachable
+   obj:/usr/lib/x86_64-linux-gnu/libstdc++.so.*
+}

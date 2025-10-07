@@ -42,15 +42,27 @@ ERROR_IMAGE_CLEANUP:
 
 void cjelly_format_image_free(CJellyFormatImage * image) {
   if (!image) return;
-
   switch (image->type) {
     case CJELLY_FORMAT_IMAGE_BMP:
-      //cjelly_format_image_bmp_free((CJellyFormatImageBmp *)image);
+      cjelly_format_image_bmp_free((CJellyFormatImageBMP *)image);
       break;
     default:
       break;
   }
-  free(image->name);
+  if (image->raw) {
+    if (image->raw->data) {
+      free(image->raw->data);
+      image->raw->data = NULL;
+      image->raw->data_size = 0;
+    }
+    free(image->raw);
+    image->raw = NULL;
+  }
+  if (image->name) {
+    free(image->name);
+    image->name = NULL;
+  }
+  image->type = CJELLY_FORMAT_IMAGE_UNKNOWN;
   free(image);
 }
 

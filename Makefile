@@ -394,3 +394,6 @@ cloc: ## Count the lines of code used in the project
 help: ## Display this help
 	@grep -E '^[ a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "%-15s %s\n", $$1, $$2}' | sed "s/(SUITE)/$(SUITE)/g; s/(PROJECT)/$(PROJECT)/g; s/(BRANCH)/$(BRANCH)/g"
 
+valgrind: all ## Run main under valgrind with suppressions
+	cd $(APP_DIR) && LD_LIBRARY_PATH=./ valgrind --leak-check=full --show-leak-kinds=all --errors-for-leak-kinds=all --suppressions=$(abspath tools/valgrind.supp) ./main$(EXE_EXTENSION)
+
