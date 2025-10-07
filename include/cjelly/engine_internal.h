@@ -24,6 +24,10 @@ CJ_API VkQueue cj_engine_present_queue(const cj_engine_t*);
 CJ_API VkRenderPass cj_engine_render_pass(const cj_engine_t*);
 CJ_API VkCommandPool cj_engine_command_pool(const cj_engine_t*);
 
+/* Vulkan lifecycle owned by the engine */
+CJ_API int  cj_engine_init_vulkan(cj_engine_t* engine, int use_validation);
+CJ_API void cj_engine_shutdown_vulkan(cj_engine_t* engine);
+
 /* === Internal resource tables for Phase 3 === */
 typedef struct cj_res_entry_t {
   uint32_t generation;

@@ -41,7 +41,6 @@ void createSurfaceForWindow(CJellyWindow * win);
 void createSwapChainForWindow(CJellyWindow * win);
 void createImageViewsForWindow(CJellyWindow * win);
 void createFramebuffersForWindow(CJellyWindow * win);
-void createTexturedCommandBuffersForWindow(CJellyWindow * win);
 void createSyncObjectsForWindow(CJellyWindow * win);
 void drawFrameForWindow(CJellyWindow * win);
 void cleanupWindow(CJellyWindow * win);

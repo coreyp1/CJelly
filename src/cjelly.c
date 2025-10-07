@@ -26,6 +26,7 @@
 #include <cjelly/cjelly.h>
 #include <cjelly/runtime.h>
 #include <cjelly/engine_internal.h>
+#include <cjelly/bindless_internal.h>
 #include <cjelly/runtime.h>
 #ifdef _WIN32
 #include <windows.h>
@@ -194,16 +195,7 @@ void createTexturedCommandBuffersForWindowCtx(struct CJellyWindow * win, const C
 
 /* duplicate removed */
 
-/* Internal definition of bindless resources (not exposed publicly) */
-typedef struct CJellyBindlessResources {
-  VkPipeline pipeline;
-  VkPipelineLayout pipelineLayout;
-  CJellyTextureAtlas* textureAtlas;
-  VkBuffer vertexBuffer;
-  VkDeviceMemory vertexBufferMemory;
-  float uv[4];
-  float colorMul[4];
-} CJellyBindlessResources;
+/* Bindless internal layout moved to include/cjelly/bindless_internal.h */
 
 // Context-based atlas helpers (defined later)
 static void cjelly_atlas_update_descriptor_set_ctx(CJellyTextureAtlas * atlas, const CJellyVulkanContext* ctx);
@@ -1403,8 +1395,10 @@ void createInstance(void) {
     createInfo.ppEnabledLayerNames = layers;
   }
 
-  fprintf(stderr, "createInstance: validation=%d, extCount=%u\n", enableValidationLayers, extCount);
-  for (uint32_t i = 0; i < extCount; ++i) fprintf(stderr, "  ext[%u]=%s\n", i, extensions[i]);
+  if (getenv("CJELLY_DEBUG")) {
+    fprintf(stderr, "createInstance: validation=%d, extCount=%u\n", enableValidationLayers, extCount);
+    for (uint32_t i = 0; i < extCount; ++i) fprintf(stderr, "  ext[%u]=%s\n", i, extensions[i]);
+  }
   VkResult res = vkCreateInstance(&createInfo, NULL, &instance);
   if (res != VK_SUCCESS) {
     fprintf(stderr, "vkCreateInstance failed: %d\n", res);
@@ -1444,7 +1438,7 @@ void destroyDebugMessenger() {
 void pickPhysicalDevice() {
   uint32_t deviceCount = 0;
   vkEnumeratePhysicalDevices(instance, &deviceCount, NULL);
-  fprintf(stderr, "vkEnumeratePhysicalDevices: count=%u\n", deviceCount);
+  if (getenv("CJELLY_DEBUG")) fprintf(stderr, "vkEnumeratePhysicalDevices: count=%u\n", deviceCount);
   if (deviceCount == 0) {
     fprintf(stderr, "Failed to find GPUs with Vulkan support\n");
     exit(EXIT_FAILURE);
@@ -2782,152 +2776,9 @@ void copyBufferToImage(
 
 /* legacy textured recorder removed */
 
-void createBindlessCommandBuffersForWindow(struct CJellyWindow * win, const CJellyBindlessResources* resources, VkDevice device, VkCommandPool commandPool, VkRenderPass renderPass) {
-  /*DEBUG*/ if(getenv("CJELLY_DEBUG")) printf("DEBUG: Starting bindless command buffer creation for window...\n");
-  /*DEBUG*/ if(getenv("CJELLY_DEBUG")) printf("DEBUG: win = %p, swapChainImageCount = %d\n", (void*)win, win->swapChainImageCount);
+/* moved to window.c: createBindlessCommandBuffersForWindowCtx */
 
-  // Check if bindless resources are available
-  if (!resources || resources->pipeline == VK_NULL_HANDLE) {
-    /*DEBUG*/ if(getenv("CJELLY_DEBUG")) printf("DEBUG: bindless resources are NULL, falling back to textured rendering (ctx)\n");
-    CJellyVulkanContext tmp = {0};
-    tmp.device = device;
-    tmp.commandPool = commandPool;
-    tmp.renderPass = renderPass;
-    createTexturedCommandBuffersForWindowCtx(win, &tmp);
-    return;
-  }
-
-  win->commandBuffers =
-      malloc(sizeof(VkCommandBuffer) * win->swapChainImageCount);
-
-  VkCommandBufferAllocateInfo allocInfo = {0};
-  allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-  allocInfo.commandPool = commandPool;
-  allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-  allocInfo.commandBufferCount = win->swapChainImageCount;
-
-  /*DEBUG*/ if(getenv("CJELLY_DEBUG")) printf("DEBUG: About to allocate %d bindless command buffers...\n", win->swapChainImageCount);
-  if (vkAllocateCommandBuffers(device, &allocInfo, win->commandBuffers) !=
-      VK_SUCCESS) {
-    fprintf(stderr, "Failed to allocate bindless command buffers, falling back to textured (ctx)\n");
-    CJellyVulkanContext tmp = {0};
-    tmp.device = device;
-    tmp.commandPool = commandPool;
-    tmp.renderPass = renderPass;
-    createTexturedCommandBuffersForWindowCtx(win, &tmp);
-    return;
-  }
-  /*DEBUG*/ if(getenv("CJELLY_DEBUG")) printf("DEBUG: Bindless command buffers allocated successfully\n");
-
-  for (size_t i = 0; i < win->swapChainImageCount; i++) {
-    /*DEBUG*/ if(getenv("CJELLY_DEBUG")) printf("DEBUG: Recording bindless command buffer %zu...\n", i);
-    VkCommandBufferBeginInfo beginInfo = {0};
-    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-
-    if (vkBeginCommandBuffer(win->commandBuffers[i], &beginInfo) !=
-        VK_SUCCESS) {
-      fprintf(stderr, "Failed to begin bindless command buffer\n");
-      exit(EXIT_FAILURE);
-    }
-    /*DEBUG*/ if(getenv("CJELLY_DEBUG")) printf("DEBUG: Command buffer %zu begun successfully\n", i);
-
-    VkRenderPassBeginInfo renderPassInfo = {0};
-    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    renderPassInfo.renderPass = cur_render_pass();
-    renderPassInfo.framebuffer = win->swapChainFramebuffers[i];
-    renderPassInfo.renderArea.offset.x = 0;
-    renderPassInfo.renderArea.offset.y = 0;
-    renderPassInfo.renderArea.extent = win->swapChainExtent;
-
-    VkClearValue clearColor = {{{0.0f, 0.0f, 0.0f, 1.0f}}};
-    renderPassInfo.clearValueCount = 1;
-    renderPassInfo.pClearValues = &clearColor;
-
-    vkCmdBeginRenderPass(win->commandBuffers[i], &renderPassInfo,
-                         VK_SUBPASS_CONTENTS_INLINE);
-
-    // Set dynamic viewport and scissor to full swapchain extent
-    VkViewport viewport = {0};
-    viewport.x = 0.0f;
-    viewport.y = 0.0f;
-    viewport.width = (float)win->swapChainExtent.width;
-    viewport.height = (float)win->swapChainExtent.height;
-    viewport.minDepth = 0.0f;
-    viewport.maxDepth = 1.0f;
-    vkCmdSetViewport(win->commandBuffers[i], 0, 1, &viewport);
-
-    VkRect2D scissor = {0};
-    scissor.offset.x = 0;
-    scissor.offset.y = 0;
-    scissor.extent = win->swapChainExtent;
-    vkCmdSetScissor(win->commandBuffers[i], 0, 1, &scissor);
-
-    // Check if bindless resources are properly initialized
-    /*DEBUG*/ if(getenv("CJELLY_DEBUG")) printf("DEBUG: Checking bindless resources...\n");
-    /*DEBUG*/ if(getenv("CJELLY_DEBUG")) printf("DEBUG: resources->pipeline = %p\n", (void*)resources->pipeline);
-    /*DEBUG*/ if(getenv("CJELLY_DEBUG")) printf("DEBUG: resources->pipelineLayout = %p\n", (void*)resources->pipelineLayout);
-    /*DEBUG*/ if(getenv("CJELLY_DEBUG")) printf("DEBUG: resources->textureAtlas = %p\n", (void*)resources->textureAtlas);
-    /*DEBUG*/ if(getenv("CJELLY_DEBUG")) printf("DEBUG: resources->vertexBuffer = %p\n", (void*)resources->vertexBuffer);
-
-    // Check global variables too
-    /*DEBUG*/ if(getenv("CJELLY_DEBUG")) printf("DEBUG: Checking global variables...\n");
-    /*DEBUG*/ if(getenv("CJELLY_DEBUG")) printf("DEBUG: device = %p\n", (void*)device);
-    /*DEBUG*/ if(getenv("CJELLY_DEBUG")) printf("DEBUG: commandPool = %p\n", (void*)commandPool);
-    /*DEBUG*/ if(getenv("CJELLY_DEBUG")) printf("DEBUG: renderPass = %p\n", (void*)renderPass);
-
-    if (resources->pipeline == VK_NULL_HANDLE) {
-      fprintf(stderr, "ERROR: bindless pipeline is NULL!\n");
-      exit(EXIT_FAILURE);
-    }
-
-    if (device == VK_NULL_HANDLE) {
-      fprintf(stderr, "ERROR: device is NULL!\n");
-      exit(EXIT_FAILURE);
-    }
-
-    if (commandPool == VK_NULL_HANDLE) {
-      fprintf(stderr, "ERROR: commandPool is NULL!\n");
-      exit(EXIT_FAILURE);
-    }
-
-    if (renderPass == VK_NULL_HANDLE) {
-      fprintf(stderr, "ERROR: renderPass is NULL!\n");
-      exit(EXIT_FAILURE);
-    }
-
-    // Bind the bindless pipeline.
-    /*DEBUG*/ if(getenv("CJELLY_DEBUG")) printf("DEBUG: Binding bindless pipeline...\n");
-    vkCmdBindPipeline(win->commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS,
-        resources->pipeline);
-
-    // Color-only path (no descriptor sets): just push UV/colorMul
-    float push[8] = { resources->uv[0], resources->uv[1], resources->uv[2], resources->uv[3],
-                      resources->colorMul[0], resources->colorMul[1], resources->colorMul[2], resources->colorMul[3] };
-    vkCmdPushConstants(win->commandBuffers[i], resources->pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), push);
-
-    VkDeviceSize offsets[] = {0};
-    // (push constants already handled above per path)
-
-    // Bind the vertex buffer containing bindless vertices.
-    /*DEBUG*/ if(getenv("CJELLY_DEBUG")) printf("DEBUG: Binding bindless vertex buffer...\n");
-    vkCmdBindVertexBuffers(
-        win->commandBuffers[i], 0, 1, &resources->vertexBuffer, offsets);
-
-    // Issue draw for color-only path: single quad (6 verts)
-    vkCmdDraw(win->commandBuffers[i], 6, 1, 0, 0);
-
-    vkCmdEndRenderPass(win->commandBuffers[i]);
-
-    if (vkEndCommandBuffer(win->commandBuffers[i]) != VK_SUCCESS) {
-      fprintf(stderr, "Failed to record bindless command buffer\n");
-      exit(EXIT_FAILURE);
-    }
-  }
-}
-
-void createBindlessCommandBuffersForWindowCtx(CJellyWindow * win, const CJellyBindlessResources* resources, const CJellyVulkanContext* ctx) {
-  createBindlessCommandBuffersForWindow(win, resources, ctx->device, ctx->commandPool, ctx->renderPass);
-}
+/* moved to window.c */
 
 /**
  * @brief Creates a vertex buffer for a textured square.
@@ -2986,74 +2837,7 @@ void createTexturedVertexBuffer() {
 }
 
 /* Context-based textured command buffers for a window */
-void createTexturedCommandBuffersForWindowCtx(CJellyWindow * win, const CJellyVulkanContext* ctx) {
-  if (!win || !ctx || ctx->device == VK_NULL_HANDLE || ctx->commandPool == VK_NULL_HANDLE || ctx->renderPass == VK_NULL_HANDLE) return;
-  win->commandBuffers =
-      malloc(sizeof(VkCommandBuffer) * win->swapChainImageCount);
-
-  VkCommandBufferAllocateInfo allocInfo = {0};
-  allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-  allocInfo.commandPool = ctx->commandPool;
-  allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-  allocInfo.commandBufferCount = win->swapChainImageCount;
-
-  if (vkAllocateCommandBuffers(ctx->device, &allocInfo, win->commandBuffers) !=
-      VK_SUCCESS) {
-    fprintf(stderr, "Failed to allocate textured (ctx) command buffers\n");
-    exit(EXIT_FAILURE);
-  }
-
-  for (uint32_t i = 0; i < win->swapChainImageCount; i++) {
-    VkCommandBufferBeginInfo beginInfo = {0};
-    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    if (vkBeginCommandBuffer(win->commandBuffers[i], &beginInfo) != VK_SUCCESS) {
-      fprintf(stderr, "Failed to begin textured (ctx) command buffer\n");
-      exit(EXIT_FAILURE);
-    }
-
-    VkRenderPassBeginInfo renderPassInfo = {0};
-    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    renderPassInfo.renderPass = ctx->renderPass;
-    renderPassInfo.framebuffer = win->swapChainFramebuffers[i];
-    renderPassInfo.renderArea.offset = (VkOffset2D){0, 0};
-    renderPassInfo.renderArea.extent = win->swapChainExtent;
-    VkClearValue clearColor = {{{0.1f, 0.1f, 0.1f, 1.0f}}};
-    renderPassInfo.clearValueCount = 1;
-    renderPassInfo.pClearValues = &clearColor;
-    vkCmdBeginRenderPass(win->commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-
-    VkViewport viewport = {0};
-    viewport.x = 0.0f;
-    viewport.y = 0.0f;
-    viewport.width = (float)win->swapChainExtent.width;
-    viewport.height = (float)win->swapChainExtent.height;
-    viewport.minDepth = 0.0f;
-    viewport.maxDepth = 1.0f;
-    vkCmdSetViewport(win->commandBuffers[i], 0, 1, &viewport);
-
-    VkRect2D scissor = {0};
-    scissor.offset = (VkOffset2D){0, 0};
-    scissor.extent = win->swapChainExtent;
-    vkCmdSetScissor(win->commandBuffers[i], 0, 1, &scissor);
-
-    VkDeviceSize offsets[] = {0};
-    vkCmdBindVertexBuffers(win->commandBuffers[i], 0, 1, &vertexBufferTextured, offsets);
-
-    vkCmdBindPipeline(win->commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, texturedPipeline);
-
-    assert(textureDescriptorSet != VK_NULL_HANDLE);
-    assert(texturedPipelineLayout != VK_NULL_HANDLE);
-    vkCmdBindDescriptorSets(win->commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, texturedPipelineLayout, 0, 1, &textureDescriptorSet, 0, NULL);
-
-    vkCmdDraw(win->commandBuffers[i], 6, 1, 0, 0);
-    vkCmdEndRenderPass(win->commandBuffers[i]);
-
-    if (vkEndCommandBuffer(win->commandBuffers[i]) != VK_SUCCESS) {
-      fprintf(stderr, "Failed to record textured (ctx) command buffer\n");
-      exit(EXIT_FAILURE);
-    }
-  }
-}
+/* moved to window.c */
 
 void createBindlessVertexBuffer(VkDevice device __attribute__((unused)), VkCommandPool commandPool __attribute__((unused))) {
   // Create vertices for bindless rendering - single square with dynamic color switching
@@ -3204,9 +2988,10 @@ void cleanupVulkanGlobal() {
     destroyDebugMessenger();
   }
 
-  // Destroy the device and instance.
+  // Destroy the device and instance via engine getters.
   vkDestroyDevice(cur_device(), NULL);
-  vkDestroyInstance(instance, NULL);
+  VkInstance inst = cj_engine_instance(cur_eng());
+  if (inst != VK_NULL_HANDLE) vkDestroyInstance(inst, NULL);
 }
 
 //

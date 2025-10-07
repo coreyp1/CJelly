@@ -3,10 +3,20 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#include <stdio.h>
+#include <assert.h>
 #include <cjelly/cj_window.h>
 #include <cjelly/cj_platform.h>
 #include <cjelly/runtime.h>
 #include <cjelly/engine_internal.h>
+#include <cjelly/window_internal.h>
+#include <cjelly/bindless_internal.h>
+
+/* Refer to existing engine-scoped textured globals for now */
+extern VkBuffer vertexBufferTextured;
+extern VkPipeline texturedPipeline;
+extern VkPipelineLayout texturedPipelineLayout;
+extern VkDescriptorSet textureDescriptorSet;
 
 /* Private forward declarations to call internal window helpers in cjelly.c */
 #include <cjelly/window_internal.h>
@@ -137,4 +147,153 @@ CJ_API void cj_window_rerecord_bindless_color(cj_window_t* win,
     win->legacy->commandBuffers = NULL;
   }
   createBindlessCommandBuffersForWindowCtx(win->legacy, r, ctx);
+}
+
+/* Per-window textured command buffer recording using explicit ctx */
+void createTexturedCommandBuffersForWindowCtx(CJellyWindow * win, const CJellyVulkanContext* ctx) {
+  if (!win || !ctx || ctx->device == VK_NULL_HANDLE || ctx->commandPool == VK_NULL_HANDLE || ctx->renderPass == VK_NULL_HANDLE) return;
+  win->commandBuffers =
+      (VkCommandBuffer*)malloc(sizeof(VkCommandBuffer) * win->swapChainImageCount);
+
+  VkCommandBufferAllocateInfo allocInfo = {0};
+  allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+  allocInfo.commandPool = ctx->commandPool;
+  allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+  allocInfo.commandBufferCount = win->swapChainImageCount;
+
+  if (vkAllocateCommandBuffers(ctx->device, &allocInfo, win->commandBuffers) != VK_SUCCESS) {
+    fprintf(stderr, "Failed to allocate textured (ctx) command buffers\n");
+    exit(EXIT_FAILURE);
+  }
+
+  for (uint32_t i = 0; i < win->swapChainImageCount; i++) {
+    VkCommandBufferBeginInfo beginInfo = {0};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    if (vkBeginCommandBuffer(win->commandBuffers[i], &beginInfo) != VK_SUCCESS) {
+      fprintf(stderr, "Failed to begin textured (ctx) command buffer\n");
+      exit(EXIT_FAILURE);
+    }
+
+    VkRenderPassBeginInfo renderPassInfo = {0};
+    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    renderPassInfo.renderPass = ctx->renderPass;
+    renderPassInfo.framebuffer = win->swapChainFramebuffers[i];
+    renderPassInfo.renderArea.offset = (VkOffset2D){0, 0};
+    renderPassInfo.renderArea.extent = win->swapChainExtent;
+    VkClearValue clearColor = {{{0.1f, 0.1f, 0.1f, 1.0f}}};
+    renderPassInfo.clearValueCount = 1;
+    renderPassInfo.pClearValues = &clearColor;
+    vkCmdBeginRenderPass(win->commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+    VkViewport viewport = {0};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = (float)win->swapChainExtent.width;
+    viewport.height = (float)win->swapChainExtent.height;
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    vkCmdSetViewport(win->commandBuffers[i], 0, 1, &viewport);
+
+    VkRect2D scissor = {0};
+    scissor.offset = (VkOffset2D){0, 0};
+    scissor.extent = win->swapChainExtent;
+    vkCmdSetScissor(win->commandBuffers[i], 0, 1, &scissor);
+
+    VkDeviceSize offsets[] = {0};
+    vkCmdBindVertexBuffers(win->commandBuffers[i], 0, 1, &vertexBufferTextured, offsets);
+
+    vkCmdBindPipeline(win->commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, texturedPipeline);
+
+    assert(textureDescriptorSet != VK_NULL_HANDLE);
+    assert(texturedPipelineLayout != VK_NULL_HANDLE);
+    vkCmdBindDescriptorSets(win->commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, texturedPipelineLayout, 0, 1, &textureDescriptorSet, 0, NULL);
+
+    vkCmdDraw(win->commandBuffers[i], 6, 1, 0, 0);
+    vkCmdEndRenderPass(win->commandBuffers[i]);
+
+    if (vkEndCommandBuffer(win->commandBuffers[i]) != VK_SUCCESS) {
+      fprintf(stderr, "Failed to record textured (ctx) command buffer\n");
+      exit(EXIT_FAILURE);
+    }
+  }
+}
+
+/* Per-window bindless command buffer recording using explicit ctx */
+void createBindlessCommandBuffersForWindowCtx(CJellyWindow * win, const CJellyBindlessResources* resources, const CJellyVulkanContext* ctx) {
+  if (!win || !ctx || !resources) return;
+  if (!ctx->device || !ctx->commandPool || !ctx->renderPass) return;
+
+  if (!resources->pipeline) {
+    /* Fallback to textured recorder if bindless pipeline missing */
+    createTexturedCommandBuffersForWindowCtx(win, ctx);
+    return;
+  }
+
+  win->commandBuffers = (VkCommandBuffer*)malloc(sizeof(VkCommandBuffer) * win->swapChainImageCount);
+
+  VkCommandBufferAllocateInfo allocInfo = {0};
+  allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+  allocInfo.commandPool = ctx->commandPool;
+  allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+  allocInfo.commandBufferCount = win->swapChainImageCount;
+
+  if (vkAllocateCommandBuffers(ctx->device, &allocInfo, win->commandBuffers) != VK_SUCCESS) {
+    fprintf(stderr, "Failed to allocate bindless command buffers, falling back to textured (ctx)\n");
+    createTexturedCommandBuffersForWindowCtx(win, ctx);
+    return;
+  }
+
+  for (uint32_t i = 0; i < win->swapChainImageCount; i++) {
+    VkCommandBufferBeginInfo beginInfo = {0};
+    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    if (vkBeginCommandBuffer(win->commandBuffers[i], &beginInfo) != VK_SUCCESS) {
+      fprintf(stderr, "Failed to begin bindless command buffer\n");
+      exit(EXIT_FAILURE);
+    }
+
+    VkRenderPassBeginInfo renderPassInfo = {0};
+    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    renderPassInfo.renderPass = ctx->renderPass;
+    renderPassInfo.framebuffer = win->swapChainFramebuffers[i];
+    renderPassInfo.renderArea.offset = (VkOffset2D){0, 0};
+    renderPassInfo.renderArea.extent = win->swapChainExtent;
+    VkClearValue clearColor = {{{0.0f, 0.0f, 0.0f, 1.0f}}};
+    renderPassInfo.clearValueCount = 1;
+    renderPassInfo.pClearValues = &clearColor;
+    vkCmdBeginRenderPass(win->commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+    VkViewport viewport = {0};
+    viewport.x = 0.0f; viewport.y = 0.0f;
+    viewport.width = (float)win->swapChainExtent.width;
+    viewport.height = (float)win->swapChainExtent.height;
+    viewport.minDepth = 0.0f; viewport.maxDepth = 1.0f;
+    vkCmdSetViewport(win->commandBuffers[i], 0, 1, &viewport);
+
+    VkRect2D scissor = {0};
+    scissor.offset = (VkOffset2D){0, 0};
+    scissor.extent = win->swapChainExtent;
+    vkCmdSetScissor(win->commandBuffers[i], 0, 1, &scissor);
+
+    if (ctx->renderPass == VK_NULL_HANDLE) { fprintf(stderr, "ERROR: renderPass is NULL!\n"); exit(EXIT_FAILURE); }
+    if (ctx->device == VK_NULL_HANDLE) { fprintf(stderr, "ERROR: device is NULL!\n"); exit(EXIT_FAILURE); }
+    if (ctx->commandPool == VK_NULL_HANDLE) { fprintf(stderr, "ERROR: commandPool is NULL!\n"); exit(EXIT_FAILURE); }
+
+    vkCmdBindPipeline(win->commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, resources->pipeline);
+
+    float push[8] = { resources->uv[0], resources->uv[1], resources->uv[2], resources->uv[3],
+                      resources->colorMul[0], resources->colorMul[1], resources->colorMul[2], resources->colorMul[3] };
+    vkCmdPushConstants(win->commandBuffers[i], resources->pipelineLayout, VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(push), push);
+
+    VkDeviceSize offsets[] = {0};
+    vkCmdBindVertexBuffers(win->commandBuffers[i], 0, 1, &resources->vertexBuffer, offsets);
+
+    vkCmdDraw(win->commandBuffers[i], 6, 1, 0, 0);
+
+    vkCmdEndRenderPass(win->commandBuffers[i]);
+
+    if (vkEndCommandBuffer(win->commandBuffers[i]) != VK_SUCCESS) {
+      fprintf(stderr, "Failed to record bindless command buffer\n");
+      exit(EXIT_FAILURE);
+    }
+  }
 }

@@ -6,6 +6,7 @@
 #include <cjelly/cj_engine.h>
 #include <cjelly/engine_internal.h>
 #include <cjelly/runtime.h>
+#include <vulkan/vulkan.h>
 
 /* Internal definition of the opaque engine type */
 struct cj_engine_t {
@@ -50,6 +51,22 @@ CJ_API void cj_engine_shutdown(cj_engine_t* engine) {
 
 CJ_API void cj_engine_wait_idle(cj_engine_t* engine) {
   (void)engine; /* no-op in stub */
+}
+
+/* Initialize Vulkan into the engine using the existing context bootstrap */
+CJ_API int cj_engine_init_vulkan(cj_engine_t* engine, int use_validation) {
+  if (!engine) return 0;
+  CJellyVulkanContext ctx = {0};
+  if (!cjelly_init_context(&ctx, use_validation)) return 0;
+  cj_engine_import_context(engine, &ctx);
+  return 1;
+}
+
+/* Shutdown Vulkan from the engine */
+CJ_API void cj_engine_shutdown_vulkan(cj_engine_t* engine) {
+  (void)engine;
+  CJellyVulkanContext ctx = {0};
+  cjelly_destroy_context(&ctx);
 }
 
 CJ_API uint32_t cj_engine_device_index(const cj_engine_t* engine) {

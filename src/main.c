@@ -62,17 +62,17 @@ int main(void) {
   cj_engine_desc_t eng_desc = {0};
   cj_engine_t* engine = cj_engine_create(&eng_desc);
 
-  // Initialize Vulkan via context API
+  // Initialize Vulkan via Engine
   fprintf(stderr, "Initializing Vulkan...\n");
-  CJellyVulkanContext ctx = {0};
-  if (!cjelly_init_context(&ctx, 1)) {
-    fprintf(stderr, "Failed to initialize CJelly Vulkan context\n");
+  const char* vkenv = getenv("CJELLY_VALIDATION");
+  int use_validation = (vkenv && vkenv[0] == '1') ? 1 : 0;
+  if (!cj_engine_init_vulkan(engine, use_validation)) {
+    fprintf(stderr, "Failed to initialize Vulkan via engine\n");
     return EXIT_FAILURE;
   }
   fprintf(stderr, "Vulkan initialized.\n");
 
-  // Import context into engine and set current
-  cj_engine_import_context(engine, &ctx);
+  // Set current engine
   cj_engine_set_current(engine);
 
   // Create two windows via new API (now that Vulkan is ready)
@@ -86,7 +86,14 @@ int main(void) {
   // Re-record window 1 with bindless color-only (square) so it doesn't render the fish
   // Build minimal color-only bindless resources (no descriptor set required)
   static CJellyBindlessResources* colorOnly = NULL;
-  CJellyVulkanContext ctx_local = ctx;
+  CJellyVulkanContext ctx_local = {0};
+  ctx_local.instance = cj_engine_instance(engine);
+  ctx_local.physicalDevice = cj_engine_physical_device(engine);
+  ctx_local.device = cj_engine_device(engine);
+  ctx_local.graphicsQueue = cj_engine_graphics_queue(engine);
+  ctx_local.presentQueue = cj_engine_present_queue(engine);
+  ctx_local.renderPass = cj_engine_render_pass(engine);
+  ctx_local.commandPool = cj_engine_command_pool(engine);
   colorOnly = cjelly_create_bindless_color_square_resources_ctx(&ctx_local);
   if (colorOnly) {
     cj_window_rerecord_bindless_color(win1, (const void*)colorOnly, &ctx_local);
@@ -132,10 +139,8 @@ int main(void) {
   }
 
   // Wait for GPU idle and clean up global/context resources last
-  vkDeviceWaitIdle(ctx.device);
-
-  // Clean up global Vulkan resources.
-  cjelly_destroy_context(&ctx);
+  vkDeviceWaitIdle(cj_engine_device(engine));
+  cj_engine_shutdown_vulkan(engine);
 
 #ifndef _WIN32
   XCloseDisplay(display);
