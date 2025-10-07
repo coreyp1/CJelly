@@ -12,11 +12,8 @@
 #include <cjelly/window_internal.h>
 #include <cjelly/bindless_internal.h>
 
-/* Refer to existing engine-scoped textured globals for now */
-extern VkBuffer vertexBufferTextured;
-extern VkPipeline texturedPipeline;
-extern VkPipelineLayout texturedPipelineLayout;
-extern VkDescriptorSet textureDescriptorSet;
+/* Fetch textured resources from engine instead of extern globals */
+#include <cjelly/textured_internal.h>
 
 /* Private forward declarations to call internal window helpers in cjelly.c */
 #include <cjelly/window_internal.h>
@@ -199,14 +196,15 @@ void createTexturedCommandBuffersForWindowCtx(CJellyWindow * win, const CJellyVu
     scissor.extent = win->swapChainExtent;
     vkCmdSetScissor(win->commandBuffers[i], 0, 1, &scissor);
 
-    VkDeviceSize offsets[] = {0};
-    vkCmdBindVertexBuffers(win->commandBuffers[i], 0, 1, &vertexBufferTextured, offsets);
+  CJellyTexturedResources* tx = cj_engine_textured(cj_engine_get_current());
+  VkDeviceSize offsets[] = {0};
+  vkCmdBindVertexBuffers(win->commandBuffers[i], 0, 1, &tx->vertexBuffer, offsets);
 
-    vkCmdBindPipeline(win->commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, texturedPipeline);
+  vkCmdBindPipeline(win->commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, tx->pipeline);
 
-    assert(textureDescriptorSet != VK_NULL_HANDLE);
-    assert(texturedPipelineLayout != VK_NULL_HANDLE);
-    vkCmdBindDescriptorSets(win->commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, texturedPipelineLayout, 0, 1, &textureDescriptorSet, 0, NULL);
+  assert(tx->descriptorSet != VK_NULL_HANDLE);
+  assert(tx->pipelineLayout != VK_NULL_HANDLE);
+  vkCmdBindDescriptorSets(win->commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, tx->pipelineLayout, 0, 1, &tx->descriptorSet, 0, NULL);
 
     vkCmdDraw(win->commandBuffers[i], 6, 1, 0, 0);
     vkCmdEndRenderPass(win->commandBuffers[i]);

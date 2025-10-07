@@ -28,6 +28,10 @@ CJ_API VkCommandPool cj_engine_command_pool(const cj_engine_t*);
 CJ_API int  cj_engine_init_vulkan(cj_engine_t* engine, int use_validation);
 CJ_API void cj_engine_shutdown_vulkan(cj_engine_t* engine);
 
+/* Access to internal textured resources during migration */
+struct CJellyTexturedResources;
+CJ_API struct CJellyTexturedResources* cj_engine_textured(const cj_engine_t*);
+
 /* === Internal resource tables for Phase 3 === */
 typedef struct cj_res_entry_t {
   uint32_t generation;

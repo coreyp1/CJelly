@@ -27,6 +27,7 @@
 #include <cjelly/runtime.h>
 #include <cjelly/engine_internal.h>
 #include <cjelly/bindless_internal.h>
+#include <cjelly/textured_internal.h>
 #include <cjelly/runtime.h>
 #ifdef _WIN32
 #include <windows.h>
@@ -70,18 +71,7 @@ VkCommandPool commandPool;
 VkBuffer vertexBuffer;
 VkDeviceMemory vertexBufferMemory;
 
-// Global texture variables (declared in your header, defined here)
-VkPipeline texturedPipeline;
-VkPipelineLayout texturedPipelineLayout;
-VkImage textureImage;
-VkDeviceMemory textureImageMemory;
-VkImageView textureImageView;
-VkSampler textureSampler;
-VkDescriptorPool textureDescriptorPool;
-VkDescriptorSetLayout textureDescriptorSetLayout;
-VkDescriptorSet textureDescriptorSet;
-VkBuffer vertexBufferTextured;
-VkDeviceMemory vertexBufferTexturedMemory;
+/* Textured resources moved under engine; use cj_engine_textured() */
 
 // Bindless rendering variables
 VkPipeline bindlessPipeline;
@@ -113,6 +103,7 @@ static inline VkRenderPass cur_render_pass(void) { cj_engine_t* e = cur_eng(); r
 static inline VkQueue cur_gfx_queue(void) { cj_engine_t* e = cur_eng(); return e ? cj_engine_graphics_queue(e) : VK_NULL_HANDLE; }
 static inline VkQueue cur_present_queue(void) { cj_engine_t* e = cur_eng(); return e ? cj_engine_present_queue(e) : VK_NULL_HANDLE; }
 static inline VkCommandPool cur_cmd_pool(void) { cj_engine_t* e = cur_eng(); return e ? cj_engine_command_pool(e) : VK_NULL_HANDLE; }
+static inline CJellyTexturedResources* cur_tx(void) { cj_engine_t* e = cur_eng(); return e ? cj_engine_textured(e) : NULL; }
 
 
 // Vertex structure for the square.
@@ -1562,8 +1553,9 @@ void createLogicalDevice() {
   }
   fprintf(stderr, "vkCreateDevice: success\n");
 
-  vkGetDeviceQueue(device, queueFamilyIndex, 0, &graphicsQueue);
-  presentQueue = graphicsQueue;
+  VkQueue q = VK_NULL_HANDLE;
+  vkGetDeviceQueue(device, queueFamilyIndex, 0, &q);
+  graphicsQueue = q; presentQueue = q;
 }
 
 
@@ -1831,7 +1823,8 @@ void createTextureDescriptorPool() {
   poolInfo.pPoolSizes = &poolSize;
   poolInfo.maxSets = 1; // Adjust if allocating multiple descriptor sets.
 
-  if (vkCreateDescriptorPool(cur_device(), &poolInfo, NULL, &textureDescriptorPool) !=
+  CJellyTexturedResources* tx0 = cur_tx();
+  if (vkCreateDescriptorPool(cur_device(), &poolInfo, NULL, &tx0->descriptorPool) !=
       VK_SUCCESS) {
     fprintf(stderr, "Failed to create texture descriptor pool!\n");
     exit(EXIT_FAILURE);
@@ -1850,7 +1843,8 @@ static void createTextureDescriptorPoolCtx(const CJellyVulkanContext* ctx) {
   poolInfo.pPoolSizes = &poolSize;
   poolInfo.maxSets = 1;
 
-  if (vkCreateDescriptorPool(ctx->device, &poolInfo, NULL, &textureDescriptorPool) != VK_SUCCESS) {
+  CJellyTexturedResources* tx1 = cur_tx();
+  if (vkCreateDescriptorPool(ctx->device, &poolInfo, NULL, &tx1->descriptorPool) != VK_SUCCESS) {
     fprintf(stderr, "Failed to create texture descriptor pool (ctx)!\n");
     exit(EXIT_FAILURE);
   }
@@ -1869,8 +1863,9 @@ void createDescriptorSetLayouts() {
   layoutInfo.bindingCount = 1;
   layoutInfo.pBindings = &layoutBinding;
 
+  CJellyTexturedResources* tx2 = cur_tx();
   if (vkCreateDescriptorSetLayout(device, &layoutInfo, NULL,
-          &textureDescriptorSetLayout) != VK_SUCCESS) {
+          &tx2->descriptorSetLayout) != VK_SUCCESS) {
     fprintf(stderr, "Failed to create texture descriptor set layout\n");
     exit(EXIT_FAILURE);
   }
@@ -1888,7 +1883,8 @@ static void createDescriptorSetLayoutsCtx(const CJellyVulkanContext* ctx) {
   layoutInfo.bindingCount = 1;
   layoutInfo.pBindings = &layoutBinding;
 
-  if (vkCreateDescriptorSetLayout(ctx->device, &layoutInfo, NULL, &textureDescriptorSetLayout) != VK_SUCCESS) {
+  CJellyTexturedResources* tx3 = cur_tx();
+  if (vkCreateDescriptorSetLayout(ctx->device, &layoutInfo, NULL, &tx3->descriptorSetLayout) != VK_SUCCESS) {
     fprintf(stderr, "Failed to create texture descriptor set layout (ctx)\n");
     exit(EXIT_FAILURE);
   }
@@ -1903,11 +1899,12 @@ static void createDescriptorSetLayoutsCtx(const CJellyVulkanContext* ctx) {
 void allocateTextureDescriptorSet() {
   VkDescriptorSetAllocateInfo allocInfo = {0};
   allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-  allocInfo.descriptorPool = textureDescriptorPool;
+  CJellyTexturedResources* tx4 = cur_tx();
+  allocInfo.descriptorPool = tx4->descriptorPool;
   allocInfo.descriptorSetCount = 1;
-  allocInfo.pSetLayouts = &textureDescriptorSetLayout;
+  allocInfo.pSetLayouts = &tx4->descriptorSetLayout;
 
-  if (vkAllocateDescriptorSets(device, &allocInfo, &textureDescriptorSet) !=
+  if (vkAllocateDescriptorSets(device, &allocInfo, &tx4->descriptorSet) !=
       VK_SUCCESS) {
     fprintf(stderr, "Failed to allocate texture descriptor set!\n");
     exit(EXIT_FAILURE);
@@ -1917,11 +1914,12 @@ void allocateTextureDescriptorSet() {
 static void allocateTextureDescriptorSetCtx(const CJellyVulkanContext* ctx) {
   VkDescriptorSetAllocateInfo allocInfo = {0};
   allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-  allocInfo.descriptorPool = textureDescriptorPool;
+  CJellyTexturedResources* tx5 = cur_tx();
+  allocInfo.descriptorPool = tx5->descriptorPool;
   allocInfo.descriptorSetCount = 1;
-  allocInfo.pSetLayouts = &textureDescriptorSetLayout;
+  allocInfo.pSetLayouts = &tx5->descriptorSetLayout;
 
-  if (vkAllocateDescriptorSets(ctx->device, &allocInfo, &textureDescriptorSet) != VK_SUCCESS) {
+  if (vkAllocateDescriptorSets(ctx->device, &allocInfo, &tx5->descriptorSet) != VK_SUCCESS) {
     fprintf(stderr, "Failed to allocate texture descriptor set (ctx)!\n");
     exit(EXIT_FAILURE);
   }
@@ -2033,14 +2031,15 @@ void createTexturedGraphicsPipeline() {
   colorBlending.attachmentCount = 1;
   colorBlending.pAttachments = &colorBlendAttachment;
 
-  VkDescriptorSetLayout descriptorSetLayouts[] = {textureDescriptorSetLayout};
+  CJellyTexturedResources* tx6 = cur_tx();
+  VkDescriptorSetLayout descriptorSetLayouts[] = {tx6->descriptorSetLayout};
   VkPipelineLayoutCreateInfo pipelineLayoutInfo = {0};
   pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
   pipelineLayoutInfo.setLayoutCount = 1;
   pipelineLayoutInfo.pSetLayouts = descriptorSetLayouts;
 
   if (vkCreatePipelineLayout(device, &pipelineLayoutInfo, NULL,
-          &texturedPipelineLayout) != VK_SUCCESS) {
+          &tx6->pipelineLayout) != VK_SUCCESS) {
     fprintf(stderr, "Failed to create textured pipeline layout\n");
     exit(EXIT_FAILURE);
   }
@@ -2056,12 +2055,12 @@ void createTexturedGraphicsPipeline() {
   pipelineInfo.pRasterizationState = &rasterizer;
   pipelineInfo.pMultisampleState = &multisampling;
   pipelineInfo.pColorBlendState = &colorBlending;
-  pipelineInfo.layout = texturedPipelineLayout; // Use the new layout.
-  pipelineInfo.renderPass = renderPass;
+  pipelineInfo.layout = tx6->pipelineLayout; // Use the new layout.
+  pipelineInfo.renderPass = cur_render_pass();
   pipelineInfo.subpass = 0;
 
   if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL,
-          &texturedPipeline) != VK_SUCCESS) {
+          &tx6->pipeline) != VK_SUCCESS) {
     fprintf(stderr, "Failed to create textured graphics pipeline\n");
     exit(EXIT_FAILURE);
   }
@@ -2140,12 +2139,13 @@ static void createTexturedGraphicsPipelineCtx(const CJellyVulkanContext* ctx) {
   colorBlending.attachmentCount = 1;
   colorBlending.pAttachments = &colorBlendAttachment;
 
-  VkDescriptorSetLayout descriptorSetLayouts[] = {textureDescriptorSetLayout};
+  CJellyTexturedResources* tx7 = cur_tx();
+  VkDescriptorSetLayout descriptorSetLayouts[] = {tx7->descriptorSetLayout};
   VkPipelineLayoutCreateInfo pipelineLayoutInfo = {0};
   pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
   pipelineLayoutInfo.setLayoutCount = 1;
   pipelineLayoutInfo.pSetLayouts = descriptorSetLayouts;
-  if (vkCreatePipelineLayout(ctx->device, &pipelineLayoutInfo, NULL, &texturedPipelineLayout) != VK_SUCCESS) {
+  if (vkCreatePipelineLayout(ctx->device, &pipelineLayoutInfo, NULL, &tx7->pipelineLayout) != VK_SUCCESS) {
     fprintf(stderr, "Failed to create textured pipeline layout (ctx)\n");
     exit(EXIT_FAILURE);
   }
@@ -2160,10 +2160,10 @@ static void createTexturedGraphicsPipelineCtx(const CJellyVulkanContext* ctx) {
   pipelineInfo.pRasterizationState = &rasterizer;
   pipelineInfo.pMultisampleState = &multisampling;
   pipelineInfo.pColorBlendState = &colorBlending;
-  pipelineInfo.layout = texturedPipelineLayout;
+  pipelineInfo.layout = tx7->pipelineLayout;
   pipelineInfo.renderPass = ctx->renderPass;
   pipelineInfo.subpass = 0;
-  if (vkCreateGraphicsPipelines(ctx->device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &texturedPipeline) != VK_SUCCESS) {
+  if (vkCreateGraphicsPipelines(ctx->device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &tx7->pipeline) != VK_SUCCESS) {
     fprintf(stderr, "Failed to create textured graphics pipeline (ctx)\n");
     exit(EXIT_FAILURE);
   }
@@ -2512,19 +2512,20 @@ static void createTextureImageCtx(const CJellyVulkanContext* ctx, const char * f
 
   // Create the Vulkan texture image.
   // We choose VK_FORMAT_R8G8B8A8_UNORM for the RGBA data.
+  CJellyTexturedResources* tx = cur_tx();
   createImageCtx(ctx, texWidth, texHeight, VK_FORMAT_R8G8B8A8_UNORM,
       VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &textureImage, &textureImageMemory);
+      VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &tx->image, &tx->imageMemory);
 
   // Transition image layout to prepare for the data copy.
-  transitionImageLayoutCtx(ctx, textureImage, VK_FORMAT_R8G8B8A8_UNORM,
+  transitionImageLayoutCtx(ctx, tx->image, VK_FORMAT_R8G8B8A8_UNORM,
       VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 
   // Copy the pixel data from the staging buffer into the texture image.
-  copyBufferToImageCtx(ctx, stagingBuffer, textureImage, texWidth, texHeight);
+  copyBufferToImageCtx(ctx, stagingBuffer, tx->image, texWidth, texHeight);
 
   // Transition the image layout for shader access.
-  transitionImageLayoutCtx(ctx, textureImage, VK_FORMAT_R8G8B8A8_UNORM,
+  transitionImageLayoutCtx(ctx, tx->image, VK_FORMAT_R8G8B8A8_UNORM,
       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
   vkDestroyBuffer(ctx->device, stagingBuffer, NULL);
@@ -2535,7 +2536,8 @@ static void createTextureImageCtx(const CJellyVulkanContext* ctx, const char * f
 static void createTextureImageViewCtx(const CJellyVulkanContext* ctx) {
   VkImageViewCreateInfo viewInfo = {0};
   viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-  viewInfo.image = textureImage;
+  CJellyTexturedResources* tx = cur_tx();
+  viewInfo.image = tx->image;
   viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
   viewInfo.format = VK_FORMAT_R8G8B8A8_UNORM;
   viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
@@ -2544,7 +2546,7 @@ static void createTextureImageViewCtx(const CJellyVulkanContext* ctx) {
   viewInfo.subresourceRange.baseArrayLayer = 0;
   viewInfo.subresourceRange.layerCount = 1;
 
-  if (vkCreateImageView(ctx->device, &viewInfo, NULL, &textureImageView) !=
+  if (vkCreateImageView(ctx->device, &viewInfo, NULL, &tx->imageView) !=
       VK_SUCCESS) {
     fprintf(stderr, "Failed to create texture image view\n");
     exit(EXIT_FAILURE);
@@ -2576,7 +2578,8 @@ static void createTextureSamplerCtx(const CJellyVulkanContext* ctx) {
   samplerInfo.minLod = 0.0f;
   samplerInfo.maxLod = 0.0f;
 
-  if (vkCreateSampler(ctx->device, &samplerInfo, NULL, &textureSampler) !=
+  CJellyTexturedResources* tx2 = cur_tx();
+  if (vkCreateSampler(ctx->device, &samplerInfo, NULL, &tx2->sampler) !=
       VK_SUCCESS) {
     fprintf(stderr, "Failed to create texture sampler\n");
     exit(EXIT_FAILURE);
@@ -2587,8 +2590,9 @@ static void createTextureSamplerCtx(const CJellyVulkanContext* ctx) {
 static void updateTextureDescriptorSetCtx(const CJellyVulkanContext* ctx, VkDescriptorSet descriptorSet) {
   VkDescriptorImageInfo imageInfo = {0};
   imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-  imageInfo.imageView = textureImageView;
-  imageInfo.sampler = textureSampler;
+  CJellyTexturedResources* tx = cur_tx();
+  imageInfo.imageView = tx->imageView;
+  imageInfo.sampler = tx->sampler;
 
   VkWriteDescriptorSet descriptorWrite = {0};
   descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
@@ -2805,14 +2809,15 @@ void createTexturedVertexBuffer() {
   bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
   bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-  if (vkCreateBuffer(cur_device(), &bufferInfo, NULL, &vertexBufferTextured) !=
+  CJellyTexturedResources* txV = cur_tx();
+  if (vkCreateBuffer(cur_device(), &bufferInfo, NULL, &txV->vertexBuffer) !=
       VK_SUCCESS) {
     fprintf(stderr, "Failed to create textured vertex buffer\n");
     exit(EXIT_FAILURE);
   }
 
   VkMemoryRequirements memRequirements;
-  vkGetBufferMemoryRequirements(cur_device(), vertexBufferTextured, &memRequirements);
+  vkGetBufferMemoryRequirements(cur_device(), txV->vertexBuffer, &memRequirements);
 
   VkMemoryAllocateInfo allocInfo = {0};
   allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
@@ -2821,19 +2826,19 @@ void createTexturedVertexBuffer() {
       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
           VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
 
-  if (vkAllocateMemory(cur_device(), &allocInfo, NULL, &vertexBufferTexturedMemory) !=
+  if (vkAllocateMemory(cur_device(), &allocInfo, NULL, &txV->vertexBufferMemory) !=
       VK_SUCCESS) {
     fprintf(stderr, "Failed to allocate textured vertex buffer memory\n");
     exit(EXIT_FAILURE);
   }
 
   vkBindBufferMemory(
-      cur_device(), vertexBufferTextured, vertexBufferTexturedMemory, 0);
+      cur_device(), txV->vertexBuffer, txV->vertexBufferMemory, 0);
 
   void * data;
-  vkMapMemory(cur_device(), vertexBufferTexturedMemory, 0, bufferSize, 0, &data);
+  vkMapMemory(cur_device(), txV->vertexBufferMemory, 0, bufferSize, 0, &data);
   memcpy(data, verticesTextured, (size_t)bufferSize);
-  vkUnmapMemory(cur_device(), vertexBufferTexturedMemory);
+  vkUnmapMemory(cur_device(), txV->vertexBufferMemory);
 }
 
 /* Context-based textured command buffers for a window */
@@ -2881,13 +2886,13 @@ void initVulkanGlobal() {
 
   // Textured square setup (context-based)
   CJellyVulkanContext ctx_local = {0};
-  ctx_local.instance = instance;
-  ctx_local.physicalDevice = physicalDevice;
-  ctx_local.device = device;
-  ctx_local.graphicsQueue = graphicsQueue;
-  ctx_local.presentQueue = presentQueue;
-  ctx_local.renderPass = renderPass;
-  ctx_local.commandPool = commandPool;
+  ctx_local.instance = cj_engine_instance(cur_eng());
+  ctx_local.physicalDevice = cj_engine_physical_device(cur_eng());
+  ctx_local.device = cur_device();
+  ctx_local.graphicsQueue = cur_gfx_queue();
+  ctx_local.presentQueue = cur_present_queue();
+  ctx_local.renderPass = cur_render_pass();
+  ctx_local.commandPool = cur_cmd_pool();
 
   createTextureImageCtx(&ctx_local, "test/images/bmp/tang.bmp");
   createTexturedVertexBuffer();
@@ -2896,7 +2901,8 @@ void initVulkanGlobal() {
   createDescriptorSetLayoutsCtx(&ctx_local);
   createTextureDescriptorPoolCtx(&ctx_local);
   allocateTextureDescriptorSetCtx(&ctx_local);
-  updateTextureDescriptorSetCtx(&ctx_local, textureDescriptorSet);
+  CJellyTexturedResources* tx = cj_engine_textured(cur_eng());
+  updateTextureDescriptorSetCtx(&ctx_local, tx->descriptorSet);
   createTexturedGraphicsPipelineCtx(&ctx_local);
 
   // Bindless resources are created by the app via cjelly_create_bindless_resources()
@@ -2938,14 +2944,19 @@ void cleanupVulkanGlobal() {
 
   // --- Begin Texture Cleanup ---
   // Destroy the textured pipeline and layout.
-  if (texturedPipeline) vkDestroyPipeline(cur_device(), texturedPipeline, NULL);
-  if (texturedPipelineLayout) vkDestroyPipelineLayout(cur_device(), texturedPipelineLayout, NULL);
+  {
+    CJellyTexturedResources* tx = cur_tx();
+    if (tx && tx->pipeline) vkDestroyPipeline(cur_device(), tx->pipeline, NULL);
+    if (tx && tx->pipelineLayout) vkDestroyPipelineLayout(cur_device(), tx->pipelineLayout, NULL);
+  }
 
   // Destroy the textured vertex buffer.
-  if (vertexBufferTextured != VK_NULL_HANDLE) vkDestroyBuffer(cur_device(), vertexBufferTextured, NULL);
-  if (vertexBufferTexturedMemory != VK_NULL_HANDLE) vkFreeMemory(cur_device(), vertexBufferTexturedMemory, NULL);
-  vertexBufferTextured = VK_NULL_HANDLE;
-  vertexBufferTexturedMemory = VK_NULL_HANDLE;
+  {
+    CJellyTexturedResources* tx = cur_tx();
+    if (tx && tx->vertexBuffer != VK_NULL_HANDLE) vkDestroyBuffer(cur_device(), tx->vertexBuffer, NULL);
+    if (tx && tx->vertexBufferMemory != VK_NULL_HANDLE) vkFreeMemory(cur_device(), tx->vertexBufferMemory, NULL);
+    if (tx) { tx->vertexBuffer = VK_NULL_HANDLE; tx->vertexBufferMemory = VK_NULL_HANDLE; }
+  }
 
   // --- Begin Bindless Cleanup ---
   // Only clean up if bindless resources were created
@@ -2960,22 +2971,28 @@ void cleanupVulkanGlobal() {
   // Atlas lifetime is owned by CJellyBindlessResources; no global to clean here
 
   // Destroy the texture sampler and image view.
-  if (textureSampler != VK_NULL_HANDLE) vkDestroySampler(cur_device(), textureSampler, NULL);
-  if (textureImageView != VK_NULL_HANDLE) vkDestroyImageView(cur_device(), textureImageView, NULL);
-  textureSampler = VK_NULL_HANDLE;
-  textureImageView = VK_NULL_HANDLE;
+  {
+    CJellyTexturedResources* tx = cur_tx();
+    if (tx && tx->sampler != VK_NULL_HANDLE) vkDestroySampler(cur_device(), tx->sampler, NULL);
+    if (tx && tx->imageView != VK_NULL_HANDLE) vkDestroyImageView(cur_device(), tx->imageView, NULL);
+    if (tx) { tx->sampler = VK_NULL_HANDLE; tx->imageView = VK_NULL_HANDLE; }
+  }
 
   // Destroy the texture image and free its memory.
-  if (textureImage != VK_NULL_HANDLE) vkDestroyImage(cur_device(), textureImage, NULL);
-  if (textureImageMemory != VK_NULL_HANDLE) vkFreeMemory(cur_device(), textureImageMemory, NULL);
-  textureImage = VK_NULL_HANDLE;
-  textureImageMemory = VK_NULL_HANDLE;
+  {
+    CJellyTexturedResources* tx = cur_tx();
+    if (tx && tx->image != VK_NULL_HANDLE) vkDestroyImage(cur_device(), tx->image, NULL);
+    if (tx && tx->imageMemory != VK_NULL_HANDLE) vkFreeMemory(cur_device(), tx->imageMemory, NULL);
+    if (tx) { tx->image = VK_NULL_HANDLE; tx->imageMemory = VK_NULL_HANDLE; }
+  }
 
   // Destroy the descriptor pool and layout for the texture.
-  if (textureDescriptorPool != VK_NULL_HANDLE) vkDestroyDescriptorPool(cur_device(), textureDescriptorPool, NULL);
-  if (textureDescriptorSetLayout != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(cur_device(), textureDescriptorSetLayout, NULL);
-  textureDescriptorPool = VK_NULL_HANDLE;
-  textureDescriptorSetLayout = VK_NULL_HANDLE;
+  {
+    CJellyTexturedResources* tx = cur_tx();
+    if (tx && tx->descriptorPool != VK_NULL_HANDLE) vkDestroyDescriptorPool(cur_device(), tx->descriptorPool, NULL);
+    if (tx && tx->descriptorSetLayout != VK_NULL_HANDLE) vkDestroyDescriptorSetLayout(cur_device(), tx->descriptorSetLayout, NULL);
+    if (tx) { tx->descriptorPool = VK_NULL_HANDLE; tx->descriptorSetLayout = VK_NULL_HANDLE; tx->descriptorSet = VK_NULL_HANDLE; }
+  }
   // Note: The textureDescriptorSet is automatically freed when the descriptor
   // pool is destroyed.
   // --- End Texture Cleanup ---
@@ -3061,8 +3078,11 @@ CJellyTextureAtlas * cjelly_create_texture_atlas(uint32_t width, uint32_t height
     return NULL;
   }
   
-  // Create sampler (reuse the existing texture sampler for now)
-  atlas->atlasSampler = textureSampler;
+  // Create sampler (reuse textured resources' sampler)
+  {
+    CJellyTexturedResources* tx = cur_tx();
+    atlas->atlasSampler = tx ? tx->sampler : VK_NULL_HANDLE;
+  }
   
   // Create descriptor set layout (single combined sampler)
   VkDescriptorSetLayoutBinding layoutBinding = {0};
@@ -3562,6 +3582,7 @@ void cjelly_atlas_update_descriptor_set(CJellyTextureAtlas * atlas) {
   // Update the descriptor set with the atlas image view
   VkDescriptorImageInfo imageInfo = {0};
   imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+  // Use atlas-provided view and sampler
   imageInfo.imageView = atlas->atlasImageView;
   imageInfo.sampler = atlas->atlasSampler;
   
@@ -3574,7 +3595,7 @@ void cjelly_atlas_update_descriptor_set(CJellyTextureAtlas * atlas) {
   descriptorWrite.descriptorCount = 1;
   descriptorWrite.pImageInfo = &imageInfo;
   
-  vkUpdateDescriptorSets(device, 1, &descriptorWrite, 0, NULL);
+  vkUpdateDescriptorSets(cur_device(), 1, &descriptorWrite, 0, NULL);
 }
 
 // Context-based descriptor set update (uses context device instead of global)
@@ -3603,7 +3624,8 @@ static void cjelly_atlas_update_descriptor_set_ctx(CJellyTextureAtlas * atlas, c
 void cjelly_init_textured_pipeline_ctx(const CJellyVulkanContext* ctx) {
   if (!ctx || ctx->device == VK_NULL_HANDLE) return;
   // Avoid recreating global textured resources multiple times (multi-window init)
-  if (texturedPipeline != VK_NULL_HANDLE || textureImage != VK_NULL_HANDLE) return;
+  CJellyTexturedResources* tx = cur_tx();
+  if (tx && (tx->pipeline != VK_NULL_HANDLE || tx->image != VK_NULL_HANDLE)) return;
   createTextureImageCtx(ctx, "test/images/bmp/tang.bmp");
   createTexturedVertexBuffer();
   createTextureImageViewCtx(ctx);
@@ -3611,6 +3633,6 @@ void cjelly_init_textured_pipeline_ctx(const CJellyVulkanContext* ctx) {
   createDescriptorSetLayoutsCtx(ctx);
   createTextureDescriptorPoolCtx(ctx);
   allocateTextureDescriptorSetCtx(ctx);
-  updateTextureDescriptorSetCtx(ctx, textureDescriptorSet);
+  updateTextureDescriptorSetCtx(ctx, tx ? tx->descriptorSet : VK_NULL_HANDLE);
   createTexturedGraphicsPipelineCtx(ctx);
 }

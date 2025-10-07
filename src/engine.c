@@ -7,6 +7,7 @@
 #include <cjelly/engine_internal.h>
 #include <cjelly/runtime.h>
 #include <vulkan/vulkan.h>
+#include <cjelly/textured_internal.h>
 
 /* Internal definition of the opaque engine type */
 struct cj_engine_t {
@@ -26,6 +27,9 @@ struct cj_engine_t {
   cj_res_entry_t textures[CJ_ENGINE_MAX_TEXTURES];
   cj_res_entry_t buffers[CJ_ENGINE_MAX_BUFFERS];
   cj_res_entry_t samplers[CJ_ENGINE_MAX_SAMPLERS];
+
+  /* Internal-only textured resources (migration) */
+  CJellyTexturedResources textured;
 };
 
 static cj_engine_t* g_current_engine = NULL;
@@ -95,6 +99,9 @@ CJ_API VkQueue cj_engine_present_queue(const cj_engine_t* e) { return e ? e->pre
 CJ_API VkRenderPass cj_engine_render_pass(const cj_engine_t* e) { return e ? e->render_pass : VK_NULL_HANDLE; }
 CJ_API VkCommandPool cj_engine_command_pool(const cj_engine_t* e) { return e ? e->command_pool : VK_NULL_HANDLE; }
 
+/* Internal access to textured resources */
+CJ_API CJellyTexturedResources* cj_engine_textured(const cj_engine_t* e) { return (CJellyTexturedResources*)(e ? &e->textured : NULL); }
+
 CJ_API void cj_engine_import_context(cj_engine_t* engine, const CJellyVulkanContext* ctx) {
   if (!engine || !ctx) return;
   engine->instance = ctx->instance;
@@ -109,6 +116,9 @@ CJ_API void cj_engine_import_context(cj_engine_t* engine, const CJellyVulkanCont
   memset(engine->textures, 0, sizeof(engine->textures));
   memset(engine->buffers, 0, sizeof(engine->buffers));
   memset(engine->samplers, 0, sizeof(engine->samplers));
+
+  /* Initialize internal textured container */
+  memset(&engine->textured, 0, sizeof(engine->textured));
 }
 
 static inline cj_res_entry_t* table_for(cj_engine_t* e, cj_res_kind_t kind, size_t* out_cap) {
