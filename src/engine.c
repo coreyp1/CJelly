@@ -416,7 +416,6 @@ CJ_API int cj_engine_init_vulkan(cj_engine_t* engine, int use_validation) {
     fprintf(stderr, "Failed to create color pipeline\n");
     return 0;
   }
-  /* All code paths now use engine getters; legacy bind removed */
   return 1;
 }
 

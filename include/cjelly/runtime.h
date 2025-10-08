@@ -22,7 +22,6 @@ typedef struct CJellyVulkanContext {
 /* Forward-declare bindless resources struct; layout is internal */
 typedef struct CJellyBindlessResources CJellyBindlessResources;
 
-/* Context-based initialization helpers (deprecated: engine owns init) */
 /* Retained for source compatibility; no-ops or engine-backed where needed */
 static inline int cjelly_init_context(CJellyVulkanContext* ctx, int enableValidation) { (void)ctx; (void)enableValidation; return 0; }
 static inline void cjelly_destroy_context(CJellyVulkanContext* ctx) { (void)ctx; }

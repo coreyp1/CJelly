@@ -1,5 +1,4 @@
 /* Headers */
-/* previous duplicate header block removed; consolidated above */
 
 /* Platform includes */
 #ifdef _WIN32
@@ -200,7 +199,6 @@ static void plat_cleanupWindow(CJPlatformWindow * win) {
 /* textured pipeline helper (defined in cjelly.c) */
 void cjelly_init_textured_pipeline_ctx(const CJellyVulkanContext* ctx);
 
-/* duplicate struct removed (defined above) */
 
 /* Internal helpers migrated from cjelly.c (static) */
 static void plat_createPlatformWindow(CJPlatformWindow * win, const char * title, int width, int height);

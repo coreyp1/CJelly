@@ -13,4 +13,3 @@
 #include "cj_rgraph.h"
 #include "runtime.h"
 
-/* Legacy API removed */
