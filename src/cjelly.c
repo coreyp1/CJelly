@@ -30,18 +30,15 @@
 #include <cjelly/textured_internal.h>
 #include <cjelly/bindless_state_internal.h>
 #include <cjelly/basic_state_internal.h>
-#include <cjelly/runtime.h>
+#include <cjelly/format/image.h>
+#include <cjelly/macros.h>
 #ifdef _WIN32
 #include <windows.h>
 #include <vulkan/vulkan_win32.h>
 #else
-#include <X11/keysym.h>
 #include <X11/Xlib.h>
-#include <vulkan/vulkan_xlib.h>
+#include <X11/keysym.h>
 #endif
-#include <cjelly/format/image.h>
-#include <cjelly/macros.h>
-#include <cjelly/runtime.h>
 #include <shaders/basic.frag.h>
 #include <shaders/basic.vert.h>
 #include <shaders/color.vert.h>
@@ -51,23 +48,11 @@
 #include <shaders/bindless.frag.h>
 
 // Global Vulkan objects shared among all windows.
-
-#ifdef _WIN32
-HWND window;
-HINSTANCE hInstance;
-#else
-Display * display;
-Window window;
+#ifndef _WIN32
+Display * display; /* provided by main.c */
 #endif
 
 /* All Vulkan objects are engine-owned; read via engine getters */
-
-/* Textured resources moved under engine; use cj_engine_textured() */
-
-/* Bindless state moved under engine; use cj_engine_bindless() */
-// Bindless texture atlas global (used by pipeline creation)
-// Deprecated: global atlas removed in favor of resources->textureAtlas
-// CJellyTextureAtlas * bindlessTextureAtlas = NULL;
 
 
 // Global flag to indicate that the window should close.
@@ -76,9 +61,8 @@ int shouldClose;
 // Global flag to enable validation layers.
 int enableValidationLayers;
 
-/* Legacy debug messenger and fixed window dims removed in engine/window split */
 
-/* Helpers to read from current engine (Phase 5: no legacy compat) */
+/* Helpers to read from current engine */
 static inline cj_engine_t* cur_eng(void) { return cj_engine_get_current(); }
 static inline VkDevice cur_device(void) { cj_engine_t* e = cur_eng(); return e ? cj_engine_device(e) : VK_NULL_HANDLE; }
 static inline VkRenderPass cur_render_pass(void) { cj_engine_t* e = cur_eng(); return e ? cj_engine_render_pass(e) : VK_NULL_HANDLE; }
@@ -110,23 +94,15 @@ typedef struct VertexBindless {
 } VertexBindless;
 
 
-// Forward declarations for helper functions (for texture loading):
+// Forward declarations for helper functions still in use:
 void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
     VkMemoryPropertyFlags properties, VkBuffer * buffer,
     VkDeviceMemory * bufferMemory);
-VkCommandBuffer beginSingleTimeCommands(void);
-void endSingleTimeCommands(VkCommandBuffer commandBuffer);
 void transitionImageLayout(VkImage image, VkFormat format,
     VkImageLayout oldLayout, VkImageLayout newLayout);
-void copyBufferToImage(
-    VkBuffer buffer, VkImage image, uint32_t width, uint32_t height);
-VkShaderModule createShaderModuleFromMemory(VkDevice device, const unsigned char * code, size_t codeSize);
-void createDebugMessenger(void);
-/* engine owns shutdown */
-
-// Forward declarations for bindless functions:
 void createBindlessVertexBuffer(VkDevice device, VkCommandPool commandPool);
 void createBindlessGraphicsPipeline(VkDevice device, VkRenderPass renderPass);
+VkShaderModule createShaderModuleFromMemory(VkDevice device, const unsigned char * code, size_t codeSize);
 
 // Forward declarations/definitions for texture atlas and application
 typedef struct CJellyTextureAtlas {
@@ -143,7 +119,6 @@ typedef struct CJellyTextureAtlas {
   uint32_t nextTextureY;
   uint32_t currentRowHeight;
   uint32_t textureCount;
-  /* moved from file-scope globals */
   struct CJellyTextureEntry * entries;
   uint32_t maxTextures;
 } CJellyTextureAtlas;
@@ -171,9 +146,7 @@ static void cjelly_atlas_update_descriptor_set_ctx(CJellyTextureAtlas * atlas, c
 struct CJellyWindow; /* opaque forward */
 void createTexturedCommandBuffersForWindowCtx(struct CJellyWindow * win, const CJellyVulkanContext* ctx);
 
-/* duplicate removed */
 
-/* Bindless internal layout moved to include/cjelly/bindless_internal.h */
 
 // Context-based atlas helpers (defined later)
 static void cjelly_atlas_update_descriptor_set_ctx(CJellyTextureAtlas * atlas, const CJellyVulkanContext* ctx);
@@ -475,7 +448,6 @@ CJellyBindlessResources* cjelly_create_bindless_resources(void) {
     return resources;
 }
 
-// Deprecated shim removed; using full ctx version below
 
 CJ_API CJellyBindlessResources* cjelly_create_bindless_resources_ctx(const CJellyVulkanContext* ctx) {
     if (!ctx || ctx->device == VK_NULL_HANDLE || ctx->commandPool == VK_NULL_HANDLE || ctx->renderPass == VK_NULL_HANDLE) {
@@ -1492,7 +1464,6 @@ void createBindlessGraphicsPipeline(VkDevice device __attribute__((unused)), VkR
   colorBlending.pAttachments = &colorBlendAttachment;
 
   // Use the bindless descriptor set layout
-  // Legacy path retained but global atlas removed; do nothing here
   VkDescriptorSetLayout descriptorSetLayouts[] = {VK_NULL_HANDLE};
   VkPushConstantRange pushRange = {0};
   pushRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
@@ -1982,11 +1953,6 @@ void copyBufferToImage(
   endSingleTimeCommands(commandBuffer);
 }
 
-/* migrated to window.c */
-
-/* moved to window.c: createBindlessCommandBuffersForWindowCtx */
-
-/* moved to window.c */
 
 /**
  * @brief Creates a vertex buffer for a textured square.
@@ -2046,7 +2012,6 @@ void createTexturedVertexBuffer() {
 }
 
 /* Context-based textured command buffers for a window */
-/* moved to window.c */
 
 void createBindlessVertexBuffer(VkDevice device __attribute__((unused)), VkCommandPool commandPool __attribute__((unused))) {
   // Create vertices for bindless rendering - single square with dynamic color switching
@@ -2083,7 +2048,6 @@ void createBindlessVertexBuffer(VkDevice device __attribute__((unused)), VkComma
 // === BINDLESS TEXTURE ATLAS MANAGEMENT ===
 //
 
-/* per-atlas entries and capacity now tracked in CJellyTextureAtlas */
 
 CJellyTextureAtlas * cjelly_create_texture_atlas(uint32_t width, uint32_t height) {
   CJellyTextureAtlas * atlas = malloc(sizeof(CJellyTextureAtlas));
@@ -2270,22 +2234,10 @@ CJellyTextureAtlas * cjelly_create_texture_atlas_ctx(const CJellyVulkanContext* 
     return NULL;
   }
 
-  // Create descriptor set layout using context device
-  VkDescriptorSetLayoutBinding layoutBinding = {0};
-  layoutBinding.binding = 0;
-  layoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-  layoutBinding.descriptorCount = 1;
-  layoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-  layoutBinding.pImmutableSamplers = NULL;
-
-  VkDescriptorSetLayoutCreateInfo layoutInfo = {0};
-  layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-  layoutInfo.bindingCount = 1;
-  layoutInfo.pBindings = &layoutBinding;
-  layoutInfo.pNext = NULL;
-
-  if (vkCreateDescriptorSetLayout(ctx->device, &layoutInfo, NULL, &atlas->bindlessDescriptorSetLayout) != VK_SUCCESS) {
-    fprintf(stderr, "Failed to create bindless descriptor set layout (ctx)\n");
+  // Use the engine's shared bindless descriptor set layout and pool
+  atlas->bindlessDescriptorSetLayout = cj_engine_bindless_layout(cur_eng());
+  if (atlas->bindlessDescriptorSetLayout == VK_NULL_HANDLE) {
+    fprintf(stderr, "Failed to get engine bindless descriptor set layout (ctx)\n");
     vkDestroyImageView(ctx->device, atlas->atlasImageView, NULL);
     vkDestroyImage(ctx->device, atlas->atlasImage, NULL);
     vkFreeMemory(ctx->device, atlas->atlasImageMemory, NULL);
@@ -2293,22 +2245,9 @@ CJellyTextureAtlas * cjelly_create_texture_atlas_ctx(const CJellyVulkanContext* 
     free(atlas);
     return NULL;
   }
-
-  // Create descriptor pool using context device
-  VkDescriptorPoolSize poolSize = {0};
-  poolSize.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-  poolSize.descriptorCount = atlas->maxTextures;
-
-  VkDescriptorPoolCreateInfo poolInfo = {0};
-  poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-  poolInfo.poolSizeCount = 1;
-  poolInfo.pPoolSizes = &poolSize;
-  poolInfo.maxSets = 1;
-  poolInfo.flags = 0;
-
-  if (vkCreateDescriptorPool(ctx->device, &poolInfo, NULL, &atlas->bindlessDescriptorPool) != VK_SUCCESS) {
-    fprintf(stderr, "Failed to create bindless descriptor pool (ctx)\n");
-    vkDestroyDescriptorSetLayout(ctx->device, atlas->bindlessDescriptorSetLayout, NULL);
+  atlas->bindlessDescriptorPool = cj_engine_bindless_pool(cur_eng());
+  if (atlas->bindlessDescriptorPool == VK_NULL_HANDLE) {
+    fprintf(stderr, "Failed to get engine bindless descriptor pool (ctx)\n");
     vkDestroyImageView(ctx->device, atlas->atlasImageView, NULL);
     vkDestroyImage(ctx->device, atlas->atlasImage, NULL);
     vkFreeMemory(ctx->device, atlas->atlasImageMemory, NULL);
@@ -2344,8 +2283,7 @@ void cjelly_destroy_texture_atlas_ctx(CJellyTextureAtlas * atlas, const CJellyVu
   if (!atlas) return;
 
   vkDestroySampler(ctx->device, atlas->atlasSampler, NULL);
-  vkDestroyDescriptorSetLayout(ctx->device, atlas->bindlessDescriptorSetLayout, NULL);
-  vkDestroyDescriptorPool(ctx->device, atlas->bindlessDescriptorPool, NULL);
+  /* layout/pool are engine-owned; do not destroy here */
   vkDestroyImageView(ctx->device, atlas->atlasImageView, NULL);
   vkDestroyImage(ctx->device, atlas->atlasImage, NULL);
   vkFreeMemory(ctx->device, atlas->atlasImageMemory, NULL);
