@@ -127,7 +127,7 @@ void copyBufferToImage(
     VkBuffer buffer, VkImage image, uint32_t width, uint32_t height);
 VkShaderModule createShaderModuleFromMemory(VkDevice device, const unsigned char * code, size_t codeSize);
 void createDebugMessenger(void);
-/* legacy cleanup removed; engine owns shutdown */
+/* engine owns shutdown */
 
 // Forward declarations for bindless functions:
 void createBindlessVertexBuffer(VkDevice device, VkCommandPool commandPool);
@@ -509,9 +509,9 @@ CJ_API CJellyBindlessResources* cjelly_create_bindless_resources_ctx(const CJell
 
     // Create vertex buffer into resources using context
     VkBuffer vb = VK_NULL_HANDLE; VkDeviceMemory vm = VK_NULL_HANDLE;
-  createBindlessVertexBufferCtx(ctx->device, ctx->commandPool, &vb, &vm);
-  resources->vertexBuffer = vb;
-  resources->vertexBufferMemory = vm;
+    createBindlessVertexBufferCtx(ctx->device, ctx->commandPool, &vb, &vm);
+    resources->vertexBuffer = vb;
+    resources->vertexBufferMemory = vm;
   /* Optionally mirror into engine bindless state for fallback paths */
   CJellyBindlessState* blm = cur_bl();
   if (blm && blm->vertexBuffer == VK_NULL_HANDLE) {
@@ -614,8 +614,8 @@ CJellyBindlessResources* cjelly_create_bindless_color_square_resources(void) {
         pli.setLayoutCount = 0;
         pli.pSetLayouts = NULL;
     } else {
-        pli.setLayoutCount = 1;
-        pli.pSetLayouts = setLayouts;
+    pli.setLayoutCount = 1;
+    pli.pSetLayouts = setLayouts;
     }
     pli.pushConstantRangeCount = 1;
     pli.pPushConstantRanges = &pushRange;
@@ -921,7 +921,7 @@ void DestroyDebugUtilsMessengerEXT(VkInstance instance,
 // === PLATFORM-SPECIFIC WINDOW CREATION ===
 
 /* Use shared internal window definition */
-#include <cjelly/window_internal.h>
+/* window_internal.h no longer needed; window internals migrated to window.c */
 //
 
 // Window procedure for Windows.
@@ -942,45 +942,7 @@ LRESULT CALLBACK WindowProc(
 #endif
 
 
-// Creates a platform-specific window and initializes the CJellyWindow
-// structure.
-void createPlatformWindow(
-    CJellyWindow * win, const char * title, int width, int height) {
-  win->width = width;
-  win->height = height;
-
-#ifdef _WIN32
-
-  hInstance = GetModuleHandle(NULL);
-  WNDCLASS wc = {0};
-  wc.lpfnWndProc = WindowProc;
-  wc.hInstance = hInstance;
-  wc.lpszClassName = "VulkanWindowClass";
-  RegisterClass(&wc);
-  win->handle = CreateWindowEx(0, "VulkanWindowClass", title,
-      WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, width, height, NULL,
-      NULL, hInstance, NULL);
-  ShowWindow(win->handle, SW_SHOW);
-
-#else
-
-  int screen = DefaultScreen(display);
-  win->handle =
-      XCreateSimpleWindow(display, RootWindow(display, screen), 0, 0, width,
-          height, 1, BlackPixel(display, screen), WhitePixel(display, screen));
-  // Select basic events so we receive destroy notifications and key presses
-  XSelectInput(display, win->handle, StructureNotifyMask | KeyPressMask | ExposureMask);
-  Atom wmDelete = XInternAtom(display, "WM_DELETE_WINDOW", False);
-  XStoreName(display, win->handle, title);
-  XSetWMProtocols(display, win->handle, &wmDelete, 1);
-  XMapWindow(display, win->handle);
-  XFlush(display);
-
-#endif
-
-  win->needsRedraw = 1;
-  win->nextFrameTime = 0;
-}
+/* migrated to window.c */
 
 
 //
@@ -1028,339 +990,19 @@ CJ_API void processWindowEvents() {
 //
 
 // Create a Vulkan surface for a given window.
-void createSurfaceForWindow(CJellyWindow * win) {
+/* migrated to window.c */
 
-#ifdef _WIN32
-
-  VkWin32SurfaceCreateInfoKHR createInfo = {0};
-  createInfo.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
-  createInfo.hinstance = hInstance;
-  createInfo.hwnd = win->handle;
-  if (vkCreateWin32SurfaceKHR(cj_engine_instance(cur_eng()), &createInfo, NULL, &win->surface) !=
-      VK_SUCCESS) {
-    fprintf(stderr, "Failed to create Win32 surface\n");
-    exit(EXIT_FAILURE);
-  }
-
-#else
-
-  VkXlibSurfaceCreateInfoKHR createInfo = {0};
-  createInfo.sType = VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR;
-  createInfo.dpy = display;
-  createInfo.window = win->handle;
-  if (vkCreateXlibSurfaceKHR(cj_engine_instance(cur_eng()), &createInfo, NULL, &win->surface) !=
-      VK_SUCCESS) {
-    fprintf(stderr, "Failed to create Xlib surface\n");
-    exit(EXIT_FAILURE);
-  }
-
-#endif
-  if (getenv("CJELLY_DEBUG")) fprintf(stderr, "createSurfaceForWindow: surface=%p\n", (void*)win->surface);
-}
+/* migrated */
 
 
-// Create the swap chain for a window.
-void createSwapChainForWindow(CJellyWindow * win) {
-  // In a full implementation, we would query physical device surface support
-  // and choose formats/present modes. For now, we use defaults.
-  VkSurfaceCapabilitiesKHR capabilities;
-  VkResult r = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(
-      cj_engine_physical_device(cur_eng()), win->surface, &capabilities);
-  if (getenv("CJELLY_DEBUG")) fprintf(stderr, "getSurfaceCaps: res=%d curExtent=%ux%u minImages=%u\n", r,
-      capabilities.currentExtent.width, capabilities.currentExtent.height, capabilities.minImageCount);
-
-  // Setting the swap chain extent to the window's extent.
-  win->swapChainExtent = capabilities.currentExtent;
-
-  VkSwapchainCreateInfoKHR createInfo = {0};
-  createInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
-  createInfo.surface = win->surface;
-  createInfo.minImageCount = capabilities.minImageCount;
-  createInfo.imageFormat = VK_FORMAT_B8G8R8A8_SRGB;
-  createInfo.imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
-  createInfo.imageExtent = win->swapChainExtent;
-  createInfo.imageArrayLayers = 1;
-  createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-  createInfo.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
-  createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-  createInfo.presentMode = VK_PRESENT_MODE_FIFO_KHR;
-  createInfo.clipped = VK_TRUE;
-  createInfo.oldSwapchain = VK_NULL_HANDLE;
-
-  r = vkCreateSwapchainKHR(cur_device(), &createInfo, NULL, &win->swapChain);
-  /* Ensure engine render pass matches swapchain format before creating views/fbos */
-  cj_engine_ensure_render_pass(cur_eng(), createInfo.imageFormat);
-  if (getenv("CJELLY_DEBUG")) fprintf(stderr, "vkCreateSwapchainKHR: res=%d swap=%p\n", r, (void*)win->swapChain);
-  if (r != VK_SUCCESS || win->swapChain == VK_NULL_HANDLE) {
-    fprintf(stderr, "Failed to create swap chain (res=%d)\n", r);
-    exit(EXIT_FAILURE);
-  }
-}
-
-
-// Create image views for the swap chain images.
-void createImageViewsForWindow(CJellyWindow * win) {
-  VkResult r = vkGetSwapchainImagesKHR(
-      cur_device(), win->swapChain, &win->swapChainImageCount, NULL);
-  if (getenv("CJELLY_DEBUG")) fprintf(stderr, "getSwapchainImages(count): res=%d count=%u\n", r, win->swapChainImageCount);
-  win->swapChainImages = malloc(sizeof(VkImage) * win->swapChainImageCount);
-  r = vkGetSwapchainImagesKHR(
-      cur_device(), win->swapChain, &win->swapChainImageCount, win->swapChainImages);
-  if (getenv("CJELLY_DEBUG")) fprintf(stderr, "getSwapchainImages(images): res=%d\n", r);
-  if (r != VK_SUCCESS || !win->swapChainImages) { fprintf(stderr, "Failed to get swapchain images\n"); exit(EXIT_FAILURE);} 
-
-  win->swapChainImageViews =
-      malloc(sizeof(VkImageView) * win->swapChainImageCount);
-  if (cur_device() == VK_NULL_HANDLE) { fprintf(stderr, "ERROR: cur_device() is NULL before creating image views\n"); exit(EXIT_FAILURE);} 
-  for (uint32_t i = 0; i < win->swapChainImageCount; i++) {
-    VkImageViewCreateInfo viewInfo = {0};
-    viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-    viewInfo.image = win->swapChainImages[i];
-    viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-    viewInfo.format = VK_FORMAT_B8G8R8A8_SRGB;
-    viewInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-    viewInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-    viewInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-    viewInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-    viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    viewInfo.subresourceRange.baseMipLevel = 0;
-    viewInfo.subresourceRange.levelCount = 1;
-    viewInfo.subresourceRange.baseArrayLayer = 0;
-    viewInfo.subresourceRange.layerCount = 1;
-
-    VkResult vr = vkCreateImageView(cur_device(), &viewInfo, NULL,
-            &win->swapChainImageViews[i]);
-    if (vr != VK_SUCCESS) {
-      fprintf(stderr, "Failed to create image view\n");
-      exit(EXIT_FAILURE);
-    }
-    if (getenv("CJELLY_DEBUG")) fprintf(stderr, "created image view[%u]=%p\n", i, (void*)win->swapChainImageViews[i]);
-  }
-}
-
-
-// Create framebuffers for the window.
-void createFramebuffersForWindow(CJellyWindow * win) {
-  win->swapChainFramebuffers =
-      malloc(sizeof(VkFramebuffer) * win->swapChainImageCount);
-  if (getenv("CJELLY_DEBUG")) fprintf(stderr, "createFramebuffers: renderPass=%p\n", (void*)cur_render_pass());
-  for (uint32_t i = 0; i < win->swapChainImageCount; i++) {
-    VkImageView attachments[] = {win->swapChainImageViews[i]};
-    VkFramebufferCreateInfo framebufferInfo = {0};
-    framebufferInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
-    framebufferInfo.renderPass = cur_render_pass();
-    framebufferInfo.attachmentCount = 1;
-    framebufferInfo.pAttachments = attachments;
-    framebufferInfo.width = win->swapChainExtent.width;
-    framebufferInfo.height = win->swapChainExtent.height;
-    framebufferInfo.layers = 1;
-
-    if (vkCreateFramebuffer(cj_engine_device(cur_eng()), &framebufferInfo, NULL,
-            &win->swapChainFramebuffers[i]) != VK_SUCCESS) {
-      fprintf(stderr, "Failed to create framebuffer\n");
-      exit(EXIT_FAILURE);
-    }
-  }
-}
-
-
-// Allocate and record command buffers for a window.
-void createCommandBuffersForWindow(CJellyWindow * win) {
-  win->commandBuffers =
-      malloc(sizeof(VkCommandBuffer) * win->swapChainImageCount);
-  VkCommandBufferAllocateInfo allocInfo = {0};
-  allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-  allocInfo.commandPool = cur_cmd_pool();
-  allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-  allocInfo.commandBufferCount = win->swapChainImageCount;
-
-  if (vkAllocateCommandBuffers(cur_device(), &allocInfo, win->commandBuffers) !=
-      VK_SUCCESS) {
-    fprintf(stderr, "Failed to allocate command buffers\n");
-    exit(EXIT_FAILURE);
-  }
-
-  for (uint32_t i = 0; i < win->swapChainImageCount; i++) {
-    VkCommandBufferBeginInfo beginInfo = {0};
-    beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-
-    if (vkBeginCommandBuffer(win->commandBuffers[i], &beginInfo) !=
-        VK_SUCCESS) {
-      fprintf(stderr, "Failed to begin command buffer\n");
-      exit(EXIT_FAILURE);
-    }
-
-    VkRenderPassBeginInfo renderPassInfo = {0};
-    renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
-    renderPassInfo.renderPass = cur_render_pass();
-    renderPassInfo.framebuffer = win->swapChainFramebuffers[i];
-    renderPassInfo.renderArea.offset.x = 0;
-    renderPassInfo.renderArea.offset.y = 0;
-    renderPassInfo.renderArea.extent = win->swapChainExtent;
-
-    VkClearValue clearColor = {{{0.1f, 0.1f, 0.1f, 1.0f}}};
-    renderPassInfo.clearValueCount = 1;
-    renderPassInfo.pClearValues = &clearColor;
-
-    vkCmdBeginRenderPass(
-        win->commandBuffers[i], &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-
-    // Dynamically set the viewport using this window's swap chain extent.
-    VkViewport viewport = {0};
-    viewport.x = 0.0f;
-    viewport.y = 0.0f;
-    viewport.width = (float)win->swapChainExtent.width;
-    viewport.height = (float)win->swapChainExtent.height;
-    viewport.minDepth = 0.0f;
-    viewport.maxDepth = 1.0f;
-    vkCmdSetViewport(win->commandBuffers[i], 0, 1, &viewport);
-
-    // Dynamically set the scissor using this window's swap chain extent.
-    VkRect2D scissor = {0};
-    scissor.offset.x = 0;
-    scissor.offset.y = 0;
-    scissor.extent = win->swapChainExtent;
-    vkCmdSetScissor(win->commandBuffers[i], 0, 1, &scissor);
-
-    VkDeviceSize offsets[] = {0};
-    CJellyBasicState* bs = cur_basic();
-    VkBuffer vb = bs ? bs->vertexBuffer : VK_NULL_HANDLE;
-    vkCmdBindVertexBuffers(
-        win->commandBuffers[i], 0, 1, &vb, offsets);
-
-    vkCmdBindPipeline(win->commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS,
-        bs ? bs->pipeline : VK_NULL_HANDLE);
-    vkCmdDraw(win->commandBuffers[i], 6, 1, 0, 0);
-    vkCmdEndRenderPass(win->commandBuffers[i]);
-
-    if (vkEndCommandBuffer(win->commandBuffers[i]) != VK_SUCCESS) {
-      fprintf(stderr, "Failed to record command buffer\n");
-      exit(EXIT_FAILURE);
-    }
-  }
-}
-
-
-// Create synchronization objects for a window.
-void createSyncObjectsForWindow(CJellyWindow * win) {
-  VkSemaphoreCreateInfo semaphoreInfo = {0};
-  semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-
-  if (vkCreateSemaphore(cur_device(), &semaphoreInfo, NULL,
-          &win->imageAvailableSemaphore) != VK_SUCCESS ||
-      vkCreateSemaphore(cur_device(), &semaphoreInfo, NULL,
-          &win->renderFinishedSemaphore) != VK_SUCCESS) {
-    fprintf(stderr, "Failed to create semaphores\n");
-    exit(EXIT_FAILURE);
-  }
-
-  VkFenceCreateInfo fenceInfo = {0};
-  fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-  fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
-
-  if (vkCreateFence(cur_device(), &fenceInfo, NULL, &win->inFlightFence) !=
-      VK_SUCCESS) {
-    fprintf(stderr, "Failed to create fence\n");
-    exit(EXIT_FAILURE);
-  }
-}
-
-//
-// === DRAWING A FRAME PER WINDOW ===
-//
-
-void drawFrameForWindow(CJellyWindow * win) {
-  vkWaitForFences(cur_device(), 1, &win->inFlightFence, VK_TRUE, UINT64_MAX);
-  vkResetFences(cur_device(), 1, &win->inFlightFence);
-
-  uint32_t imageIndex;
-  vkAcquireNextImageKHR(cur_device(), win->swapChain, UINT64_MAX,
-      win->imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
-
-  VkSubmitInfo submitInfo = {0};
-  submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-  VkSemaphore waitSemaphores[] = {win->imageAvailableSemaphore};
-  VkPipelineStageFlags waitStages[] = {
-      VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT};
-  submitInfo.waitSemaphoreCount = 1;
-  submitInfo.pWaitSemaphores = waitSemaphores;
-  submitInfo.pWaitDstStageMask = waitStages;
-  submitInfo.commandBufferCount = 1;
-  submitInfo.pCommandBuffers = &win->commandBuffers[imageIndex];
-  VkSemaphore signalSemaphores[] = {win->renderFinishedSemaphore};
-  submitInfo.signalSemaphoreCount = 1;
-  submitInfo.pSignalSemaphores = signalSemaphores;
-
-  if (vkQueueSubmit(cur_gfx_queue(), 1, &submitInfo, win->inFlightFence) !=
-      VK_SUCCESS) {
-    fprintf(stderr, "Failed to submit draw command buffer\n");
-  }
-
-  VkPresentInfoKHR presentInfo = {0};
-  presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-  presentInfo.waitSemaphoreCount = 1;
-  presentInfo.pWaitSemaphores = signalSemaphores;
-  presentInfo.swapchainCount = 1;
-  presentInfo.pSwapchains = &win->swapChain;
-  presentInfo.pImageIndices = &imageIndex;
-
-  vkQueuePresentKHR(cur_present_queue(), &presentInfo);
-}
+/* migrated to window.c */
 
 
 //
 // === CLEANUP FOR A WINDOW ===
 //
 
-void cleanupWindow(CJellyWindow * win) {
-  if (!win) return;
-  VkDevice dev = cur_device();
-  VkCommandPool pool = cur_cmd_pool();
-  VkInstance inst = cj_engine_instance(cur_eng());
-
-  if (dev != VK_NULL_HANDLE) {
-    vkDeviceWaitIdle(dev);
-  }
-
-  if (dev != VK_NULL_HANDLE) {
-    if (win->renderFinishedSemaphore) { vkDestroySemaphore(dev, win->renderFinishedSemaphore, NULL); win->renderFinishedSemaphore = VK_NULL_HANDLE; }
-    if (win->imageAvailableSemaphore) { vkDestroySemaphore(dev, win->imageAvailableSemaphore, NULL); win->imageAvailableSemaphore = VK_NULL_HANDLE; }
-    if (win->inFlightFence) { vkDestroyFence(dev, win->inFlightFence, NULL); win->inFlightFence = VK_NULL_HANDLE; }
-  }
-
-  // Free command buffers allocated from the engine command pool
-  if (dev != VK_NULL_HANDLE && pool != VK_NULL_HANDLE && win->commandBuffers && win->swapChainImageCount > 0) {
-    vkFreeCommandBuffers(dev, pool, win->swapChainImageCount, win->commandBuffers);
-  }
-  if (win->commandBuffers) { free(win->commandBuffers); win->commandBuffers = NULL; }
-
-  if (dev != VK_NULL_HANDLE) {
-    if (win->swapChainFramebuffers) {
-      for (uint32_t i = 0; i < win->swapChainImageCount; i++) {
-        if (win->swapChainFramebuffers[i]) vkDestroyFramebuffer(dev, win->swapChainFramebuffers[i], NULL);
-      }
-    }
-    if (win->swapChainImageViews) {
-      for (uint32_t i = 0; i < win->swapChainImageCount; i++) {
-        if (win->swapChainImageViews[i]) vkDestroyImageView(dev, win->swapChainImageViews[i], NULL);
-      }
-    }
-  }
-  if (win->swapChainFramebuffers) { free(win->swapChainFramebuffers); win->swapChainFramebuffers = NULL; }
-  if (win->swapChainImageViews) { free(win->swapChainImageViews); win->swapChainImageViews = NULL; }
-  if (win->swapChainImages) { free(win->swapChainImages); win->swapChainImages = NULL; }
-
-  if (dev != VK_NULL_HANDLE && win->swapChain) { vkDestroySwapchainKHR(dev, win->swapChain, NULL); win->swapChain = VK_NULL_HANDLE; }
-  if (inst != VK_NULL_HANDLE && win->surface) { vkDestroySurfaceKHR(inst, win->surface, NULL); win->surface = VK_NULL_HANDLE; }
-
-#ifdef _WIN32
-  if (win->handle) { DestroyWindow(win->handle); win->handle = NULL; }
-#else
-  extern Display* display;
-  if (display && win->handle) { XDestroyWindow(display, win->handle); win->handle = 0; }
-#endif
-  win->swapChainImageCount = 0;
-}
+/* migrated to window.c */
 
 
 
@@ -2342,7 +1984,7 @@ void copyBufferToImage(
   endSingleTimeCommands(commandBuffer);
 }
 
-/* legacy textured recorder removed */
+/* migrated to window.c */
 
 /* moved to window.c: createBindlessCommandBuffersForWindowCtx */
 
@@ -2437,7 +2079,7 @@ void createBindlessVertexBuffer(VkDevice device __attribute__((unused)), VkComma
 // === GLOBAL VULKAN INITIALIZATION & CLEANUP ===
 //
 
-/* legacy global init removed; engine owns bootstrap */
+/* engine owns bootstrap */
 
 //
 // === BINDLESS TEXTURE ATLAS MANAGEMENT ===

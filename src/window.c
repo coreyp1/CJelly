@@ -1,42 +1,203 @@
+/* Headers */
+/* previous duplicate header block removed; consolidated above */
+
+/* Platform includes */
+#ifdef _WIN32
+#include <windows.h>
+#include <vulkan/vulkan.h>
+#include <vulkan/vulkan_win32.h>
+#else
+#include <X11/Xlib.h>
+#include <vulkan/vulkan.h>
+#include <vulkan/vulkan_xlib.h>
+extern Display* display; /* provided by main on Linux */
+#endif
+#include <stdio.h>
+#include <assert.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
-
-#include <stdio.h>
-#include <assert.h>
 #include <cjelly/cj_window.h>
 #include <cjelly/cj_platform.h>
 #include <cjelly/runtime.h>
 #include <cjelly/engine_internal.h>
-#include <cjelly/window_internal.h>
 #include <cjelly/bindless_internal.h>
-
-/* Fetch textured resources from engine instead of extern globals */
 #include <cjelly/textured_internal.h>
 
-/* Private forward declarations to call internal window helpers in cjelly.c */
-#include <cjelly/window_internal.h>
-void createPlatformWindow(CJellyWindow * win, const char * title, int width, int height);
-void createSurfaceForWindow(CJellyWindow * win);
-void createSwapChainForWindow(CJellyWindow * win);
-void createImageViewsForWindow(CJellyWindow * win);
-void createFramebuffersForWindow(CJellyWindow * win);
-void createTexturedCommandBuffersForWindowCtx(CJellyWindow * win, const CJellyVulkanContext* ctx);
-void createSyncObjectsForWindow(CJellyWindow * win);
-void drawFrameForWindow(CJellyWindow * win);
-void cleanupWindow(CJellyWindow * win);
+/* Platform window struct */
+typedef struct CJPlatformWindow {
+#ifdef _WIN32
+  HWND handle;
+#else
+  Window handle;
+#endif
+  VkSurfaceKHR surface;
+  VkSwapchainKHR swapChain;
+  uint32_t swapChainImageCount;
+  VkImage * swapChainImages;
+  VkImageView * swapChainImageViews;
+  VkFramebuffer * swapChainFramebuffers;
+  VkCommandBuffer * commandBuffers;
+  VkSemaphore imageAvailableSemaphore;
+  VkSemaphore renderFinishedSemaphore;
+  VkFence inFlightFence;
+  VkExtent2D swapChainExtent;
+  int width;
+  int height;
+  int updateMode;
+  uint32_t fixedFramerate;
+  int needsRedraw;
+  uint64_t nextFrameTime;
+} CJPlatformWindow;
+
+/* === Platform helpers (migrated) === */
+typedef struct CJPlatformWindow CJPlatformWindow;
+static void plat_createPlatformWindow(CJPlatformWindow * win, const char * title, int width, int height) {
+  if (!win) return;
+  win->width = width; win->height = height;
+#ifdef _WIN32
+  HINSTANCE hInstance = GetModuleHandle(NULL);
+  WNDCLASS wc = {0};
+  wc.lpfnWndProc = DefWindowProc; wc.hInstance = hInstance; wc.lpszClassName = "CJellyWindow";
+  RegisterClass(&wc);
+  win->handle = CreateWindowEx(0, "CJellyWindow", title, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, width, height, NULL, NULL, hInstance, NULL);
+  ShowWindow(win->handle, SW_SHOW);
+#else
+  int screen = DefaultScreen(display);
+  win->handle = XCreateSimpleWindow(display, RootWindow(display, screen), 0, 0, (unsigned)width, (unsigned)height, 1, BlackPixel(display, screen), WhitePixel(display, screen));
+  XSelectInput(display, win->handle, StructureNotifyMask | KeyPressMask | ExposureMask);
+  Atom wmDelete = XInternAtom(display, "WM_DELETE_WINDOW", False);
+  XStoreName(display, win->handle, title);
+  XSetWMProtocols(display, win->handle, &wmDelete, 1);
+  XMapWindow(display, win->handle);
+  XFlush(display);
+#endif
+}
+
+static void plat_createSurfaceForWindow(CJPlatformWindow * win) {
+  if (!win) return;
+#ifdef _WIN32
+  VkWin32SurfaceCreateInfoKHR ci = {0}; ci.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR; ci.hinstance = GetModuleHandle(NULL); ci.hwnd = win->handle;
+  vkCreateWin32SurfaceKHR(cj_engine_instance(cj_engine_get_current()), &ci, NULL, &win->surface);
+#else
+  VkXlibSurfaceCreateInfoKHR ci = {0}; ci.sType = VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR; ci.dpy = display; ci.window = win->handle;
+  vkCreateXlibSurfaceKHR(cj_engine_instance(cj_engine_get_current()), &ci, NULL, &win->surface);
+#endif
+}
+
+static void plat_createSwapChainForWindow(CJPlatformWindow * win) {
+  if (!win) return;
+  VkSurfaceCapabilitiesKHR caps; vkGetPhysicalDeviceSurfaceCapabilitiesKHR(cj_engine_physical_device(cj_engine_get_current()), win->surface, &caps);
+  win->swapChainExtent = caps.currentExtent;
+  VkSwapchainCreateInfoKHR ci = {0}; ci.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR; ci.surface = win->surface; ci.minImageCount = caps.minImageCount; ci.imageFormat = VK_FORMAT_B8G8R8A8_SRGB; ci.imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR; ci.imageExtent = win->swapChainExtent; ci.imageArrayLayers = 1; ci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT; ci.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR; ci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR; ci.presentMode = VK_PRESENT_MODE_FIFO_KHR; ci.clipped = VK_TRUE;
+  vkCreateSwapchainKHR(cj_engine_device(cj_engine_get_current()), &ci, NULL, &win->swapChain);
+  cj_engine_ensure_render_pass(cj_engine_get_current(), ci.imageFormat);
+}
+
+static void plat_createImageViewsForWindow(CJPlatformWindow * win) {
+  if (!win) return;
+  vkGetSwapchainImagesKHR(cj_engine_device(cj_engine_get_current()), win->swapChain, &win->swapChainImageCount, NULL);
+  win->swapChainImages = (VkImage*)malloc(sizeof(VkImage)*win->swapChainImageCount);
+  vkGetSwapchainImagesKHR(cj_engine_device(cj_engine_get_current()), win->swapChain, &win->swapChainImageCount, win->swapChainImages);
+  win->swapChainImageViews = (VkImageView*)malloc(sizeof(VkImageView)*win->swapChainImageCount);
+  for (uint32_t i=0;i<win->swapChainImageCount;i++) {
+    VkImageViewCreateInfo vi = {0}; vi.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO; vi.image = win->swapChainImages[i]; vi.viewType = VK_IMAGE_VIEW_TYPE_2D; vi.format = VK_FORMAT_B8G8R8A8_SRGB; vi.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; vi.subresourceRange.levelCount = 1; vi.subresourceRange.layerCount = 1;
+    vkCreateImageView(cj_engine_device(cj_engine_get_current()), &vi, NULL, &win->swapChainImageViews[i]);
+  }
+}
+
+static void plat_createFramebuffersForWindow(CJPlatformWindow * win) {
+  if (!win) return;
+  win->swapChainFramebuffers = (VkFramebuffer*)malloc(sizeof(VkFramebuffer)*win->swapChainImageCount);
+  for (uint32_t i=0;i<win->swapChainImageCount;i++) {
+    VkImageView attachments[] = { win->swapChainImageViews[i] };
+    VkFramebufferCreateInfo fi = {0}; fi.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO; fi.renderPass = cj_engine_render_pass(cj_engine_get_current()); fi.attachmentCount = 1; fi.pAttachments = attachments; fi.width = win->swapChainExtent.width; fi.height = win->swapChainExtent.height; fi.layers = 1;
+    vkCreateFramebuffer(cj_engine_device(cj_engine_get_current()), &fi, NULL, &win->swapChainFramebuffers[i]);
+  }
+}
+
+static void plat_createSyncObjectsForWindow(CJPlatformWindow * win) {
+  if (!win) return;
+  VkSemaphoreCreateInfo si = {0}; si.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+  vkCreateSemaphore(cj_engine_device(cj_engine_get_current()), &si, NULL, &win->imageAvailableSemaphore);
+  vkCreateSemaphore(cj_engine_device(cj_engine_get_current()), &si, NULL, &win->renderFinishedSemaphore);
+  VkFenceCreateInfo fi = {0}; fi.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO; fi.flags = VK_FENCE_CREATE_SIGNALED_BIT; vkCreateFence(cj_engine_device(cj_engine_get_current()), &fi, NULL, &win->inFlightFence);
+}
+
+static void plat_drawFrameForWindow(CJPlatformWindow * win) {
+  if (!win) return;
+  VkDevice dev = cj_engine_device(cj_engine_get_current());
+  vkWaitForFences(dev, 1, &win->inFlightFence, VK_TRUE, UINT64_MAX);
+  vkResetFences(dev, 1, &win->inFlightFence);
+  uint32_t imageIndex; vkAcquireNextImageKHR(dev, win->swapChain, UINT64_MAX, win->imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
+  VkSemaphore waitS[] = { win->imageAvailableSemaphore }; VkPipelineStageFlags stages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
+  VkSubmitInfo si = {0}; si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO; si.waitSemaphoreCount = 1; si.pWaitSemaphores = waitS; si.pWaitDstStageMask = stages; si.commandBufferCount = 1; si.pCommandBuffers = &win->commandBuffers[imageIndex]; VkSemaphore sigS[] = { win->renderFinishedSemaphore }; si.signalSemaphoreCount = 1; si.pSignalSemaphores = sigS;
+  vkQueueSubmit(cj_engine_graphics_queue(cj_engine_get_current()), 1, &si, win->inFlightFence);
+  VkPresentInfoKHR pi = {0}; pi.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR; pi.waitSemaphoreCount = 1; pi.pWaitSemaphores = sigS; pi.swapchainCount = 1; pi.pSwapchains = &win->swapChain; pi.pImageIndices = &imageIndex; vkQueuePresentKHR(cj_engine_present_queue(cj_engine_get_current()), &pi);
+}
+
+static void plat_cleanupWindow(CJPlatformWindow * win) {
+  if (!win) return;
+  VkDevice dev = cj_engine_device(cj_engine_get_current()); VkInstance inst = cj_engine_instance(cj_engine_get_current()); VkCommandPool pool = cj_engine_command_pool(cj_engine_get_current());
+  if (dev) vkDeviceWaitIdle(dev);
+  if (dev && win->renderFinishedSemaphore) vkDestroySemaphore(dev, win->renderFinishedSemaphore, NULL);
+  if (dev && win->imageAvailableSemaphore) vkDestroySemaphore(dev, win->imageAvailableSemaphore, NULL);
+  if (dev && win->inFlightFence) vkDestroyFence(dev, win->inFlightFence, NULL);
+  if (dev && pool && win->commandBuffers && win->swapChainImageCount) vkFreeCommandBuffers(dev, pool, win->swapChainImageCount, win->commandBuffers);
+  if (win->commandBuffers) { free(win->commandBuffers); win->commandBuffers = NULL; }
+  if (dev && win->swapChainFramebuffers) { for (uint32_t i=0;i<win->swapChainImageCount;i++) if (win->swapChainFramebuffers[i]) vkDestroyFramebuffer(dev, win->swapChainFramebuffers[i], NULL); }
+  if (dev && win->swapChainImageViews) { for (uint32_t i=0;i<win->swapChainImageCount;i++) if (win->swapChainImageViews[i]) vkDestroyImageView(dev, win->swapChainImageViews[i], NULL); }
+  if (win->swapChainFramebuffers) { free(win->swapChainFramebuffers); win->swapChainFramebuffers = NULL; }
+  if (win->swapChainImageViews) { free(win->swapChainImageViews); win->swapChainImageViews = NULL; }
+  if (win->swapChainImages) { free(win->swapChainImages); win->swapChainImages = NULL; }
+  if (dev && win->swapChain) { vkDestroySwapchainKHR(dev, win->swapChain, NULL); win->swapChain = VK_NULL_HANDLE; }
+  if (inst && win->surface) { vkDestroySurfaceKHR(inst, win->surface, NULL); win->surface = VK_NULL_HANDLE; }
+#ifdef _WIN32
+  if (win->handle) DestroyWindow(win->handle);
+#else
+  if (display && win->handle) XDestroyWindow(display, win->handle);
+#endif
+}
+/* C library and cjelly headers */
+#include <stdio.h>
+#include <assert.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <cjelly/cj_window.h>
+#include <cjelly/cj_platform.h>
+#include <cjelly/runtime.h>
+#include <cjelly/engine_internal.h>
+#include <cjelly/bindless_internal.h>
+#include <cjelly/textured_internal.h>
+
 /* textured pipeline helper (defined in cjelly.c) */
 void cjelly_init_textured_pipeline_ctx(const CJellyVulkanContext* ctx);
-/* bindless command buffers (defined in cjelly.c) */
-void createBindlessCommandBuffersForWindowCtx(CJellyWindow * win, const CJellyBindlessResources* resources, const CJellyVulkanContext* ctx);
+
+/* duplicate struct removed (defined above) */
+
+/* Internal helpers migrated from cjelly.c (static) */
+static void plat_createPlatformWindow(CJPlatformWindow * win, const char * title, int width, int height);
+static void plat_createSurfaceForWindow(CJPlatformWindow * win);
+static void plat_createSwapChainForWindow(CJPlatformWindow * win);
+static void plat_createImageViewsForWindow(CJPlatformWindow * win);
+static void plat_createFramebuffersForWindow(CJPlatformWindow * win);
+static void plat_createSyncObjectsForWindow(CJPlatformWindow * win);
+static void plat_drawFrameForWindow(CJPlatformWindow * win);
+static void plat_cleanupWindow(CJPlatformWindow * win);
+
+/* Command buffer recorders using engine/ctx */
+static void createTexturedCommandBuffersForWindowCtx(CJPlatformWindow * win, const CJellyVulkanContext* ctx);
+static void createBindlessCommandBuffersForWindowCtx(CJPlatformWindow * win, const CJellyBindlessResources* resources, const CJellyVulkanContext* ctx);
 
 /* Bridge wrapper: implement cj_window_t in terms of legacy CJellyWindow
  * so we can migrate callers incrementally. */
 
 /* Internal definition of the opaque window type */
 struct cj_window_t {
-  CJellyWindow * legacy;
+  CJPlatformWindow * plat;
   uint64_t frame_index;
 };
 
@@ -45,16 +206,16 @@ CJ_API cj_window_t* cj_window_create(cj_engine_t* engine, const cj_window_desc_t
   if (!desc) return NULL;
   cj_window_t* win = (cj_window_t*)calloc(1, sizeof(*win));
   if (!win) return NULL;
-  win->legacy = (CJellyWindow*)calloc(1, sizeof(CJellyWindow));
-  if (!win->legacy) { free(win); return NULL; }
+  win->plat = (CJPlatformWindow*)calloc(1, sizeof(CJPlatformWindow));
+  if (!win->plat) { free(win); return NULL; }
 
-  /* Create OS window and per-window Vulkan resources via legacy functions */
+  /* Create OS window and per-window Vulkan resources */
   const char* title = desc->title.ptr ? desc->title.ptr : "CJelly Window";
-  createPlatformWindow(win->legacy, title, (int)desc->width, (int)desc->height);
-  createSurfaceForWindow(win->legacy);
-  createSwapChainForWindow(win->legacy);
-  createImageViewsForWindow(win->legacy);
-  createFramebuffersForWindow(win->legacy);
+  plat_createPlatformWindow(win->plat, title, (int)desc->width, (int)desc->height);
+  plat_createSurfaceForWindow(win->plat);
+  plat_createSwapChainForWindow(win->plat);
+  plat_createImageViewsForWindow(win->plat);
+  plat_createFramebuffersForWindow(win->plat);
 
   /* Initialize textured pipeline/resources via public ctx wrapper */
   CJellyVulkanContext ctx = {0};
@@ -69,8 +230,8 @@ CJ_API cj_window_t* cj_window_create(cj_engine_t* engine, const cj_window_desc_t
   cjelly_init_textured_pipeline_ctx(&ctx);
 
   /* Record textured command buffers using ctx variants */
-  createTexturedCommandBuffersForWindowCtx(win->legacy, &ctx);
-  createSyncObjectsForWindow(win->legacy);
+  createTexturedCommandBuffersForWindowCtx(win->plat, &ctx);
+  plat_createSyncObjectsForWindow(win->plat);
 
   win->frame_index = 0u;
   return win;
@@ -78,9 +239,9 @@ CJ_API cj_window_t* cj_window_create(cj_engine_t* engine, const cj_window_desc_t
 
 CJ_API void cj_window_destroy(cj_window_t* win) {
   if (!win) return;
-  if (win->legacy) {
-    cleanupWindow(win->legacy);
-    free(win->legacy);
+  if (win->plat) {
+    plat_cleanupWindow(win->plat);
+    free(win->plat);
   }
   free(win);
 }
@@ -102,8 +263,8 @@ CJ_API cj_result_t cj_window_begin_frame(cj_window_t* win, cj_frame_info_t* out_
 }
 
 CJ_API cj_result_t cj_window_execute(cj_window_t* win) {
-  if (!win || !win->legacy) return CJ_E_INVALID_ARGUMENT;
-  drawFrameForWindow(win->legacy);
+  if (!win || !win->plat) return CJ_E_INVALID_ARGUMENT;
+  plat_drawFrameForWindow(win->plat);
   return CJ_SUCCESS;
 }
 
@@ -117,9 +278,9 @@ CJ_API void cj_window_set_render_graph(cj_window_t* win, cj_rgraph_t* graph) {
 }
 
 CJ_API void cj_window_get_size(const cj_window_t* win, uint32_t* out_w, uint32_t* out_h) {
-  if (!win || !win->legacy) return;
-  if (out_w) *out_w = (uint32_t)win->legacy->width;
-  if (out_h) *out_h = (uint32_t)win->legacy->height;
+  if (!win || !win->plat) return;
+  if (out_w) *out_w = (uint32_t)win->plat->width;
+  if (out_h) *out_h = (uint32_t)win->plat->height;
 }
 
 CJ_API uint64_t cj_window_frame_index(const cj_window_t* win) {
@@ -130,24 +291,24 @@ CJ_API uint64_t cj_window_frame_index(const cj_window_t* win) {
 CJ_API void cj_window_rerecord_bindless_color(cj_window_t* win,
                                        const void* resources,
                                        const CJellyVulkanContext* ctx) {
-  if (!win || !win->legacy || !resources || !ctx) return;
+  if (!win || !win->plat || !resources || !ctx) return;
   const CJellyBindlessResources* r = (const CJellyBindlessResources*)resources;
   /* Ensure GPU is idle before re-record to avoid freeing in-use buffers */
   {
     cj_engine_t* e2 = cj_engine_get_current();
     if (e2 && cj_engine_device(e2) != VK_NULL_HANDLE) vkDeviceWaitIdle(cj_engine_device(e2));
   }
-  if (win->legacy->commandBuffers && win->legacy->swapChainImageCount > 0) {
+  if (win->plat->commandBuffers && win->plat->swapChainImageCount > 0) {
     cj_engine_t* e3 = cj_engine_get_current();
-    vkFreeCommandBuffers(cj_engine_device(e3), cj_engine_command_pool(e3), win->legacy->swapChainImageCount, win->legacy->commandBuffers);
-    free(win->legacy->commandBuffers);
-    win->legacy->commandBuffers = NULL;
+    vkFreeCommandBuffers(cj_engine_device(e3), cj_engine_command_pool(e3), win->plat->swapChainImageCount, win->plat->commandBuffers);
+    free(win->plat->commandBuffers);
+    win->plat->commandBuffers = NULL;
   }
-  createBindlessCommandBuffersForWindowCtx(win->legacy, r, ctx);
+  createBindlessCommandBuffersForWindowCtx(win->plat, r, ctx);
 }
 
 /* Per-window textured command buffer recording using explicit ctx */
-void createTexturedCommandBuffersForWindowCtx(CJellyWindow * win, const CJellyVulkanContext* ctx) {
+static void createTexturedCommandBuffersForWindowCtx(CJPlatformWindow * win, const CJellyVulkanContext* ctx) {
   if (!win || !ctx || ctx->device == VK_NULL_HANDLE || ctx->commandPool == VK_NULL_HANDLE || ctx->renderPass == VK_NULL_HANDLE) return;
   win->commandBuffers =
       (VkCommandBuffer*)malloc(sizeof(VkCommandBuffer) * win->swapChainImageCount);
@@ -217,7 +378,7 @@ void createTexturedCommandBuffersForWindowCtx(CJellyWindow * win, const CJellyVu
 }
 
 /* Per-window bindless command buffer recording using explicit ctx */
-void createBindlessCommandBuffersForWindowCtx(CJellyWindow * win, const CJellyBindlessResources* resources, const CJellyVulkanContext* ctx) {
+static void createBindlessCommandBuffersForWindowCtx(CJPlatformWindow * win, const CJellyBindlessResources* resources, const CJellyVulkanContext* ctx) {
   if (!win || !ctx || !resources) return;
   if (!ctx->device || !ctx->commandPool || !ctx->renderPass) return;
 

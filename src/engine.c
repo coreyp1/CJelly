@@ -10,6 +10,7 @@
 #include <cjelly/textured_internal.h>
 #include <cjelly/bindless_state_internal.h>
 #include <cjelly/basic_state_internal.h>
+#include <cjelly/cj_handle.h>
 
 /* Internal definition of the opaque engine type */
 struct cj_engine_t {
@@ -364,4 +365,25 @@ CJ_API uint32_t cj_engine_res_slot(cj_engine_t* e, cj_res_kind_t kind, uint64_t 
   cj_res_entry_t* ent = &table[idx];
   if (!ent->in_use || ent->generation != gen) return 0;
   return ent->slot;
+}
+
+/* Handle API thin wrappers */
+CJ_API cj_handle_t cj_handle_alloc(cj_engine_t* e, cj_handle_kind_t kind, uint32_t* out_slot) {
+  uint64_t raw = cj_engine_res_alloc(e, (cj_res_kind_t)kind, out_slot);
+  cj_handle_t h;
+  h.idx = (uint32_t)(raw >> 32);
+  h.gen = (uint32_t)(raw & 0xffffffffu);
+  return h;
+}
+CJ_API void cj_handle_retain(cj_engine_t* e, cj_handle_kind_t kind, cj_handle_t h) {
+  uint64_t raw = ((uint64_t)h.idx << 32) | (uint64_t)h.gen;
+  cj_engine_res_retain(e, (cj_res_kind_t)kind, raw);
+}
+CJ_API void cj_handle_release(cj_engine_t* e, cj_handle_kind_t kind, cj_handle_t h) {
+  uint64_t raw = ((uint64_t)h.idx << 32) | (uint64_t)h.gen;
+  cj_engine_res_release(e, (cj_res_kind_t)kind, raw);
+}
+CJ_API uint32_t cj_handle_slot(cj_engine_t* e, cj_handle_kind_t kind, cj_handle_t h) {
+  uint64_t raw = ((uint64_t)h.idx << 32) | (uint64_t)h.gen;
+  return cj_engine_res_slot(e, (cj_res_kind_t)kind, raw);
 }
