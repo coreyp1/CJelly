@@ -16,15 +16,15 @@ This document is the single source of truth for what we’re doing now and what�
    - Destroy per-window resources and app-owned resources before device/context.
    - Ensure pipelines, layouts, buffers, descriptor pools/sets, images, image views, and memory are fully released.
 
-3) Public API finalization (C-first, handles)
-   - Switch resources to 64-bit opaque handles `(index:32 | generation:32)`.
-   - Centralize bindless descriptor arrays in the Engine.
+3) ✅ Public API finalization (C-first, handles) **COMPLETED**
+   - ✅ Switch resources to 64-bit opaque handles `(index:32 | generation:32)`.
+   - ✅ Centralize bindless descriptor arrays in the Engine.
 
-4) Resource managers
-   - Implement alloc/free and lifetime tracking for buffers/images/samplers/pipelines.
-   - Remove ad-hoc globals and scattered ownership.
+4) ✅ Resource managers **COMPLETED**
+   - ✅ Implement alloc/free and lifetime tracking for buffers/images/samplers/pipelines.
+   - ✅ Remove ad-hoc globals and scattered ownership.
 
-5) Render graph
+5) 🔄 Render graph **IN PROGRESS**
    - Implement `cj_rgraph_t` and `cj_window_set_render_graph`.
    - Windows render via the graph, not direct helper functions.
 
@@ -48,12 +48,29 @@ This document is the single source of truth for what we’re doing now and what�
    - Avoid `engine_internal.h`/OS globals; destroy app resources before context.
 
 ## Level 3 — Detailed current task (execution checklist)
-Focus: 2) Cleanup/teardown correctness (validation clean)
-1. Audit live objects on shutdown (pipelines, layouts, buffers, descriptor pools/sets, images, image views, memory).
-2. Ensure `cj_window_destroy` frees swapchain-dependent resources and command buffers before device idle.
-3. Ensure app-dynamic resources (e.g., color-only bindless) are destroyed before `cjelly_destroy_context`.
-4. Verify queues idle (`vkDeviceWaitIdle`) before tearing down per-window resources.
-5. Re-run with validation; iterate until no leaks are reported.
+**Purpose**: Level 3 tracks the immediate, actionable steps for the current Level 2 track. It provides a concrete checklist to guide daily work and ensure nothing is missed.
+
+**Current Focus**: 4) Resource managers - Implement actual Vulkan resource creation/destruction for the handle system ✅ **COMPLETED**
+
+1. ✅ **Implement `cj_texture_create`**: Create actual Vulkan images with proper memory allocation, format conversion, and descriptor slot assignment
+2. ✅ **Implement `cj_buffer_create`**: Create actual Vulkan buffers with proper memory allocation and usage flags
+3. ✅ **Implement `cj_sampler_create`**: Create actual Vulkan samplers with proper filtering and addressing modes
+4. ✅ **Wire up resource tables**: Store actual Vulkan objects in engine's resource tables with proper cleanup
+5. ✅ **Implement resource cleanup**: Add proper Vulkan object destruction in `cj_engine_shutdown_vulkan` and handle release
+6. ✅ **Test resource lifecycle**: Verify create/retain/release/cleanup works correctly with validation layers
+
+**Current Focus**: 5) Render Graph - Implement `cj_rgraph_t` and `cj_window_set_render_graph`
+
+1. **Create render graph structure**: Define internal `cj_rgraph_t` struct with engine reference, node list, and compilation state
+2. **Implement `cj_rgraph_create`**: Create render graph instance with engine reference and basic initialization
+3. **Implement `cj_rgraph_destroy`**: Clean up render graph resources and node data
+4. **Implement `cj_rgraph_recompile`**: Handle window resize and pipeline cache changes (stub for now)
+5. **Implement `cj_rgraph_bind_texture`**: Bind external textures to named slots in the graph
+6. **Implement `cj_rgraph_set_i32`**: Set integer parameters for debug toggles and configuration
+7. **Integrate with window system**: Update `cj_window_set_render_graph` to store graph reference
+8. **Update window execution**: Modify `cj_window_execute` to use render graph instead of direct helper functions
+9. **Create basic render nodes**: Implement simple pass-through render node for basic rendering
+10. **Test render graph integration**: Verify windows can render via render graph instead of legacy helpers
 
 ---
 

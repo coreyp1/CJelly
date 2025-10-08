@@ -49,6 +49,23 @@ typedef struct cj_res_entry_t {
   uint32_t refcount;
   uint32_t slot;      /* descriptor slot when applicable */
   uint8_t  in_use;
+  
+  /* Actual Vulkan objects (union based on resource type) */
+  union {
+    struct {
+      VkImage image;
+      VkDeviceMemory memory;
+      VkImageView imageView;
+      VkSampler sampler;
+    } texture;
+    struct {
+      VkBuffer buffer;
+      VkDeviceMemory memory;
+    } buffer;
+    struct {
+      VkSampler sampler;
+    } sampler;
+  } vulkan;
 } cj_res_entry_t;
 
 #define CJ_ENGINE_MAX_TEXTURES 1024u
@@ -65,3 +82,5 @@ CJ_API void     cj_engine_res_retain(cj_engine_t* e, cj_res_kind_t kind, uint64_
 CJ_API void     cj_engine_res_release(cj_engine_t* e, cj_res_kind_t kind, uint64_t handle);
 /* Query descriptor slot for a handle; returns 0 if invalid. */
 CJ_API uint32_t cj_engine_res_slot(cj_engine_t* e, cj_res_kind_t kind, uint64_t handle);
+
+

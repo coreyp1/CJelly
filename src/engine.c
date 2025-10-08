@@ -14,12 +14,14 @@
 #include <cjelly/basic_state_internal.h>
 #include <cjelly/cj_handle.h>
 #include <cjelly/cj_resources.h>
+#include <cjelly/resource_helpers_internal.h>
 
 // Generated shader headers - use extern declarations to avoid multiple definitions
 extern unsigned char color_vert_spv[];
 extern unsigned int color_vert_spv_len;
 extern unsigned char color_frag_spv[];
 extern unsigned int color_frag_spv_len;
+
 
 /* Internal definition of the opaque engine type */
 struct cj_engine_t {
@@ -468,6 +470,23 @@ CJ_API void cj_engine_shutdown_vulkan(cj_engine_t* engine) {
       if (bs->vertexBufferMemory) vkFreeMemory(dev, bs->vertexBufferMemory, NULL);
       memset(bs, 0, sizeof(*bs));
     }
+    /* Destroy all remaining resources in resource tables */
+    for (uint32_t i = 0; i < CJ_ENGINE_MAX_TEXTURES; i++) {
+      if (engine->textures[i].in_use) {
+        cj_engine_destroy_texture(engine, i);
+      }
+    }
+    for (uint32_t i = 0; i < CJ_ENGINE_MAX_BUFFERS; i++) {
+      if (engine->buffers[i].in_use) {
+        cj_engine_destroy_buffer(engine, i);
+      }
+    }
+    for (uint32_t i = 0; i < CJ_ENGINE_MAX_SAMPLERS; i++) {
+      if (engine->samplers[i].in_use) {
+        cj_engine_destroy_sampler(engine, i);
+      }
+    }
+    
     if (engine->command_pool) { vkDestroyCommandPool(dev, engine->command_pool, NULL); engine->command_pool = VK_NULL_HANDLE; }
     if (engine->bindless_pool) { vkDestroyDescriptorPool(dev, engine->bindless_pool, NULL); engine->bindless_pool = VK_NULL_HANDLE; }
     if (engine->bindless_layout) { vkDestroyDescriptorSetLayout(dev, engine->bindless_layout, NULL); engine->bindless_layout = VK_NULL_HANDLE; }
@@ -642,3 +661,288 @@ CJ_API uint32_t cj_handle_slot(cj_engine_t* e, cj_handle_kind_t kind, cj_handle_
 }
 
 /* Public resource API already implemented in resources.c */
+
+/* Vulkan resource creation helpers */
+CJ_API int cj_engine_create_texture(cj_engine_t* e, uint32_t slot, const cj_texture_desc_t* desc) {
+  if (!e || !desc || slot >= CJ_ENGINE_MAX_TEXTURES) return 0;
+  cj_res_entry_t* entry = &e->textures[slot];
+  if (!entry->in_use) return 0;
+  
+  VkDevice dev = e->device;
+  if (dev == VK_NULL_HANDLE) return 0;
+  
+  // Convert CJelly format to Vulkan format
+  VkFormat vk_format = VK_FORMAT_R8G8B8A8_UNORM; // Default
+  switch (desc->format) {
+    case CJ_FORMAT_RGBA8_UNORM: vk_format = VK_FORMAT_R8G8B8A8_UNORM; break;
+    case CJ_FORMAT_BGRA8_UNORM: vk_format = VK_FORMAT_B8G8R8A8_UNORM; break;
+    case CJ_FORMAT_RGBA32_FLOAT: vk_format = VK_FORMAT_R32G32B32A32_SFLOAT; break;
+    default: vk_format = VK_FORMAT_R8G8B8A8_UNORM; break;
+  }
+  
+  // Convert usage flags
+  VkImageUsageFlags usage = 0;
+  if (desc->usage & CJ_IMAGE_SAMPLED) usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
+  if (desc->usage & CJ_IMAGE_STORAGE) usage |= VK_IMAGE_USAGE_STORAGE_BIT;
+  if (desc->usage & CJ_IMAGE_COLOR_RT) usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+  if (desc->usage & CJ_IMAGE_DEPTH_RT) usage |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+  
+  // Create image
+  VkImageCreateInfo imageInfo = {0};
+  imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+  imageInfo.imageType = VK_IMAGE_TYPE_2D;
+  imageInfo.extent.width = desc->width;
+  imageInfo.extent.height = desc->height;
+  imageInfo.extent.depth = 1;
+  imageInfo.mipLevels = desc->mips ? desc->mips : 1;
+  imageInfo.arrayLayers = desc->layers ? desc->layers : 1;
+  imageInfo.format = vk_format;
+  imageInfo.tiling = VK_IMAGE_TILING_OPTIMAL;
+  imageInfo.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  imageInfo.usage = usage;
+  imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
+  imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+  
+  if (vkCreateImage(dev, &imageInfo, NULL, &entry->vulkan.texture.image) != VK_SUCCESS) {
+    return 0;
+  }
+  
+  // Allocate memory
+  VkMemoryRequirements memRequirements;
+  vkGetImageMemoryRequirements(dev, entry->vulkan.texture.image, &memRequirements);
+  
+  VkMemoryAllocateInfo allocInfo = {0};
+  allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+  allocInfo.allocationSize = memRequirements.size;
+  allocInfo.memoryTypeIndex = eng_find_memory_type(e, memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+  
+  if (vkAllocateMemory(dev, &allocInfo, NULL, &entry->vulkan.texture.memory) != VK_SUCCESS) {
+    vkDestroyImage(dev, entry->vulkan.texture.image, NULL);
+    return 0;
+  }
+  
+  vkBindImageMemory(dev, entry->vulkan.texture.image, entry->vulkan.texture.memory, 0);
+  
+  // Create image view
+  VkImageViewCreateInfo viewInfo = {0};
+  viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+  viewInfo.image = entry->vulkan.texture.image;
+  viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+  viewInfo.format = vk_format;
+  viewInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+  viewInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+  viewInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+  viewInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+  viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  viewInfo.subresourceRange.baseMipLevel = 0;
+  viewInfo.subresourceRange.levelCount = desc->mips ? desc->mips : 1;
+  viewInfo.subresourceRange.baseArrayLayer = 0;
+  viewInfo.subresourceRange.layerCount = desc->layers ? desc->layers : 1;
+  
+  if (vkCreateImageView(dev, &viewInfo, NULL, &entry->vulkan.texture.imageView) != VK_SUCCESS) {
+    vkFreeMemory(dev, entry->vulkan.texture.memory, NULL);
+    vkDestroyImage(dev, entry->vulkan.texture.image, NULL);
+    return 0;
+  }
+  
+  // Create sampler
+  VkSamplerCreateInfo samplerInfo = {0};
+  samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+  samplerInfo.magFilter = VK_FILTER_LINEAR;
+  samplerInfo.minFilter = VK_FILTER_LINEAR;
+  samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+  samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+  samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+  samplerInfo.anisotropyEnable = VK_FALSE;
+  samplerInfo.maxAnisotropy = 1;
+  samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+  samplerInfo.unnormalizedCoordinates = VK_FALSE;
+  samplerInfo.compareEnable = VK_FALSE;
+  samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
+  samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+  samplerInfo.mipLodBias = 0.0f;
+  samplerInfo.minLod = 0.0f;
+  samplerInfo.maxLod = 0.0f;
+  
+  if (vkCreateSampler(dev, &samplerInfo, NULL, &entry->vulkan.texture.sampler) != VK_SUCCESS) {
+    vkDestroyImageView(dev, entry->vulkan.texture.imageView, NULL);
+    vkFreeMemory(dev, entry->vulkan.texture.memory, NULL);
+    vkDestroyImage(dev, entry->vulkan.texture.image, NULL);
+    return 0;
+  }
+  
+  return 1;
+}
+
+CJ_API int cj_engine_create_buffer(cj_engine_t* e, uint32_t slot, const cj_buffer_desc_t* desc) {
+  if (!e || !desc || slot >= CJ_ENGINE_MAX_BUFFERS) return 0;
+  cj_res_entry_t* entry = &e->buffers[slot];
+  if (!entry->in_use) return 0;
+  
+  VkDevice dev = e->device;
+  if (dev == VK_NULL_HANDLE) return 0;
+  
+  // Convert usage flags
+  VkBufferUsageFlags usage = 0;
+  if (desc->usage & CJ_BUFFER_VERTEX) usage |= VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+  if (desc->usage & CJ_BUFFER_INDEX) usage |= VK_BUFFER_USAGE_INDEX_BUFFER_BIT;
+  if (desc->usage & CJ_BUFFER_UNIFORM) usage |= VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+  if (desc->usage & CJ_BUFFER_STORAGE) usage |= VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+  if (desc->usage & CJ_BUFFER_TRANSFER_SRC) usage |= VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+  if (desc->usage & CJ_BUFFER_TRANSFER_DST) usage |= VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+  
+  // Create buffer
+  VkBufferCreateInfo bufferInfo = {0};
+  bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+  bufferInfo.size = desc->size;
+  bufferInfo.usage = usage;
+  bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+  
+  if (vkCreateBuffer(dev, &bufferInfo, NULL, &entry->vulkan.buffer.buffer) != VK_SUCCESS) {
+    return 0;
+  }
+  
+  // Allocate memory
+  VkMemoryRequirements memRequirements;
+  vkGetBufferMemoryRequirements(dev, entry->vulkan.buffer.buffer, &memRequirements);
+  
+  VkMemoryAllocateInfo allocInfo = {0};
+  allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+  allocInfo.allocationSize = memRequirements.size;
+  
+  VkMemoryPropertyFlags memProps = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+  if (desc->host_visible) {
+    memProps = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+  }
+  allocInfo.memoryTypeIndex = eng_find_memory_type(e, memRequirements.memoryTypeBits, memProps);
+  
+  if (vkAllocateMemory(dev, &allocInfo, NULL, &entry->vulkan.buffer.memory) != VK_SUCCESS) {
+    vkDestroyBuffer(dev, entry->vulkan.buffer.buffer, NULL);
+    return 0;
+  }
+  
+  vkBindBufferMemory(dev, entry->vulkan.buffer.buffer, entry->vulkan.buffer.memory, 0);
+  
+  return 1;
+}
+
+CJ_API int cj_engine_create_sampler(cj_engine_t* e, uint32_t slot, const cj_sampler_desc_t* desc) {
+  if (!e || !desc || slot >= CJ_ENGINE_MAX_SAMPLERS) return 0;
+  cj_res_entry_t* entry = &e->samplers[slot];
+  if (!entry->in_use) return 0;
+  
+  VkDevice dev = e->device;
+  if (dev == VK_NULL_HANDLE) return 0;
+  
+  // Convert filter modes
+  VkFilter min_filter = (desc->min_filter == CJ_FILTER_LINEAR) ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
+  VkFilter mag_filter = (desc->mag_filter == CJ_FILTER_LINEAR) ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
+  
+  // Convert address modes
+  VkSamplerAddressMode address_u = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+  switch (desc->address_u) {
+    case CJ_ADDRESS_CLAMP: address_u = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE; break;
+    case CJ_ADDRESS_REPEAT: address_u = VK_SAMPLER_ADDRESS_MODE_REPEAT; break;
+    case CJ_ADDRESS_MIRROR: address_u = VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT; break;
+    case CJ_ADDRESS_BORDER: address_u = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER; break;
+  }
+  
+  VkSamplerAddressMode address_v = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+  switch (desc->address_v) {
+    case CJ_ADDRESS_CLAMP: address_v = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE; break;
+    case CJ_ADDRESS_REPEAT: address_v = VK_SAMPLER_ADDRESS_MODE_REPEAT; break;
+    case CJ_ADDRESS_MIRROR: address_v = VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT; break;
+    case CJ_ADDRESS_BORDER: address_v = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER; break;
+  }
+  
+  VkSamplerAddressMode address_w = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+  switch (desc->address_w) {
+    case CJ_ADDRESS_CLAMP: address_w = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE; break;
+    case CJ_ADDRESS_REPEAT: address_w = VK_SAMPLER_ADDRESS_MODE_REPEAT; break;
+    case CJ_ADDRESS_MIRROR: address_w = VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT; break;
+    case CJ_ADDRESS_BORDER: address_w = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER; break;
+  }
+  
+  // Create sampler
+  VkSamplerCreateInfo samplerInfo = {0};
+  samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+  samplerInfo.magFilter = mag_filter;
+  samplerInfo.minFilter = min_filter;
+  samplerInfo.addressModeU = address_u;
+  samplerInfo.addressModeV = address_v;
+  samplerInfo.addressModeW = address_w;
+  samplerInfo.anisotropyEnable = (desc->max_anisotropy > 0.0f) ? VK_TRUE : VK_FALSE;
+  samplerInfo.maxAnisotropy = desc->max_anisotropy;
+  samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;
+  samplerInfo.unnormalizedCoordinates = VK_FALSE;
+  samplerInfo.compareEnable = VK_FALSE;
+  samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
+  samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+  samplerInfo.mipLodBias = desc->mip_lod_bias;
+  samplerInfo.minLod = 0.0f;
+  samplerInfo.maxLod = 0.0f;
+  
+  if (vkCreateSampler(dev, &samplerInfo, NULL, &entry->vulkan.sampler.sampler) != VK_SUCCESS) {
+    return 0;
+  }
+  
+  return 1;
+}
+
+CJ_API void cj_engine_destroy_texture(cj_engine_t* e, uint32_t slot) {
+  if (!e || slot >= CJ_ENGINE_MAX_TEXTURES) return;
+  cj_res_entry_t* entry = &e->textures[slot];
+  if (!entry->in_use) return;
+  
+  VkDevice dev = e->device;
+  if (dev == VK_NULL_HANDLE) return;
+  
+  if (entry->vulkan.texture.sampler != VK_NULL_HANDLE) {
+    vkDestroySampler(dev, entry->vulkan.texture.sampler, NULL);
+    entry->vulkan.texture.sampler = VK_NULL_HANDLE;
+  }
+  if (entry->vulkan.texture.imageView != VK_NULL_HANDLE) {
+    vkDestroyImageView(dev, entry->vulkan.texture.imageView, NULL);
+    entry->vulkan.texture.imageView = VK_NULL_HANDLE;
+  }
+  if (entry->vulkan.texture.image != VK_NULL_HANDLE) {
+    vkDestroyImage(dev, entry->vulkan.texture.image, NULL);
+    entry->vulkan.texture.image = VK_NULL_HANDLE;
+  }
+  if (entry->vulkan.texture.memory != VK_NULL_HANDLE) {
+    vkFreeMemory(dev, entry->vulkan.texture.memory, NULL);
+    entry->vulkan.texture.memory = VK_NULL_HANDLE;
+  }
+}
+
+CJ_API void cj_engine_destroy_buffer(cj_engine_t* e, uint32_t slot) {
+  if (!e || slot >= CJ_ENGINE_MAX_BUFFERS) return;
+  cj_res_entry_t* entry = &e->buffers[slot];
+  if (!entry->in_use) return;
+  
+  VkDevice dev = e->device;
+  if (dev == VK_NULL_HANDLE) return;
+  
+  if (entry->vulkan.buffer.buffer != VK_NULL_HANDLE) {
+    vkDestroyBuffer(dev, entry->vulkan.buffer.buffer, NULL);
+    entry->vulkan.buffer.buffer = VK_NULL_HANDLE;
+  }
+  if (entry->vulkan.buffer.memory != VK_NULL_HANDLE) {
+    vkFreeMemory(dev, entry->vulkan.buffer.memory, NULL);
+    entry->vulkan.buffer.memory = VK_NULL_HANDLE;
+  }
+}
+
+CJ_API void cj_engine_destroy_sampler(cj_engine_t* e, uint32_t slot) {
+  if (!e || slot >= CJ_ENGINE_MAX_SAMPLERS) return;
+  cj_res_entry_t* entry = &e->samplers[slot];
+  if (!entry->in_use) return;
+  
+  VkDevice dev = e->device;
+  if (dev == VK_NULL_HANDLE) return;
+  
+  if (entry->vulkan.sampler.sampler != VK_NULL_HANDLE) {
+    vkDestroySampler(dev, entry->vulkan.sampler.sampler, NULL);
+    entry->vulkan.sampler.sampler = VK_NULL_HANDLE;
+  }
+}
