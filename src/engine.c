@@ -2,15 +2,24 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <stdio.h>
 
 #include <cjelly/cj_engine.h>
 #include <cjelly/engine_internal.h>
 #include <cjelly/runtime.h>
 #include <vulkan/vulkan.h>
 #include <cjelly/textured_internal.h>
+#include <cjelly/bindless_internal.h>
 #include <cjelly/bindless_state_internal.h>
 #include <cjelly/basic_state_internal.h>
 #include <cjelly/cj_handle.h>
+#include <cjelly/cj_resources.h>
+
+// Generated shader headers - use extern declarations to avoid multiple definitions
+extern unsigned char color_vert_spv[];
+extern unsigned int color_vert_spv_len;
+extern unsigned char color_frag_spv[];
+extern unsigned int color_frag_spv_len;
 
 /* Internal definition of the opaque engine type */
 struct cj_engine_t {
@@ -38,6 +47,13 @@ struct cj_engine_t {
   CJellyBindlessState bindless;
   /* Internal-only basic pipeline state (migration) */
   CJellyBasicState basic;
+
+  /* Color-only pipeline state (migration) */
+  CJellyBindlessResources color_pipeline;
+
+  /* Shared bindless descriptor resources (engine-owned) */
+  VkDescriptorSetLayout bindless_layout;
+  VkDescriptorPool      bindless_pool;
 };
 
 static cj_engine_t* g_current_engine = NULL;
@@ -159,6 +175,35 @@ static int eng_create_command_pool(cj_engine_t* e) {
   return 1;
 }
 
+static int eng_ensure_bindless_descriptors(cj_engine_t* e) {
+  if (!e) return 0;
+  if (e->bindless_layout != VK_NULL_HANDLE && e->bindless_pool != VK_NULL_HANDLE) return 1;
+  if (e->bindless_layout == VK_NULL_HANDLE) {
+    VkDescriptorSetLayoutBinding layoutBinding = {0};
+    layoutBinding.binding = 0;
+    layoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    layoutBinding.descriptorCount = 1;
+    layoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    VkDescriptorSetLayoutCreateInfo layoutInfo = {0};
+    layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+    layoutInfo.bindingCount = 1;
+    layoutInfo.pBindings = &layoutBinding;
+    if (vkCreateDescriptorSetLayout(e->device, &layoutInfo, NULL, &e->bindless_layout) != VK_SUCCESS) return 0;
+  }
+  if (e->bindless_pool == VK_NULL_HANDLE) {
+    VkDescriptorPoolSize poolSize = {0};
+    poolSize.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    poolSize.descriptorCount = CJ_ENGINE_MAX_TEXTURES;
+    VkDescriptorPoolCreateInfo poolInfo = {0};
+    poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    poolInfo.poolSizeCount = 1;
+    poolInfo.pPoolSizes = &poolSize;
+    poolInfo.maxSets = 1;
+    if (vkCreateDescriptorPool(e->device, &poolInfo, NULL, &e->bindless_pool) != VK_SUCCESS) return 0;
+  }
+  return 1;
+}
+
 CJ_API cj_engine_t* cj_engine_create(const cj_engine_desc_t* desc) {
   cj_engine_t* engine = (cj_engine_t*)malloc(sizeof(*engine));
   if (!engine) return NULL;
@@ -182,6 +227,182 @@ CJ_API void cj_engine_wait_idle(cj_engine_t* engine) {
   (void)engine; /* no-op in stub */
 }
 
+static uint32_t eng_find_memory_type(cj_engine_t* e, uint32_t typeFilter, VkMemoryPropertyFlags properties) {
+  VkPhysicalDeviceMemoryProperties memProperties;
+  vkGetPhysicalDeviceMemoryProperties(e->physical_device, &memProperties);
+  
+  for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
+    if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
+      return i;
+    }
+  }
+  return 0; // fallback
+}
+
+static int eng_create_color_pipeline(cj_engine_t* e) {
+  if (!e) return 0;
+  CJellyBindlessResources* cp = &e->color_pipeline;
+  
+  // Create vertex buffer for color-only quad
+  typedef struct { float pos[2]; float color[3]; uint32_t textureID; } VertexBindless;
+  VertexBindless vertices[] = {
+    {{-0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, 0},
+    {{ 0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, 0},
+    {{ 0.5f,  0.5f}, {1.0f, 1.0f, 1.0f}, 0},
+    {{ 0.5f,  0.5f}, {1.0f, 1.0f, 1.0f}, 0},
+    {{-0.5f,  0.5f}, {1.0f, 1.0f, 1.0f}, 0},
+    {{-0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, 0},
+  };
+  VkDeviceSize vbSize = sizeof(vertices);
+  
+  VkBufferCreateInfo bufferInfo = {0};
+  bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+  bufferInfo.size = vbSize;
+  bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+  bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+  if (vkCreateBuffer(e->device, &bufferInfo, NULL, &cp->vertexBuffer) != VK_SUCCESS) {
+    fprintf(stderr, "Failed to create color pipeline vertex buffer\n");
+    return 0;
+  }
+  
+  VkMemoryRequirements memRequirements;
+  vkGetBufferMemoryRequirements(e->device, cp->vertexBuffer, &memRequirements);
+  VkMemoryAllocateInfo allocInfo = {0};
+  allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+  allocInfo.allocationSize = memRequirements.size;
+  allocInfo.memoryTypeIndex = eng_find_memory_type(e, memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+  if (vkAllocateMemory(e->device, &allocInfo, NULL, &cp->vertexBufferMemory) != VK_SUCCESS) {
+    fprintf(stderr, "Failed to allocate color pipeline vertex buffer memory\n");
+    return 0;
+  }
+  vkBindBufferMemory(e->device, cp->vertexBuffer, cp->vertexBufferMemory, 0);
+  
+  void* vdata = NULL;
+  vkMapMemory(e->device, cp->vertexBufferMemory, 0, vbSize, 0, &vdata);
+  memcpy(vdata, vertices, (size_t)vbSize);
+  vkUnmapMemory(e->device, cp->vertexBufferMemory);
+  
+  // Create pipeline layout with push constants only
+  VkPushConstantRange pushRange = {0};
+  pushRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+  pushRange.offset = 0;
+  pushRange.size = sizeof(float) * 8; // uv vec4 + colorMul vec4
+  
+  VkPipelineLayoutCreateInfo pli = {0};
+  pli.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+  pli.setLayoutCount = 0;
+  pli.pSetLayouts = NULL;
+  pli.pushConstantRangeCount = 1;
+  pli.pPushConstantRanges = &pushRange;
+  if (vkCreatePipelineLayout(e->device, &pli, NULL, &cp->pipelineLayout) != VK_SUCCESS) {
+    fprintf(stderr, "Failed to create color pipeline layout\n");
+    return 0;
+  }
+  
+  // Create shader modules (using generated headers)
+  
+  VkShaderModuleCreateInfo vertInfo = {0};
+  vertInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+  vertInfo.codeSize = color_vert_spv_len;
+  vertInfo.pCode = (const uint32_t*)color_vert_spv;
+  VkShaderModule vert = VK_NULL_HANDLE;
+  if (vkCreateShaderModule(e->device, &vertInfo, NULL, &vert) != VK_SUCCESS) {
+    fprintf(stderr, "Failed to create color vertex shader module\n");
+    return 0;
+  }
+  
+  VkShaderModuleCreateInfo fragInfo = {0};
+  fragInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+  fragInfo.codeSize = color_frag_spv_len;
+  fragInfo.pCode = (const uint32_t*)color_frag_spv;
+  VkShaderModule frag = VK_NULL_HANDLE;
+  if (vkCreateShaderModule(e->device, &fragInfo, NULL, &frag) != VK_SUCCESS) {
+    fprintf(stderr, "Failed to create color fragment shader module\n");
+    vkDestroyShaderModule(e->device, vert, NULL);
+    return 0;
+  }
+  
+  // Create pipeline
+  VkPipelineShaderStageCreateInfo stages[2] = {0};
+  stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  stages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
+  stages[0].module = vert;
+  stages[0].pName = "main";
+  stages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+  stages[1].module = frag;
+  stages[1].pName = "main";
+  
+  VkVertexInputBindingDescription binding = {0};
+  binding.binding = 0;
+  binding.stride = sizeof(VertexBindless);
+  binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
+  VkVertexInputAttributeDescription attrs[3] = {0};
+  attrs[0].binding = 0; attrs[0].location = 0; attrs[0].format = VK_FORMAT_R32G32_SFLOAT; attrs[0].offset = offsetof(VertexBindless, pos);
+  attrs[1].binding = 0; attrs[1].location = 1; attrs[1].format = VK_FORMAT_R32G32B32_SFLOAT; attrs[1].offset = offsetof(VertexBindless, color);
+  attrs[2].binding = 0; attrs[2].location = 2; attrs[2].format = VK_FORMAT_R32_UINT; attrs[2].offset = offsetof(VertexBindless, textureID);
+  
+  VkPipelineVertexInputStateCreateInfo vi = {0};
+  vi.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+  vi.vertexBindingDescriptionCount = 1; vi.pVertexBindingDescriptions = &binding;
+  vi.vertexAttributeDescriptionCount = 3; vi.pVertexAttributeDescriptions = attrs;
+  
+  VkPipelineInputAssemblyStateCreateInfo ia = {0};
+  ia.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+  ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+  
+  VkViewport vp = {0}; vp.x=0; vp.y=0; vp.width=1.0f; vp.height=1.0f; vp.minDepth=0; vp.maxDepth=1;
+  VkRect2D sc = {0}; sc.extent.width = 1; sc.extent.height = 1;
+  VkPipelineViewportStateCreateInfo vps = {0};
+  vps.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+  vps.viewportCount = 1; vps.pViewports = &vp; vps.scissorCount = 1; vps.pScissors = &sc;
+  
+  // Enable dynamic viewport and scissor
+  VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+  VkPipelineDynamicStateCreateInfo dynamicState = {0};
+  dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+  dynamicState.dynamicStateCount = 2;
+  dynamicState.pDynamicStates = dynamicStates;
+  
+  VkPipelineRasterizationStateCreateInfo rs = {0};
+  rs.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+  rs.polygonMode = VK_POLYGON_MODE_FILL;
+  rs.lineWidth = 1.0f;
+  rs.cullMode = VK_CULL_MODE_BACK_BIT;
+  rs.frontFace = VK_FRONT_FACE_CLOCKWISE;
+  
+  VkPipelineMultisampleStateCreateInfo ms = {0};
+  ms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+  ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+  
+  VkPipelineColorBlendAttachmentState cba = {0};
+  cba.colorWriteMask = VK_COLOR_COMPONENT_R_BIT|VK_COLOR_COMPONENT_G_BIT|VK_COLOR_COMPONENT_B_BIT|VK_COLOR_COMPONENT_A_BIT;
+  VkPipelineColorBlendStateCreateInfo cb = {0};
+  cb.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+  cb.attachmentCount = 1;
+  cb.pAttachments = &cba;
+  
+  VkGraphicsPipelineCreateInfo gp = {0};
+  gp.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+  gp.stageCount = 2; gp.pStages = stages;
+  gp.pVertexInputState = &vi; gp.pInputAssemblyState = &ia; gp.pViewportState = &vps; gp.pRasterizationState = &rs; gp.pMultisampleState = &ms; gp.pColorBlendState = &cb; gp.pDynamicState = &dynamicState;
+  gp.layout = cp->pipelineLayout; gp.renderPass = e->render_pass; gp.subpass = 0;
+  
+  if (vkCreateGraphicsPipelines(e->device, VK_NULL_HANDLE, 1, &gp, NULL, &cp->pipeline) != VK_SUCCESS) {
+    fprintf(stderr, "Failed to create color graphics pipeline\n");
+    vkDestroyShaderModule(e->device, vert, NULL);
+    vkDestroyShaderModule(e->device, frag, NULL);
+    return 0;
+  }
+  
+  vkDestroyShaderModule(e->device, vert, NULL);
+  vkDestroyShaderModule(e->device, frag, NULL);
+  
+  cp->uv[0]=1.0f; cp->uv[1]=1.0f; cp->uv[2]=0.0f; cp->uv[3]=0.0f;
+  cp->colorMul[0]=1.0f; cp->colorMul[1]=1.0f; cp->colorMul[2]=1.0f; cp->colorMul[3]=1.0f;
+  return 1;
+}
+
 /* Initialize Vulkan into the engine using the existing context bootstrap */
 CJ_API int cj_engine_init_vulkan(cj_engine_t* engine, int use_validation) {
   if (!engine) return 0;
@@ -190,6 +411,11 @@ CJ_API int cj_engine_init_vulkan(cj_engine_t* engine, int use_validation) {
   if (!eng_create_logical_device(engine)) return 0;
   if (!eng_create_render_pass(engine)) return 0;
   if (!eng_create_command_pool(engine)) return 0;
+  if (!eng_ensure_bindless_descriptors(engine)) return 0;
+  if (!eng_create_color_pipeline(engine)) {
+    fprintf(stderr, "Failed to create color pipeline\n");
+    return 0;
+  }
   /* All code paths now use engine getters; legacy bind removed */
   return 1;
 }
@@ -225,6 +451,15 @@ CJ_API void cj_engine_shutdown_vulkan(cj_engine_t* engine) {
       if (bl->vertexBufferMemory) vkFreeMemory(dev, bl->vertexBufferMemory, NULL);
       memset(bl, 0, sizeof(*bl));
     }
+    /* Color pipeline */
+    {
+      CJellyBindlessResources* cp = &engine->color_pipeline;
+      if (cp->pipeline) vkDestroyPipeline(dev, cp->pipeline, NULL);
+      if (cp->pipelineLayout) vkDestroyPipelineLayout(dev, cp->pipelineLayout, NULL);
+      if (cp->vertexBuffer) vkDestroyBuffer(dev, cp->vertexBuffer, NULL);
+      if (cp->vertexBufferMemory) vkFreeMemory(dev, cp->vertexBufferMemory, NULL);
+      memset(cp, 0, sizeof(*cp));
+    }
     /* Basic */
     {
       CJellyBasicState* bs = &engine->basic;
@@ -235,6 +470,8 @@ CJ_API void cj_engine_shutdown_vulkan(cj_engine_t* engine) {
       memset(bs, 0, sizeof(*bs));
     }
     if (engine->command_pool) { vkDestroyCommandPool(dev, engine->command_pool, NULL); engine->command_pool = VK_NULL_HANDLE; }
+    if (engine->bindless_pool) { vkDestroyDescriptorPool(dev, engine->bindless_pool, NULL); engine->bindless_pool = VK_NULL_HANDLE; }
+    if (engine->bindless_layout) { vkDestroyDescriptorSetLayout(dev, engine->bindless_layout, NULL); engine->bindless_layout = VK_NULL_HANDLE; }
     if (engine->render_pass) { vkDestroyRenderPass(dev, engine->render_pass, NULL); engine->render_pass = VK_NULL_HANDLE; }
     vkDestroyDevice(dev, NULL);
     engine->device = VK_NULL_HANDLE;
@@ -243,6 +480,20 @@ CJ_API void cj_engine_shutdown_vulkan(cj_engine_t* engine) {
     vkDestroyInstance(engine->instance, NULL);
     engine->instance = VK_NULL_HANDLE;
   }
+}
+
+/* Public API aliases */
+CJ_API int  cj_engine_init(cj_engine_t* engine, int use_validation) { return cj_engine_init_vulkan(engine, use_validation); }
+CJ_API void cj_engine_shutdown_device(cj_engine_t* engine) { cj_engine_shutdown_vulkan(engine); }
+CJ_API void cj_engine_export_context(cj_engine_t* engine, CJellyVulkanContext* out_ctx) {
+  if (!engine || !out_ctx) return;
+  out_ctx->instance = cj_engine_instance(engine);
+  out_ctx->physicalDevice = cj_engine_physical_device(engine);
+  out_ctx->device = cj_engine_device(engine);
+  out_ctx->graphicsQueue = cj_engine_graphics_queue(engine);
+  out_ctx->presentQueue = cj_engine_present_queue(engine);
+  out_ctx->renderPass = cj_engine_render_pass(engine);
+  out_ctx->commandPool = cj_engine_command_pool(engine);
 }
 
 CJ_API uint32_t cj_engine_device_index(const cj_engine_t* engine) {
@@ -267,6 +518,9 @@ CJ_API VkQueue cj_engine_graphics_queue(const cj_engine_t* e) { return e ? e->gr
 CJ_API VkQueue cj_engine_present_queue(const cj_engine_t* e) { return e ? e->present_queue : VK_NULL_HANDLE; }
 CJ_API VkRenderPass cj_engine_render_pass(const cj_engine_t* e) { return e ? e->render_pass : VK_NULL_HANDLE; }
 CJ_API VkCommandPool cj_engine_command_pool(const cj_engine_t* e) { return e ? e->command_pool : VK_NULL_HANDLE; }
+CJ_API VkDescriptorSetLayout cj_engine_bindless_layout(const cj_engine_t* e) { return e ? e->bindless_layout : VK_NULL_HANDLE; }
+CJ_API VkDescriptorPool      cj_engine_bindless_pool(const cj_engine_t* e) { return e ? e->bindless_pool : VK_NULL_HANDLE; }
+CJ_API CJellyBindlessResources* cj_engine_color_pipeline(const cj_engine_t* e) { return e ? (CJellyBindlessResources*)&e->color_pipeline : NULL; }
 
 /* Internal access to textured resources */
 CJ_API CJellyTexturedResources* cj_engine_textured(const cj_engine_t* e) { return (CJellyTexturedResources*)(e ? &e->textured : NULL); }
@@ -387,3 +641,5 @@ CJ_API uint32_t cj_handle_slot(cj_engine_t* e, cj_handle_kind_t kind, cj_handle_
   uint64_t raw = ((uint64_t)h.idx << 32) | (uint64_t)h.gen;
   return cj_engine_res_slot(e, (cj_res_kind_t)kind, raw);
 }
+
+/* Public resource API already implemented in resources.c */

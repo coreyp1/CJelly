@@ -10,22 +10,19 @@ layout(push_constant) uniform PC {
 } pc;
 
 void main() {
-    // vPos spans [-0.5,0.5]. Map to [0,1] for gradients
-    float uvx = clamp(vPos.x + 0.5, 0.0, 1.0);
-    float uvy = clamp(1.0 - (vPos.y + 0.5), 0.0, 1.0); // top=0, bottom=1
-
-    // Compute two gradients for the whole quad
-    float gradRed = uvx;                                   // horizontal left->right
-    float gradGreen = clamp((uvx + uvy) * 0.5, 0.0, 1.0);  // diagonal TL->BR
-
-    // Select by push-constant colorMul (r vs g dominance)
-    float useGreen = step(pc.colorMul.r, pc.colorMul.g);
-    float factor = mix(gradRed, gradGreen, useGreen);
-
-    // Output pure red/green modulated by factor
-    vec3 color = mix(vec3(1.0, 0.0, 0.0), vec3(0.0, 1.0, 0.0), useGreen);
-    vec3 shaded = color * factor;
-    outColor = vec4(shaded, 1.0);
+    // Map vPos from [-0.5, 0.5] to [0, 1] for UV coordinates
+    vec2 uv = (vPos + 0.5);
+    
+    // Choose gradient based on colorMul
+    if (pc.colorMul.r > pc.colorMul.g) {
+        // Red horizontal gradient
+        float redGradient = uv.x; // 0 to 1 from left to right
+        outColor = vec4(redGradient, 0.0, 0.0, 1.0);
+    } else {
+        // Green diagonal gradient
+        float greenGradient = (uv.x + uv.y) * 0.5; // 0 to 1 diagonal
+        outColor = vec4(0.0, greenGradient, 0.0, 1.0);
+    }
 }
 
 

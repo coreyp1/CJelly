@@ -36,8 +36,10 @@ uint64_t getCurrentTimeInMilliseconds(void) {
 
 #include <cjelly/cjelly.h>
 #include <cjelly/runtime.h>
-#include <cjelly/engine_internal.h>
+#include <cjelly/cj_engine.h>
 #include <cjelly/cj_window.h>
+#include <cjelly/engine_internal.h>
+#include <cjelly/bindless_internal.h>
 
 /* Demo uses window API now; per-window rendering is managed internally */
 
@@ -66,7 +68,7 @@ int main(void) {
   fprintf(stderr, "Initializing Vulkan...\n");
   const char* vkenv = getenv("CJELLY_VALIDATION");
   int use_validation = (vkenv && vkenv[0] == '1') ? 1 : 0;
-  if (!cj_engine_init_vulkan(engine, use_validation)) {
+  if (!cj_engine_init(engine, use_validation)) {
     fprintf(stderr, "Failed to initialize Vulkan via engine\n");
     return EXIT_FAILURE;
   }
@@ -84,17 +86,10 @@ int main(void) {
   cj_window_t* win2 = cj_window_create(engine, &wdesc2);
 
   // Re-record window 1 with bindless color-only (square) so it doesn't render the fish
-  // Build minimal color-only bindless resources (no descriptor set required)
-  static CJellyBindlessResources* colorOnly = NULL;
+  // Use engine's color pipeline instead of creating our own
+  CJellyBindlessResources* colorOnly = cj_engine_color_pipeline(engine);
   CJellyVulkanContext ctx_local = {0};
-  ctx_local.instance = cj_engine_instance(engine);
-  ctx_local.physicalDevice = cj_engine_physical_device(engine);
-  ctx_local.device = cj_engine_device(engine);
-  ctx_local.graphicsQueue = cj_engine_graphics_queue(engine);
-  ctx_local.presentQueue = cj_engine_present_queue(engine);
-  ctx_local.renderPass = cj_engine_render_pass(engine);
-  ctx_local.commandPool = cj_engine_command_pool(engine);
-  colorOnly = cjelly_create_bindless_color_square_resources_ctx(&ctx_local);
+  cj_engine_export_context(engine, &ctx_local);
   if (colorOnly) {
     cj_window_rerecord_bindless_color(win1, (const void*)colorOnly, &ctx_local);
   }
@@ -132,15 +127,11 @@ int main(void) {
   cj_window_destroy(win1);
   cj_window_destroy(win2);
 
-  // Cleanup colorOnly resources if allocated (must be before device/context destroy)
-  if (colorOnly) {
-    cjelly_destroy_bindless_resources(colorOnly);
-    colorOnly = NULL;
-  }
+  // Cleanup - colorOnly is now engine-owned, no manual cleanup needed
 
   // Wait for GPU idle and clean up global/context resources last
-  vkDeviceWaitIdle(cj_engine_device(engine));
-  cj_engine_shutdown_vulkan(engine);
+  cj_engine_wait_idle(engine);
+  cj_engine_shutdown_device(engine);
 
 #ifndef _WIN32
   XCloseDisplay(display);

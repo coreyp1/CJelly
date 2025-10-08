@@ -6,6 +6,23 @@
 #include <windows.h>
 #include <vulkan/vulkan.h>
 #include <vulkan/vulkan_win32.h>
+#include <cjelly/runtime.h>
+#endif
+
+#ifdef _WIN32
+/* Minimal Win32 window proc: on close, mark app should close and destroy window */
+static LRESULT CALLBACK CjWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+  switch (uMsg) {
+    case WM_CLOSE:
+      cj_set_should_close(1);
+      DestroyWindow(hwnd);
+      return 0;
+    case WM_DESTROY:
+      return 0;
+    default:
+      return DefWindowProc(hwnd, uMsg, wParam, lParam);
+  }
+}
 #else
 #include <X11/Xlib.h>
 #include <vulkan/vulkan.h>
@@ -59,7 +76,7 @@ static void plat_createPlatformWindow(CJPlatformWindow * win, const char * title
 #ifdef _WIN32
   HINSTANCE hInstance = GetModuleHandle(NULL);
   WNDCLASS wc = {0};
-  wc.lpfnWndProc = DefWindowProc; wc.hInstance = hInstance; wc.lpszClassName = "CJellyWindow";
+  wc.lpfnWndProc = CjWndProc; wc.hInstance = hInstance; wc.lpszClassName = "CJellyWindow";
   RegisterClass(&wc);
   win->handle = CreateWindowEx(0, "CJellyWindow", title, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, width, height, NULL, NULL, hInstance, NULL);
   ShowWindow(win->handle, SW_SHOW);
@@ -91,6 +108,8 @@ static void plat_createSwapChainForWindow(CJPlatformWindow * win) {
   VkSurfaceCapabilitiesKHR caps; vkGetPhysicalDeviceSurfaceCapabilitiesKHR(cj_engine_physical_device(cj_engine_get_current()), win->surface, &caps);
   win->swapChainExtent = caps.currentExtent;
   VkSwapchainCreateInfoKHR ci = {0}; ci.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR; ci.surface = win->surface; ci.minImageCount = caps.minImageCount; ci.imageFormat = VK_FORMAT_B8G8R8A8_SRGB; ci.imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR; ci.imageExtent = win->swapChainExtent; ci.imageArrayLayers = 1; ci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT; ci.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR; ci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR; ci.presentMode = VK_PRESENT_MODE_FIFO_KHR; ci.clipped = VK_TRUE;
+  /* Ensure we do not reference an invalid oldSwapchain */
+  ci.oldSwapchain = VK_NULL_HANDLE;
   vkCreateSwapchainKHR(cj_engine_device(cj_engine_get_current()), &ci, NULL, &win->swapChain);
   cj_engine_ensure_render_pass(cj_engine_get_current(), ci.imageFormat);
 }
@@ -128,6 +147,10 @@ static void plat_createSyncObjectsForWindow(CJPlatformWindow * win) {
 static void plat_drawFrameForWindow(CJPlatformWindow * win) {
   if (!win) return;
   VkDevice dev = cj_engine_device(cj_engine_get_current());
+#ifdef _WIN32
+  /* Skip draw if window has been destroyed */
+  if (!IsWindow(win->handle)) return;
+#endif
   vkWaitForFences(dev, 1, &win->inFlightFence, VK_TRUE, UINT64_MAX);
   vkResetFences(dev, 1, &win->inFlightFence);
   uint32_t imageIndex; vkAcquireNextImageKHR(dev, win->swapChain, UINT64_MAX, win->imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
@@ -154,7 +177,8 @@ static void plat_cleanupWindow(CJPlatformWindow * win) {
   if (dev && win->swapChain) { vkDestroySwapchainKHR(dev, win->swapChain, NULL); win->swapChain = VK_NULL_HANDLE; }
   if (inst && win->surface) { vkDestroySurfaceKHR(inst, win->surface, NULL); win->surface = VK_NULL_HANDLE; }
 #ifdef _WIN32
-  if (win->handle) DestroyWindow(win->handle);
+  if (win->handle && IsWindow(win->handle)) DestroyWindow(win->handle);
+  win->handle = NULL;
 #else
   if (display && win->handle) XDestroyWindow(display, win->handle);
 #endif
@@ -383,6 +407,7 @@ static void createBindlessCommandBuffersForWindowCtx(CJPlatformWindow * win, con
   if (!ctx->device || !ctx->commandPool || !ctx->renderPass) return;
 
   if (!resources->pipeline) {
+    fprintf(stderr, "Bindless pipeline is NULL, falling back to textured\n");
     /* Fallback to textured recorder if bindless pipeline missing */
     createTexturedCommandBuffersForWindowCtx(win, ctx);
     return;

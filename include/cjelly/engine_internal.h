@@ -24,6 +24,13 @@ CJ_API VkCommandPool cj_engine_command_pool(const cj_engine_t*);
 /* Ensure render pass in engine matches specified color format */
 CJ_API int cj_engine_ensure_render_pass(cj_engine_t* e, VkFormat fmt);
 
+/* Shared bindless descriptor objects (engine-owned) */
+CJ_API VkDescriptorSetLayout cj_engine_bindless_layout(const cj_engine_t*);
+CJ_API VkDescriptorPool      cj_engine_bindless_pool(const cj_engine_t*);
+
+/* Color pipeline state (engine-owned) */
+CJ_API CJellyBindlessResources* cj_engine_color_pipeline(const cj_engine_t*);
+
 /* Vulkan lifecycle owned by the engine */
 CJ_API int  cj_engine_init_vulkan(cj_engine_t* engine, int use_validation);
 CJ_API void cj_engine_shutdown_vulkan(cj_engine_t* engine);

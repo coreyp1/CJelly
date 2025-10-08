@@ -76,12 +76,7 @@ int shouldClose;
 // Global flag to enable validation layers.
 int enableValidationLayers;
 
-// Global debug messenger handle.
-VkDebugUtilsMessengerEXT debugMessenger = VK_NULL_HANDLE;
-
-// Global constants for window dimensions.
-static const int WIDTH = 800;
-static const int HEIGHT = 600;
+/* Legacy debug messenger and fixed window dims removed in engine/window split */
 
 /* Helpers to read from current engine (Phase 5: no legacy compat) */
 static inline cj_engine_t* cur_eng(void) { return cj_engine_get_current(); }
@@ -148,6 +143,9 @@ typedef struct CJellyTextureAtlas {
   uint32_t nextTextureY;
   uint32_t currentRowHeight;
   uint32_t textureCount;
+  /* moved from file-scope globals */
+  struct CJellyTextureEntry * entries;
+  uint32_t maxTextures;
 } CJellyTextureAtlas;
 struct CJellyApplication;
 
@@ -668,8 +666,8 @@ CJellyBindlessResources* cjelly_create_bindless_color_square_resources(void) {
     ia.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
     ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
 
-    VkViewport vp = {0}; vp.x=0; vp.y=0; vp.width=(float)WIDTH; vp.height=(float)HEIGHT; vp.minDepth=0; vp.maxDepth=1;
-    VkRect2D sc = {0}; sc.extent.width = WIDTH; sc.extent.height = HEIGHT;
+    VkViewport vp = {0}; vp.x=0; vp.y=0; vp.width=1.0f; vp.height=1.0f; vp.minDepth=0; vp.maxDepth=1;
+    VkRect2D sc = {0}; sc.extent.width = 1; sc.extent.height = 1;
     VkPipelineViewportStateCreateInfo vps = {0};
     vps.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
     vps.viewportCount = 1; vps.pViewports = &vp; vps.scissorCount = 1; vps.pScissors = &sc;
@@ -785,8 +783,8 @@ CJ_API CJellyBindlessResources* cjelly_create_bindless_color_square_resources_ct
     ia.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
     ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
 
-    VkViewport vp = {0}; vp.x=0; vp.y=0; vp.width=(float)WIDTH; vp.height=(float)HEIGHT; vp.minDepth=0; vp.maxDepth=1;
-    VkRect2D sc = {0}; sc.extent.width = WIDTH; sc.extent.height = HEIGHT;
+    VkViewport vp = {0}; vp.x=0; vp.y=0; vp.width=1.0f; vp.height=1.0f; vp.minDepth=0; vp.maxDepth=1;
+    VkRect2D sc = {0}; sc.extent.width = 1; sc.extent.height = 1;
     VkPipelineViewportStateCreateInfo vps = {0};
     vps.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
     vps.viewportCount = 1; vps.pViewports = &vp; vps.scissorCount = 1; vps.pScissors = &sc;
@@ -1448,16 +1446,16 @@ void createBindlessGraphicsPipeline(VkDevice device __attribute__((unused)), VkR
   VkViewport viewport = {0};
   viewport.x = 0.0f;
   viewport.y = 0.0f;
-  viewport.width = (float)WIDTH;
-  viewport.height = (float)HEIGHT;
+  viewport.width = 1.0f;
+  viewport.height = 1.0f;
   viewport.minDepth = 0.0f;
   viewport.maxDepth = 1.0f;
 
   VkRect2D scissor = {0};
   scissor.offset.x = 0;
   scissor.offset.y = 0;
-  scissor.extent.width = WIDTH;
-  scissor.extent.height = HEIGHT;
+  scissor.extent.width = 1;
+  scissor.extent.height = 1;
 
   VkPipelineViewportStateCreateInfo viewportState = {0};
   viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
@@ -1591,8 +1589,8 @@ static VkResult createBindlessGraphicsPipelineWithLayout(
   inputAssembly.primitiveRestartEnable = VK_FALSE;
 
   VkViewport viewport = {0};
-  viewport.x = 0.0f; viewport.y = 0.0f; viewport.width = (float)WIDTH; viewport.height = (float)HEIGHT; viewport.minDepth = 0.0f; viewport.maxDepth = 1.0f;
-  VkRect2D scissor = {0}; scissor.offset.x = 0; scissor.offset.y = 0; scissor.extent.width = WIDTH; scissor.extent.height = HEIGHT;
+  viewport.x = 0.0f; viewport.y = 0.0f; viewport.width = 1.0f; viewport.height = 1.0f; viewport.minDepth = 0.0f; viewport.maxDepth = 1.0f;
+  VkRect2D scissor = {0}; scissor.offset.x = 0; scissor.offset.y = 0; scissor.extent.width = 1; scissor.extent.height = 1;
   VkPipelineViewportStateCreateInfo viewportState = {0};
   viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
   viewportState.viewportCount = 1; viewportState.pViewports = &viewport;
@@ -2085,9 +2083,7 @@ void createBindlessVertexBuffer(VkDevice device __attribute__((unused)), VkComma
 // === BINDLESS TEXTURE ATLAS MANAGEMENT ===
 //
 
-// Global texture atlas for bindless rendering
-static CJellyTextureEntry * textureEntries = NULL;
-static uint32_t maxTextures = 1024; // Maximum number of textures in atlas
+/* per-atlas entries and capacity now tracked in CJellyTextureAtlas */
 
 CJellyTextureAtlas * cjelly_create_texture_atlas(uint32_t width, uint32_t height) {
   CJellyTextureAtlas * atlas = malloc(sizeof(CJellyTextureAtlas));
@@ -2104,14 +2100,15 @@ CJellyTextureAtlas * cjelly_create_texture_atlas(uint32_t width, uint32_t height
   atlas->currentRowHeight = 0;
   atlas->textureCount = 0;
 
-  // Allocate memory for texture entries
-  textureEntries = malloc(sizeof(CJellyTextureEntry) * maxTextures);
-  if (!textureEntries) {
+  // Allocate memory for texture entries (per-atlas)
+  atlas->maxTextures = 1024;
+  atlas->entries = malloc(sizeof(CJellyTextureEntry) * atlas->maxTextures);
+  if (!atlas->entries) {
     fprintf(stderr, "Failed to allocate memory for texture entries\n");
     free(atlas);
     return NULL;
   }
-  memset(textureEntries, 0, sizeof(CJellyTextureEntry) * maxTextures);
+  memset(atlas->entries, 0, sizeof(CJellyTextureEntry) * atlas->maxTextures);
   
   // Create the atlas image
   createImage(width, height, VK_FORMAT_R8G8B8A8_UNORM,
@@ -2143,7 +2140,7 @@ CJellyTextureAtlas * cjelly_create_texture_atlas(uint32_t width, uint32_t height
     fprintf(stderr, "Failed to create atlas image view\n");
     vkDestroyImage(cur_device(), atlas->atlasImage, NULL);
     vkFreeMemory(cur_device(), atlas->atlasImageMemory, NULL);
-    free(textureEntries);
+    free(atlas->entries);
     free(atlas);
     return NULL;
   }
@@ -2155,56 +2152,15 @@ CJellyTextureAtlas * cjelly_create_texture_atlas(uint32_t width, uint32_t height
   }
   
   // Create descriptor set layout (single combined sampler)
-  VkDescriptorSetLayoutBinding layoutBinding = {0};
-  layoutBinding.binding = 0;
-  layoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-  layoutBinding.descriptorCount = 1;
-  layoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-  layoutBinding.pImmutableSamplers = NULL;
-  
-  VkDescriptorSetLayoutCreateInfo layoutInfo = {0};
-  layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-  layoutInfo.bindingCount = 1;
-  layoutInfo.pBindings = &layoutBinding;
-  layoutInfo.pNext = NULL;
-  
-  if (vkCreateDescriptorSetLayout(cur_device(), &layoutInfo, NULL, &atlas->bindlessDescriptorSetLayout) != VK_SUCCESS) {
-    fprintf(stderr, "Failed to create bindless descriptor set layout\n");
-    vkDestroyImageView(cur_device(), atlas->atlasImageView, NULL);
-    vkDestroyImage(cur_device(), atlas->atlasImage, NULL);
-    vkFreeMemory(cur_device(), atlas->atlasImageMemory, NULL);
-    free(textureEntries);
-    free(atlas);
-    return NULL;
-  }
+  atlas->bindlessDescriptorSetLayout = cj_engine_bindless_layout(cur_eng());
   
   // Create descriptor pool
-  VkDescriptorPoolSize poolSize = {0};
-  poolSize.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-  poolSize.descriptorCount = maxTextures;
-  
-  VkDescriptorPoolCreateInfo poolInfo = {0};
-  poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-  poolInfo.poolSizeCount = 1;
-  poolInfo.pPoolSizes = &poolSize;
-  poolInfo.maxSets = 1;
-  poolInfo.flags = 0;
-  
-  if (vkCreateDescriptorPool(cur_device(), &poolInfo, NULL, &atlas->bindlessDescriptorPool) != VK_SUCCESS) {
-    fprintf(stderr, "Failed to create bindless descriptor pool\n");
-    vkDestroyDescriptorSetLayout(cur_device(), atlas->bindlessDescriptorSetLayout, NULL);
-    vkDestroyImageView(cur_device(), atlas->atlasImageView, NULL);
-    vkDestroyImage(cur_device(), atlas->atlasImage, NULL);
-    vkFreeMemory(cur_device(), atlas->atlasImageMemory, NULL);
-    free(textureEntries);
-    free(atlas);
-    return NULL;
-  }
+  atlas->bindlessDescriptorPool = cj_engine_bindless_pool(cur_eng());
   
   // Allocate descriptor set
   VkDescriptorSetAllocateInfo allocInfo = {0};
   allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-  allocInfo.descriptorPool = atlas->bindlessDescriptorPool;
+  allocInfo.descriptorPool = cj_engine_bindless_pool(cur_eng());
   allocInfo.descriptorSetCount = 1;
   allocInfo.pSetLayouts = &atlas->bindlessDescriptorSetLayout;
   allocInfo.pNext = NULL;
@@ -2216,7 +2172,7 @@ CJellyTextureAtlas * cjelly_create_texture_atlas(uint32_t width, uint32_t height
     vkDestroyImageView(cur_device(), atlas->atlasImageView, NULL);
     vkDestroyImage(cur_device(), atlas->atlasImage, NULL);
     vkFreeMemory(cur_device(), atlas->atlasImageMemory, NULL);
-    free(textureEntries);
+    free(atlas->entries);
     free(atlas);
     return NULL;
   }
@@ -2240,14 +2196,15 @@ CJellyTextureAtlas * cjelly_create_texture_atlas_ctx(const CJellyVulkanContext* 
   atlas->currentRowHeight = 0;
   atlas->textureCount = 0;
 
-  // Allocate memory for texture entries
-  textureEntries = malloc(sizeof(CJellyTextureEntry) * maxTextures);
-  if (!textureEntries) {
+  // Allocate memory for texture entries (per-atlas)
+  atlas->maxTextures = 1024;
+  atlas->entries = malloc(sizeof(CJellyTextureEntry) * atlas->maxTextures);
+  if (!atlas->entries) {
     fprintf(stderr, "Failed to allocate memory for texture entries\n");
     free(atlas);
     return NULL;
   }
-  memset(textureEntries, 0, sizeof(CJellyTextureEntry) * maxTextures);
+  memset(atlas->entries, 0, sizeof(CJellyTextureEntry) * atlas->maxTextures);
 
   // Create the atlas image using context device
   createImageCtx(ctx, width, height, VK_FORMAT_R8G8B8A8_UNORM,
@@ -2279,7 +2236,7 @@ CJellyTextureAtlas * cjelly_create_texture_atlas_ctx(const CJellyVulkanContext* 
     fprintf(stderr, "Failed to create atlas image view (ctx)\n");
     vkDestroyImage(ctx->device, atlas->atlasImage, NULL);
     vkFreeMemory(ctx->device, atlas->atlasImageMemory, NULL);
-    free(textureEntries);
+    free(atlas->entries);
     free(atlas);
     return NULL;
   }
@@ -2308,7 +2265,7 @@ CJellyTextureAtlas * cjelly_create_texture_atlas_ctx(const CJellyVulkanContext* 
     vkDestroyImageView(ctx->device, atlas->atlasImageView, NULL);
     vkDestroyImage(ctx->device, atlas->atlasImage, NULL);
     vkFreeMemory(ctx->device, atlas->atlasImageMemory, NULL);
-    free(textureEntries);
+    free(atlas->entries);
     free(atlas);
     return NULL;
   }
@@ -2332,7 +2289,7 @@ CJellyTextureAtlas * cjelly_create_texture_atlas_ctx(const CJellyVulkanContext* 
     vkDestroyImageView(ctx->device, atlas->atlasImageView, NULL);
     vkDestroyImage(ctx->device, atlas->atlasImage, NULL);
     vkFreeMemory(ctx->device, atlas->atlasImageMemory, NULL);
-    free(textureEntries);
+    free(atlas->entries);
     free(atlas);
     return NULL;
   }
@@ -2340,7 +2297,7 @@ CJellyTextureAtlas * cjelly_create_texture_atlas_ctx(const CJellyVulkanContext* 
   // Create descriptor pool using context device
   VkDescriptorPoolSize poolSize = {0};
   poolSize.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-  poolSize.descriptorCount = maxTextures;
+  poolSize.descriptorCount = atlas->maxTextures;
 
   VkDescriptorPoolCreateInfo poolInfo = {0};
   poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
@@ -2355,7 +2312,7 @@ CJellyTextureAtlas * cjelly_create_texture_atlas_ctx(const CJellyVulkanContext* 
     vkDestroyImageView(ctx->device, atlas->atlasImageView, NULL);
     vkDestroyImage(ctx->device, atlas->atlasImage, NULL);
     vkFreeMemory(ctx->device, atlas->atlasImageMemory, NULL);
-    free(textureEntries);
+    free(atlas->entries);
     free(atlas);
     return NULL;
   }
@@ -2370,12 +2327,11 @@ CJellyTextureAtlas * cjelly_create_texture_atlas_ctx(const CJellyVulkanContext* 
 
   if (vkAllocateDescriptorSets(ctx->device, &allocInfo, &atlas->bindlessDescriptorSet) != VK_SUCCESS) {
     fprintf(stderr, "Failed to allocate bindless descriptor set (ctx)\n");
-    vkDestroyDescriptorPool(ctx->device, atlas->bindlessDescriptorPool, NULL);
-    vkDestroyDescriptorSetLayout(ctx->device, atlas->bindlessDescriptorSetLayout, NULL);
+  /* engine-owned pool/layout are not destroyed here */
     vkDestroyImageView(ctx->device, atlas->atlasImageView, NULL);
     vkDestroyImage(ctx->device, atlas->atlasImage, NULL);
     vkFreeMemory(ctx->device, atlas->atlasImageMemory, NULL);
-    free(textureEntries);
+    free(atlas->entries);
     free(atlas);
     return NULL;
   }
@@ -2394,10 +2350,7 @@ void cjelly_destroy_texture_atlas_ctx(CJellyTextureAtlas * atlas, const CJellyVu
   vkDestroyImage(ctx->device, atlas->atlasImage, NULL);
   vkFreeMemory(ctx->device, atlas->atlasImageMemory, NULL);
 
-  if (textureEntries) {
-    free(textureEntries);
-    textureEntries = NULL;
-  }
+  if (atlas->entries) { free(atlas->entries); atlas->entries = NULL; }
 
   free(atlas);
 }
@@ -2405,22 +2358,18 @@ void cjelly_destroy_texture_atlas_ctx(CJellyTextureAtlas * atlas, const CJellyVu
 void cjelly_destroy_texture_atlas(CJellyTextureAtlas * atlas) {
   if (!atlas) return;
 
-  vkDestroyDescriptorSetLayout(cur_device(), atlas->bindlessDescriptorSetLayout, NULL);
-  vkDestroyDescriptorPool(cur_device(), atlas->bindlessDescriptorPool, NULL);
+  /* layout/pool are engine-owned; do not destroy here */
   vkDestroyImageView(cur_device(), atlas->atlasImageView, NULL);
   vkDestroyImage(cur_device(), atlas->atlasImage, NULL);
   vkFreeMemory(cur_device(), atlas->atlasImageMemory, NULL);
 
-  if (textureEntries) {
-    free(textureEntries);
-    textureEntries = NULL;
-  }
+  if (atlas->entries) { free(atlas->entries); atlas->entries = NULL; }
 
   free(atlas);
 }
 
 uint32_t cjelly_atlas_add_texture(CJellyTextureAtlas * atlas, const char * filePath) {
-  if (!atlas || atlas->textureCount >= maxTextures) {
+  if (!atlas || atlas->textureCount >= atlas->maxTextures) {
     return 0; // Invalid texture ID
   }
   
@@ -2500,7 +2449,7 @@ uint32_t cjelly_atlas_add_texture(CJellyTextureAtlas * atlas, const char * fileP
   
   // Store texture entry
   uint32_t textureID = atlas->textureCount + 1; // Start from 1, 0 means no texture
-  CJellyTextureEntry * entry = &textureEntries[atlas->textureCount];
+  CJellyTextureEntry * entry = &atlas->entries[atlas->textureCount];
   entry->textureID = textureID;
   entry->x = atlas->nextTextureX;
   entry->y = atlas->nextTextureY;
@@ -2530,7 +2479,7 @@ uint32_t cjelly_atlas_add_texture(CJellyTextureAtlas * atlas, const char * fileP
 
 // Context-based texture addition (uses context device instead of global)
 uint32_t cjelly_atlas_add_texture_ctx(CJellyTextureAtlas * atlas, const char * filePath, const CJellyVulkanContext* ctx) {
-  if (!atlas || atlas->textureCount >= maxTextures) {
+  if (!atlas || atlas->textureCount >= atlas->maxTextures) {
     return 0; // Invalid texture ID
   }
 
@@ -2610,7 +2559,7 @@ uint32_t cjelly_atlas_add_texture_ctx(CJellyTextureAtlas * atlas, const char * f
 
   // Store texture entry
   uint32_t textureID = atlas->textureCount + 1; // Start from 1, 0 means no texture
-  CJellyTextureEntry * entry = &textureEntries[atlas->textureCount];
+  CJellyTextureEntry * entry = &atlas->entries[atlas->textureCount];
   entry->textureID = textureID;
   entry->x = atlas->nextTextureX;
   entry->y = atlas->nextTextureY;
@@ -2643,7 +2592,7 @@ CJellyTextureEntry * cjelly_atlas_get_texture_entry(CJellyTextureAtlas * atlas, 
     return NULL;
   }
   
-  return &textureEntries[textureID - 1];
+  return &atlas->entries[textureID - 1];
 }
 
 void cjelly_atlas_update_descriptor_set(CJellyTextureAtlas * atlas) {

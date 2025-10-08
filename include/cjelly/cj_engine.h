@@ -11,6 +11,7 @@
 #include "cj_macros.h"
 #include "cj_types.h"
 #include "cj_result.h"
+#include "runtime.h"
 
 /** @file cj_engine.h
  *  @brief Engine creation, shutdown and global facilities.
@@ -79,6 +80,17 @@ typedef struct cj_bindless_info_t {
 
 /** Query bindless capacities. */
 CJ_API void cj_engine_get_bindless_info(const cj_engine_t* engine, cj_bindless_info_t* out_info);
+
+/** Initialize GPU device and core Vulkan objects. */
+CJ_API int  cj_engine_init(cj_engine_t* engine, int use_validation);
+/** Destroy GPU device and core Vulkan objects. */
+CJ_API void cj_engine_shutdown_device(cj_engine_t* engine);
+/** Export a minimal Vulkan context snapshot for public helpers. */
+CJ_API void cj_engine_export_context(cj_engine_t* engine, CJellyVulkanContext* out_ctx);
+
+/** Set/get the process-wide current engine during migration. */
+CJ_API void        cj_engine_set_current(cj_engine_t* engine);
+CJ_API cj_engine_t* cj_engine_get_current(void);
 
 #ifdef __cplusplus
 } /* extern "C" */
