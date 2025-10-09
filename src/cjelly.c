@@ -39,7 +39,6 @@
 #include <X11/Xlib.h>
 #include <X11/keysym.h>
 #endif
-#include <shaders/basic.frag.h>
 #include <shaders/basic.vert.h>
 #include <shaders/color.vert.h>
 #include <shaders/color.frag.h>

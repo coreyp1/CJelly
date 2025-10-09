@@ -40,6 +40,7 @@ extern Display* display; /* provided by main on Linux */
 #include <cjelly/engine_internal.h>
 #include <cjelly/bindless_internal.h>
 #include <cjelly/textured_internal.h>
+#include <cjelly/cj_rgraph.h>
 
 /* Platform window struct */
 typedef struct CJPlatformWindow {
@@ -221,6 +222,7 @@ static void createBindlessCommandBuffersForWindowCtx(CJPlatformWindow * win, con
 struct cj_window_t {
   CJPlatformWindow * plat;
   uint64_t frame_index;
+  cj_rgraph_t* render_graph;  /* Render graph for this window (not owned) */
 };
 
 CJ_API cj_window_t* cj_window_create(cj_engine_t* engine, const cj_window_desc_t* desc) {
@@ -286,7 +288,111 @@ CJ_API cj_result_t cj_window_begin_frame(cj_window_t* win, cj_frame_info_t* out_
 
 CJ_API cj_result_t cj_window_execute(cj_window_t* win) {
   if (!win || !win->plat) return CJ_E_INVALID_ARGUMENT;
-  plat_drawFrameForWindow(win->plat);
+  
+  /* Use render graph if available, otherwise fall back to legacy drawing */
+  if (win->render_graph) {
+    /* Execute render graph nodes */
+    VkExtent2D extent = {win->plat->swapChainExtent.width, win->plat->swapChainExtent.height};
+    
+    /* Get the current command buffer from the window's command buffers */
+    if (win->plat->commandBuffers && win->plat->swapChainImageCount > 0) {
+      /* Acquire the next swapchain image first to get the correct command buffer index */
+      VkDevice dev = cj_engine_device(cj_engine_get_current());
+      vkWaitForFences(dev, 1, &win->plat->inFlightFence, VK_TRUE, UINT64_MAX);
+      vkResetFences(dev, 1, &win->plat->inFlightFence);
+      uint32_t imageIndex; 
+      vkAcquireNextImageKHR(dev, win->plat->swapChain, UINT64_MAX, win->plat->imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
+      VkCommandBuffer cmd = win->plat->commandBuffers[imageIndex]; // Use the correct command buffer for this frame
+      
+      /* CRITICAL FIX: Properly prepare command buffer for render graph execution */
+      VkCommandBufferBeginInfo beginInfo = {0};
+      beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+      beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+      
+      if (vkBeginCommandBuffer(cmd, &beginInfo) != VK_SUCCESS) {
+        printf("WINDOWS FIX: Failed to begin command buffer for render graph\n");
+        /* Fall back to legacy drawing if command buffer begin fails */
+        plat_drawFrameForWindow(win->plat);
+        return CJ_SUCCESS;
+      }
+      
+      /* Begin render pass for render graph */
+      VkRenderPassBeginInfo renderPassInfo = {0};
+      renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+      renderPassInfo.renderPass = cj_engine_render_pass(cj_engine_get_current());
+      renderPassInfo.framebuffer = win->plat->swapChainFramebuffers[imageIndex]; // Use the correct framebuffer for this frame
+      renderPassInfo.renderArea.offset = (VkOffset2D){0, 0};
+      renderPassInfo.renderArea.extent = win->plat->swapChainExtent;
+      VkClearValue clearColor = {{{0.1f, 0.1f, 0.1f, 1.0f}}};
+      renderPassInfo.clearValueCount = 1;
+      renderPassInfo.pClearValues = &clearColor;
+      vkCmdBeginRenderPass(cmd, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
+      
+      /* Set viewport and scissor */
+      VkViewport viewport = {0};
+      viewport.x = 0.0f;
+      viewport.y = 0.0f;
+      viewport.width = (float)win->plat->swapChainExtent.width;
+      viewport.height = (float)win->plat->swapChainExtent.height;
+      viewport.minDepth = 0.0f;
+      viewport.maxDepth = 1.0f;
+      vkCmdSetViewport(cmd, 0, 1, &viewport);
+      
+      VkRect2D scissor = {0};
+      scissor.offset = (VkOffset2D){0, 0};
+      scissor.extent = win->plat->swapChainExtent;
+      vkCmdSetScissor(cmd, 0, 1, &scissor);
+      
+      /* Execute render graph */
+      cj_result_t result = cj_rgraph_execute(win->render_graph, cmd, extent);
+      
+      /* End render pass and command buffer */
+      vkCmdEndRenderPass(cmd);
+      if (vkEndCommandBuffer(cmd) != VK_SUCCESS) {
+        printf("WINDOWS FIX: Failed to end command buffer for render graph\n");
+        /* Fall back to legacy drawing if command buffer end fails */
+        plat_drawFrameForWindow(win->plat);
+        return CJ_SUCCESS;
+      }
+      
+      if (result != CJ_SUCCESS) {
+        printf("WINDOWS FIX: Render graph execution failed (result=%d), falling back to legacy\n", result);
+        /* Fall back to legacy drawing if render graph execution fails */
+        plat_drawFrameForWindow(win->plat);
+      } else {
+        /* Submit and present the command buffer (same as legacy path) */
+        VkSemaphore waitS[] = { win->plat->imageAvailableSemaphore }; 
+        VkPipelineStageFlags stages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
+        VkSubmitInfo si = {0}; 
+        si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO; 
+        si.waitSemaphoreCount = 1; 
+        si.pWaitSemaphores = waitS; 
+        si.pWaitDstStageMask = stages; 
+        si.commandBufferCount = 1; 
+        si.pCommandBuffers = &win->plat->commandBuffers[imageIndex]; 
+        VkSemaphore sigS[] = { win->plat->renderFinishedSemaphore }; 
+        si.signalSemaphoreCount = 1; 
+        si.pSignalSemaphores = sigS;
+        vkQueueSubmit(cj_engine_graphics_queue(cj_engine_get_current()), 1, &si, win->plat->inFlightFence);
+        VkPresentInfoKHR pi = {0}; 
+        pi.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR; 
+        pi.waitSemaphoreCount = 1; 
+        pi.pWaitSemaphores = sigS; 
+        pi.swapchainCount = 1; 
+        pi.pSwapchains = &win->plat->swapChain; 
+        pi.pImageIndices = &imageIndex; 
+        vkQueuePresentKHR(cj_engine_present_queue(cj_engine_get_current()), &pi);
+      }
+    } else {
+      /* Fall back to legacy drawing if no command buffers available */
+      plat_drawFrameForWindow(win->plat);
+    }
+  } else {
+    /* Legacy path: direct drawing */
+    printf("DEBUG: Using legacy rendering path\n");
+    plat_drawFrameForWindow(win->plat);
+  }
+  
   return CJ_SUCCESS;
 }
 
@@ -296,7 +402,9 @@ CJ_API cj_result_t cj_window_present(cj_window_t* win) {
 }
 
 CJ_API void cj_window_set_render_graph(cj_window_t* win, cj_rgraph_t* graph) {
-  (void)win; (void)graph;
+  if (!win) return;
+  win->render_graph = graph;
+  // Render graph attached to window
 }
 
 CJ_API void cj_window_get_size(const cj_window_t* win, uint32_t* out_w, uint32_t* out_h) {

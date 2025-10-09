@@ -8,6 +8,7 @@
 #pragma once
 #include <stdint.h>
 #include <stdbool.h>
+#include <vulkan/vulkan.h>
 #include "cj_macros.h"
 #include "cj_types.h"
 #include "cj_result.h"
@@ -37,6 +38,18 @@ CJ_API cj_result_t  cj_rgraph_bind_texture(cj_rgraph_t* graph, cj_str_t name, cj
 
 /** Set an integer parameter (e.g., debug toggles). */
 CJ_API cj_result_t  cj_rgraph_set_i32(cj_rgraph_t* graph, cj_str_t name, int32_t value);
+
+/** Add a blur post-processing node to the render graph. */
+CJ_API cj_result_t  cj_rgraph_add_blur_node(cj_rgraph_t* graph, const char* name);
+
+/** Add a textured rendering node to the render graph. */
+CJ_API cj_result_t  cj_rgraph_add_textured_node(cj_rgraph_t* graph, const char* name);
+
+/** Add a color rendering node to the render graph. */
+CJ_API cj_result_t  cj_rgraph_add_color_node(cj_rgraph_t* graph, const char* name);
+
+/** Execute the render graph with the given command buffer and extent. */
+CJ_API cj_result_t  cj_rgraph_execute(cj_rgraph_t* graph, VkCommandBuffer cmd, VkExtent2D extent);
 
 #ifdef __cplusplus
 } /* extern "C" */

@@ -24,9 +24,9 @@ This document is the single source of truth for what we’re doing now and what�
    - ✅ Implement alloc/free and lifetime tracking for buffers/images/samplers/pipelines.
    - ✅ Remove ad-hoc globals and scattered ownership.
 
-5) 🔄 Render graph **IN PROGRESS**
-   - Implement `cj_rgraph_t` and `cj_window_set_render_graph`.
-   - Windows render via the graph, not direct helper functions.
+5) ✅ Render graph **COMPLETED**
+   - ✅ Implement `cj_rgraph_t` and `cj_window_set_render_graph`.
+   - ✅ Windows render via the graph, not direct helper functions.
 
 6) Platform separation
    - Move Xlib/Win32 specifics into platform modules per `cj_platform.h`.
@@ -59,18 +59,20 @@ This document is the single source of truth for what we’re doing now and what�
 5. ✅ **Implement resource cleanup**: Add proper Vulkan object destruction in `cj_engine_shutdown_vulkan` and handle release
 6. ✅ **Test resource lifecycle**: Verify create/retain/release/cleanup works correctly with validation layers
 
-**Current Focus**: 5) Render Graph - Implement `cj_rgraph_t` and `cj_window_set_render_graph`
+**Current Focus**: 5) Render Graph - Implement `cj_rgraph_t` and `cj_window_set_render_graph` ✅ **COMPLETED**
 
-1. **Create render graph structure**: Define internal `cj_rgraph_t` struct with engine reference, node list, and compilation state
-2. **Implement `cj_rgraph_create`**: Create render graph instance with engine reference and basic initialization
-3. **Implement `cj_rgraph_destroy`**: Clean up render graph resources and node data
-4. **Implement `cj_rgraph_recompile`**: Handle window resize and pipeline cache changes (stub for now)
-5. **Implement `cj_rgraph_bind_texture`**: Bind external textures to named slots in the graph
-6. **Implement `cj_rgraph_set_i32`**: Set integer parameters for debug toggles and configuration
-7. **Integrate with window system**: Update `cj_window_set_render_graph` to store graph reference
-8. **Update window execution**: Modify `cj_window_execute` to use render graph instead of direct helper functions
-9. **Create basic render nodes**: Implement simple pass-through render node for basic rendering
-10. **Test render graph integration**: Verify windows can render via render graph instead of legacy helpers
+1. ✅ **Create render graph structure**: Define internal `cj_rgraph_t` struct with engine reference, node list, and compilation state
+2. ✅ **Implement `cj_rgraph_create`**: Create render graph instance with engine reference and basic initialization
+3. ✅ **Implement `cj_rgraph_destroy`**: Clean up render graph resources and node data
+4. ✅ **Implement `cj_rgraph_recompile`**: Handle window resize and pipeline cache changes (stub for now)
+5. ✅ **Implement `cj_rgraph_bind_texture`**: Bind external textures to named slots in the graph
+6. ✅ **Implement `cj_rgraph_set_i32`**: Set integer parameters for debug toggles and configuration
+7. ✅ **Integrate with window system**: Update `cj_window_set_render_graph` to store graph reference
+8. ✅ **Update window execution**: Modify `cj_window_execute` to use render graph instead of direct helper functions
+9. ✅ **Create basic render nodes**: Implement simple pass-through render node for basic rendering
+10. ✅ **Test render graph integration**: Verify windows can render via render graph instead of legacy helpers
+
+**Next Recommended Focus**: 6) Platform Separation - Move Xlib/Win32 specifics into platform modules
 
 ---
 

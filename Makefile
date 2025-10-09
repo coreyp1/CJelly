@@ -182,23 +182,32 @@ $(OBJ_DIR)/cjelly.o: \
 	$(GEN_DIR)/shaders/bindless.vert.h \
 	$(GEN_DIR)/shaders/bindless.frag.h \
 	$(GEN_DIR)/shaders/color.vert.h \
-	$(GEN_DIR)/shaders/color.frag.h
+	$(GEN_DIR)/shaders/color.frag.h \
+	$(GEN_DIR)/shaders/blur.vert.h \
+	$(GEN_DIR)/shaders/blur.frag.h \
+	$(GEN_DIR)/shaders/textured_simple.frag.h
+
+# rgraph.o dependencies are now handled automatically by the circular dependency approach
 
 
 ####################################################################
 # Shaders
 ####################################################################
 
-# Automatically gather all files under the src/shaders/ directory (recursively)
-$(APP_DIR)/shaders/%.spv: \
-		src/shaders/%
-	@printf "\n### Compiling $@ ###\n"
-	@mkdir -p $(@D)
-	glslangValidator -V $< -o $@
-
 # Compute the desired variable name from the source file.
 # Replace dots with underscores.
 VAR_NAME = $(subst .,_, $(notdir $<))
+
+# Automatically discover all shader files and generate their headers
+SHADER_SOURCES := $(shell find src/shaders -name "*.vert" -o -name "*.frag" -o -name "*.comp")
+SHADER_HEADERS := $(patsubst src/shaders/%,$(GEN_DIR)/shaders/%.h,$(SHADER_SOURCES))
+
+# Phony target to ensure all shader headers are generated before any object files
+.PHONY: shader-headers
+shader-headers: $(SHADER_HEADERS)
+
+# Make specific object files that need shader headers depend on them
+$(OBJ_DIR)/rgraph.o: shader-headers
 
 # Pattern rule to generate a header file from a SPIR-V file.
 $(GEN_DIR)/shaders/%.h: $(APP_DIR)/shaders/%.spv
@@ -207,6 +216,32 @@ $(GEN_DIR)/shaders/%.h: $(APP_DIR)/shaders/%.spv
 	xxd -i $< \
 	  | sed "s/^\(unsigned char \)[^[]*\(\[.*\)/\1$(VAR_NAME)\2/" \
 	  | sed "s/^\(unsigned int \)[^ ]*/\1$(VAR_NAME)_len/" > $@
+
+# Pattern rule to compile shaders to SPIR-V
+$(APP_DIR)/shaders/%.spv: src/shaders/%
+	@printf "\n### Compiling $@ ###\n"
+	@mkdir -p $(@D)
+	glslangValidator -V $< -o $@
+
+# Windows-specific shader compilation (fallback if glslangValidator not available)
+ifeq ($(OS),Windows_NT)
+# Check if glslangValidator is available
+GLSLANG_AVAILABLE := $(shell which glslangValidator 2>/dev/null)
+ifeq ($(GLSLANG_AVAILABLE),)
+# If glslangValidator is not available, create empty shader headers
+$(GEN_DIR)/shaders/%.h: $(APP_DIR)/shaders/%.spv
+	@printf "\n### Generating empty $@ ###\n"
+	@mkdir -p $(@D)
+	@echo "// Empty shader header - glslangValidator not available on Windows" > $@
+	@echo "static const unsigned char $(VAR_NAME)[] = {0};" >> $@
+	@echo "static const unsigned int $(VAR_NAME)_len = 0;" >> $@
+
+$(APP_DIR)/shaders/%.spv: src/shaders/%
+	@printf "\n### Warning: glslangValidator not found, creating empty shader $@ ###\n"
+	@mkdir -p $(@D)
+	@echo "// Empty shader - glslangValidator not available on Windows" > $@
+endif
+endif
 
 
 ####################################################################
