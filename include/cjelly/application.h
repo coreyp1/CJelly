@@ -24,7 +24,7 @@
 extern "C" {
 #endif // __cplusplus
 
-
+#include <cjelly/cj_macros.h>
 #include <cjelly/types.h>
 
 // Include platform-specific headers for Vulkan and window management first.
@@ -241,7 +241,7 @@ struct CJellyApplication {
  * @return CJellyApplicationError CJELLY_APPLICATION_ERROR_NONE on success, or
  * an error code on failure.
  */
-CJellyApplicationError cjelly_application_create(
+CJ_API CJellyApplicationError cjelly_application_create(
     CJellyApplication ** app, const char * appName, uint32_t appVersion);
 
 
@@ -253,7 +253,7 @@ CJellyApplicationError cjelly_application_create(
  * @param app A pointer to the application object.
  * @param version The Vulkan API version (e.g., VK_API_VERSION_1_1).
  */
-void cjelly_application_set_required_vulkan_version(
+CJ_API void cjelly_application_set_required_vulkan_version(
     CJellyApplication * app, uint32_t version);
 
 
@@ -268,7 +268,7 @@ void cjelly_application_set_required_vulkan_version(
  * @param app A pointer to the application object.
  * @param memory The specified GPU memory in megabytes.
  */
-void cjelly_application_set_required_gpu_memory(
+CJ_API void cjelly_application_set_required_gpu_memory(
     CJellyApplication * app, uint32_t memory);
 
 
@@ -284,7 +284,7 @@ void cjelly_application_set_required_gpu_memory(
  * @param required Set to true if this type is required; false if it is only
  * preferred.
  */
-void cjelly_application_set_device_type(
+CJ_API void cjelly_application_set_device_type(
     CJellyApplication * app, CJellyApplicationDeviceType type, bool required);
 
 
@@ -301,7 +301,7 @@ void cjelly_application_set_device_type(
  * @return CJellyApplicationError CJELLY_APPLICATION_ERROR_NONE on success, or
  * an error code on failure.
  */
-CJellyApplicationError cjelly_application_add_instance_extension(
+CJ_API CJellyApplicationError cjelly_application_add_instance_extension(
     CJellyApplication * app, const char * extension);
 
 
@@ -318,7 +318,7 @@ CJellyApplicationError cjelly_application_add_instance_extension(
  * @return CJellyApplicationError CJELLY_APPLICATION_ERROR_NONE on success, or
  * an error code on failure.
  */
-CJellyApplicationError cjelly_application_add_device_extension(
+CJ_API CJellyApplicationError cjelly_application_add_device_extension(
     CJellyApplication * app, const char * extension);
 
 
@@ -337,7 +337,7 @@ CJellyApplicationError cjelly_application_add_device_extension(
  * @return CJellyApplicationError CJELLY_APPLICATION_ERROR_NONE on success, or
  * an error code on failure.
  */
-CJellyApplicationError cjelly_application_init(CJellyApplication * app);
+CJ_API CJellyApplicationError cjelly_application_init(CJellyApplication * app);
 
 
 /**
@@ -345,7 +345,7 @@ CJellyApplicationError cjelly_application_init(CJellyApplication * app);
  *
  * @param app A pointer to the application object to destroy.
  */
-void cjelly_application_destroy(CJellyApplication * app);
+CJ_API void cjelly_application_destroy(CJellyApplication * app);
 
 
 /**
@@ -363,7 +363,7 @@ void cjelly_application_destroy(CJellyApplication * app);
  * @return CJellyApplicationError CJELLY_APPLICATION_ERROR_NONE on success, or
  *   an appropriate error code on failure.
  */
-CJellyApplicationError cjelly_application_create_logical_device(
+CJ_API CJellyApplicationError cjelly_application_create_logical_device(
     CJellyApplication * app);
 
 
@@ -384,7 +384,7 @@ CJellyApplicationError cjelly_application_create_logical_device(
  * @return CJellyApplicationError CJELLY_APPLICATION_ERROR_NONE on success, or
  * an appropriate error code on failure.
  */
-CJellyApplicationError cjelly_application_create_command_pools(
+CJ_API CJellyApplicationError cjelly_application_create_command_pools(
     CJellyApplication * app);
 
 
@@ -393,14 +393,14 @@ CJellyApplicationError cjelly_application_create_command_pools(
  *
  * @return The current application object, or NULL if none is set.
  */
-CJellyApplication* cjelly_application_get_current(void);
+CJ_API CJellyApplication* cjelly_application_get_current(void);
 
 /**
  * @brief Set the current application object.
  *
  * @param app The application object to set as current.
  */
-void cjelly_application_set_current(CJellyApplication* app);
+CJ_API void cjelly_application_set_current(CJellyApplication* app);
 
 /**
  * @brief Register a window with an application (internal use).
@@ -410,7 +410,7 @@ void cjelly_application_set_current(CJellyApplication* app);
  * @param handle The platform window handle.
  * @return true if registration succeeded, false on out-of-memory.
  */
-bool cjelly_application_register_window(CJellyApplication * app, void* window, void* handle);
+CJ_API bool cjelly_application_register_window(CJellyApplication * app, void* window, void* handle);
 
 /**
  * @brief Unregister a window from an application (internal use).
@@ -419,7 +419,7 @@ bool cjelly_application_register_window(CJellyApplication * app, void* window, v
  * @param window The window to unregister.
  * @param handle The platform window handle.
  */
-void cjelly_application_unregister_window(CJellyApplication * app, void* window, void* handle);
+CJ_API void cjelly_application_unregister_window(CJellyApplication * app, void* window, void* handle);
 
 /**
  * @brief Get the number of active windows in the application.
@@ -427,7 +427,7 @@ void cjelly_application_unregister_window(CJellyApplication * app, void* window,
  * @param app The application object.
  * @return The number of active windows.
  */
-uint32_t cjelly_application_window_count(const CJellyApplication * app);
+CJ_API uint32_t cjelly_application_window_count(const CJellyApplication * app);
 
 /**
  * @brief Get all active windows.
@@ -437,7 +437,7 @@ uint32_t cjelly_application_window_count(const CJellyApplication * app);
  * @param window_count Number of windows to retrieve (use cjelly_application_window_count first).
  * @return Number of windows actually written to out_windows.
  */
-uint32_t cjelly_application_get_windows(const CJellyApplication * app,
+CJ_API uint32_t cjelly_application_get_windows(const CJellyApplication * app,
                                         void** out_windows,
                                         uint32_t window_count);
 
@@ -448,7 +448,7 @@ uint32_t cjelly_application_get_windows(const CJellyApplication * app,
  * @param handle Platform window handle (HWND on Windows, Window on Linux).
  * @return Window pointer if found, NULL if not found or window destroyed.
  */
-void* cjelly_application_find_window_by_handle(CJellyApplication * app, void* handle);
+CJ_API void* cjelly_application_find_window_by_handle(CJellyApplication * app, void* handle);
 
 /**
  * @brief Close all windows in the application.
@@ -456,7 +456,7 @@ void* cjelly_application_find_window_by_handle(CJellyApplication * app, void* ha
  * @param app The application object.
  * @param cancellable If true, windows can prevent close via callbacks. If false, windows are closed regardless (for shutdown).
  */
-void cjelly_application_close_all_windows(CJellyApplication * app, bool cancellable);
+CJ_API void cjelly_application_close_all_windows(CJellyApplication * app, bool cancellable);
 
 /**
  * @brief Check if the application supports bindless rendering.
@@ -467,7 +467,7 @@ void cjelly_application_close_all_windows(CJellyApplication * app, bool cancella
  * @param app A pointer to the CJellyApplication structure.
  * @return true if bindless rendering is supported, false otherwise.
  */
-bool cjelly_application_supports_bindless_rendering(CJellyApplication * app);
+CJ_API bool cjelly_application_supports_bindless_rendering(CJellyApplication * app);
 
 #ifdef __cplusplus
 }

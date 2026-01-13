@@ -304,7 +304,7 @@ ERROR_FREE_OPTIONS:
 }
 
 
-CJellyApplicationError cjelly_application_create(
+CJ_API CJellyApplicationError cjelly_application_create(
     CJellyApplication ** app, const char * appName, uint32_t appVersion) {
 
   CJellyApplicationError err = CJELLY_APPLICATION_ERROR_NONE;
@@ -366,14 +366,14 @@ ERROR_CLEANUP_NEWAPP:
 }
 
 
-void cjelly_application_set_validation(CJellyApplication * app, bool enable) {
+CJ_API void cjelly_application_set_validation(CJellyApplication * app, bool enable) {
   if (!app)
     return;
   app->options.enableValidation = enable;
 }
 
 
-void cjelly_application_set_required_vulkan_version(
+CJ_API void cjelly_application_set_required_vulkan_version(
     CJellyApplication * app, uint32_t version) {
 
   if (!app)
@@ -387,7 +387,7 @@ void cjelly_application_set_required_vulkan_version(
 }
 
 
-void cjelly_application_set_required_gpu_memory(
+CJ_API void cjelly_application_set_required_gpu_memory(
     CJellyApplication * app, uint32_t memory) {
 
   if (!app)
@@ -401,7 +401,7 @@ void cjelly_application_set_required_gpu_memory(
 }
 
 
-void cjelly_application_set_device_type(
+CJ_API void cjelly_application_set_device_type(
     CJellyApplication * app, CJellyApplicationDeviceType type, bool required) {
 
   if (!app)
@@ -419,7 +419,7 @@ void cjelly_application_set_device_type(
 }
 
 
-CJellyApplicationError cjelly_application_add_instance_extension(
+CJ_API CJellyApplicationError cjelly_application_add_instance_extension(
     CJellyApplication * app, const char * extension) {
 
   if (!app)
@@ -431,7 +431,7 @@ CJellyApplicationError cjelly_application_add_instance_extension(
 }
 
 
-CJellyApplicationError cjelly_application_add_device_extension(
+CJ_API CJellyApplicationError cjelly_application_add_device_extension(
     CJellyApplication * app, const char * extension) {
 
   if (!app)
@@ -443,7 +443,7 @@ CJellyApplicationError cjelly_application_add_device_extension(
 }
 
 
-CJellyApplicationError cjelly_application_init(CJellyApplication * app) {
+CJ_API CJellyApplicationError cjelly_application_init(CJellyApplication * app) {
   CJellyApplicationError err = CJELLY_APPLICATION_ERROR_NONE;
 
   if (!app) {
@@ -819,7 +819,7 @@ ERROR_RETURN:
 }
 
 
-void cjelly_application_destroy(CJellyApplication * app) {
+CJ_API void cjelly_application_destroy(CJellyApplication * app) {
   if (!app)
     return;
 
@@ -870,7 +870,7 @@ void cjelly_application_destroy(CJellyApplication * app) {
 }
 
 
-CJellyApplicationError cjelly_application_create_logical_device(
+CJ_API CJellyApplicationError cjelly_application_create_logical_device(
     CJellyApplication * app) {
   if (!app || app->physicalDevice == VK_NULL_HANDLE) {
     fprintf(stderr, "Invalid application or physical device not set.\n");
@@ -1048,7 +1048,7 @@ CJellyApplicationError cjelly_application_create_logical_device(
 }
 
 
-bool cjelly_application_supports_bindless_rendering(CJellyApplication * app) {
+CJ_API bool cjelly_application_supports_bindless_rendering(CJellyApplication * app) {
   if (!app) {
     return false;
   }
@@ -1057,13 +1057,13 @@ bool cjelly_application_supports_bindless_rendering(CJellyApplication * app) {
 
 // Window tracking implementation
 
-uint32_t cjelly_application_window_count(const CJellyApplication * app) {
+CJ_API uint32_t cjelly_application_window_count(const CJellyApplication * app) {
   if (!app)
     return 0;
   return app->window_count;
 }
 
-uint32_t cjelly_application_get_windows(const CJellyApplication * app, 
+CJ_API uint32_t cjelly_application_get_windows(const CJellyApplication * app, 
                                         void** out_windows, 
                                         uint32_t window_count) {
   if (!app || !out_windows || window_count == 0)
@@ -1076,7 +1076,7 @@ uint32_t cjelly_application_get_windows(const CJellyApplication * app,
   return count;
 }
 
-void* cjelly_application_find_window_by_handle(CJellyApplication * app, void* handle) {
+CJ_API void* cjelly_application_find_window_by_handle(CJellyApplication * app, void* handle) {
   if (!app || !handle || !app->handle_map)
     return NULL;
 
@@ -1092,11 +1092,11 @@ void* cjelly_application_find_window_by_handle(CJellyApplication * app, void* ha
 // Global current application pointer (similar to engine)
 static CJellyApplication* g_current_application = NULL;
 
-CJellyApplication* cjelly_application_get_current(void) {
+CJ_API CJellyApplication* cjelly_application_get_current(void) {
   return g_current_application;
 }
 
-void cjelly_application_set_current(CJellyApplication* app) {
+CJ_API void cjelly_application_set_current(CJellyApplication* app) {
   g_current_application = app;
 }
 
@@ -1165,7 +1165,7 @@ static void remove_window_from_application(CJellyApplication * app, void* window
   }
 }
 
-bool cjelly_application_register_window(CJellyApplication * app, void* window, void* handle) {
+CJ_API bool cjelly_application_register_window(CJellyApplication * app, void* window, void* handle) {
   if (!app) app = cjelly_application_get_current();
   if (app) {
     return add_window_to_application(app, window, handle);
@@ -1173,14 +1173,14 @@ bool cjelly_application_register_window(CJellyApplication * app, void* window, v
   return false;
 }
 
-void cjelly_application_unregister_window(CJellyApplication * app, void* window, void* handle) {
+CJ_API void cjelly_application_unregister_window(CJellyApplication * app, void* window, void* handle) {
   if (!app) app = cjelly_application_get_current();
   if (app) {
     remove_window_from_application(app, window, handle);
   }
 }
 
-void cjelly_application_close_all_windows(CJellyApplication * app, bool cancellable) {
+CJ_API void cjelly_application_close_all_windows(CJellyApplication * app, bool cancellable) {
   if (!app)
     return;
 
@@ -1206,7 +1206,7 @@ void cjelly_application_close_all_windows(CJellyApplication * app, bool cancella
 }
 
 
-CJellyApplicationError cjelly_application_create_command_pools(
+CJ_API CJellyApplicationError cjelly_application_create_command_pools(
     CJellyApplication * app) {
 
   if (!app || app->logicalDevice == VK_NULL_HANDLE) {
