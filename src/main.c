@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <time.h>
 #include <math.h>
 
@@ -82,20 +83,20 @@ int main(void) {
   // Create three windows via new API (now that Vulkan is ready)
   cj_window_desc_t wdesc1 = {0};
   wdesc1.title.ptr = "CJelly Window 1 (Color Graph)";
-  wdesc1.title.len = 25;
+  wdesc1.title.len = strlen(wdesc1.title.ptr);
   wdesc1.width = 800;
   wdesc1.height = 600;
-  
+
   cj_window_desc_t wdesc2 = wdesc1;
   wdesc2.title.ptr = "CJelly Window 2 (Textured Graph)";
-  wdesc2.title.len = 28;
-  
+  wdesc2.title.len = strlen(wdesc2.title.ptr);
+
   cj_window_desc_t wdesc3 = wdesc1;
   wdesc3.title.ptr = "CJelly Window 3 (Multi-Pass Graph)";
-  wdesc3.title.len = 30;
+  wdesc3.title.len = strlen(wdesc3.title.ptr);
   wdesc3.width = 600;
   wdesc3.height = 400;
-  
+
   printf("Creating windows...\n");
   cj_window_t* win1 = cj_window_create(engine, &wdesc1);
   printf("Created window 1\n");
@@ -116,25 +117,25 @@ int main(void) {
   printf("About to create graph3...\n");
   cj_rgraph_t* graph3 = cj_rgraph_create(engine, &rgraph_desc);  // Multi-pass graph
   printf("Created graph3\n");
-  
+
   // Attach render graphs to windows
   cj_window_set_render_graph(win1, graph1);
   cj_window_set_render_graph(win2, graph2);
   cj_window_set_render_graph(win3, graph3);
-  
+
   // Configure different parameters for each window's render graph
   cj_str_t param_color = {"render_mode", 11};
   cj_str_t param_textured = {"render_mode", 11};
   cj_str_t param_multipass = {"render_mode", 11};
   cj_str_t param_passes = {"pass_count", 10};
   cj_str_t param_effects = {"post_effects", 12};
-  
+
   cj_rgraph_set_i32(graph1, param_color, 1);        // Color-only mode
   cj_rgraph_set_i32(graph2, param_textured, 2);     // Textured mode
   cj_rgraph_set_i32(graph3, param_multipass, 3);    // Multi-pass mode
   cj_rgraph_set_i32(graph3, param_passes, 2);       // 2 passes
   cj_rgraph_set_i32(graph3, param_effects, 1);      // Enable post-effects
-  
+
   // Add nodes to all render graphs to make them functional
   printf("About to add color node to Window 1...\n");
   cj_result_t color_result = cj_rgraph_add_color_node(graph1, "color_effect");
@@ -143,7 +144,7 @@ int main(void) {
   } else {
     printf("Failed to add color effect to Window 1\n");
   }
-  
+
   printf("About to add textured node to Window 2...\n");
   cj_result_t textured_result = cj_rgraph_add_textured_node(graph2, "textured_effect");
   if (textured_result == CJ_SUCCESS) {
@@ -151,7 +152,7 @@ int main(void) {
   } else {
     printf("Failed to add textured effect to Window 2\n");
   }
-  
+
   // Add a blur node to window 3's render graph to demonstrate post-processing
   printf("About to add blur node to Window 3...\n");
   cj_result_t blur_result = cj_rgraph_add_blur_node(graph3, "blur_effect");
@@ -160,7 +161,7 @@ int main(void) {
   } else {
     printf("Failed to add blur effect to Window 3\n");
   }
-  
+
   // Legacy fallback: still set up color pipeline for window 1
   CJellyBindlessResources* colorOnly = cj_engine_color_pipeline(engine);
   CJellyVulkanContext ctx_local = {0};
@@ -171,7 +172,7 @@ int main(void) {
 
   // Main render loop with FPS limiting
   cj_window_t* windows[] = {win1, win2, win3};
-  
+
   // FPS configuration
   const int target_fps = 30;  // Target FPS (reduced for better performance)
   const uint64_t frame_time_ms = 1000 / target_fps;  // Target frame time in milliseconds
@@ -180,21 +181,30 @@ int main(void) {
   uint64_t last_poll_time = last_frame_time;
   const uint64_t update_interval_ms = 50; // Update parameters only every 50ms (20 times per second)
   const uint64_t poll_interval_ms = 16;   // Poll events every 16ms (60 times per second)
-  
+
   printf("Starting main render loop...\n");
   int frame_count = 0;
-  
+
+  // FPS profiling variables
+  uint64_t last_fps_print_time = last_frame_time;
+  int fps_frame_count = 0;
+  uint64_t fps_start_time = last_frame_time;
+  uint64_t min_frame_time = UINT64_MAX;
+  uint64_t max_frame_time = 0;
+  uint64_t total_frame_time = 0;
+
   while (!cj_should_close()) {
     uint64_t currentTime = getCurrentTimeInMilliseconds();
     frame_count++;
-    
-    
+    fps_frame_count++;
+
+
     // Only poll events periodically to reduce CPU usage
     if (currentTime - last_poll_time >= poll_interval_ms) {
       cj_poll_events();
       last_poll_time = currentTime;
     }
-    
+
     // Only update parameters periodically to reduce CPU usage
     if (currentTime - last_update_time >= update_interval_ms) {
       // Toggle color each second for window 1 by updating push constants in recorded commands
@@ -212,14 +222,14 @@ int main(void) {
       cj_str_t param_time = {"time_ms", 7};
       cj_str_t param_blur_intensity = {"blur_intensity", 12};
       cj_rgraph_set_i32(graph3, param_time, (int32_t)(currentTime % 10000));
-      
+
       // Animate blur intensity over time (0.0 to 1.0) - slower for better performance
       float blur_intensity = 0.5f + 0.5f * sin(currentTime * 0.001f); // Slower animation
       cj_rgraph_set_i32(graph3, param_blur_intensity, (int32_t)(blur_intensity * 1000.0f)); // Store as integer * 1000
-      
+
       last_update_time = currentTime;
     }
-    
+
     // Render all three windows
     for (int i = 0; i < 3; ++i) {
       cj_frame_info_t frame = {0};
@@ -228,11 +238,34 @@ int main(void) {
         cj_window_present(windows[i]);
       }
     }
-    
+
     // FPS limiting - sleep for the remaining frame time
     uint64_t frame_end_time = getCurrentTimeInMilliseconds();
     uint64_t frame_duration = frame_end_time - last_frame_time;
-    
+
+    // Track frame time statistics for profiling
+    if (frame_duration < min_frame_time) min_frame_time = frame_duration;
+    if (frame_duration > max_frame_time) max_frame_time = frame_duration;
+    total_frame_time += frame_duration;
+
+    // Print FPS statistics every second
+    if (currentTime - last_fps_print_time >= 1000) {
+      double elapsed_seconds = (currentTime - fps_start_time) / 1000.0;
+      double fps = fps_frame_count / elapsed_seconds;
+      double avg_frame_time = (double)total_frame_time / fps_frame_count;
+
+      printf("FPS: %.2f | Frame time: avg=%.2fms min=%.2fms max=%.2fms | Frames: %d\n",
+             fps, avg_frame_time, (double)min_frame_time, (double)max_frame_time, fps_frame_count);
+
+      // Reset profiling counters
+      last_fps_print_time = currentTime;
+      fps_frame_count = 0;
+      fps_start_time = currentTime;
+      min_frame_time = UINT64_MAX;
+      max_frame_time = 0;
+      total_frame_time = 0;
+    }
+
     if (frame_duration < frame_time_ms) {
       uint64_t sleep_time = frame_time_ms - frame_duration;
 #ifdef _WIN32
@@ -248,7 +281,7 @@ int main(void) {
   cj_window_destroy(win1);
   cj_window_destroy(win2);
   cj_window_destroy(win3);
-  
+
   // Destroy render graphs
   cj_rgraph_destroy(graph1);
   cj_rgraph_destroy(graph2);
