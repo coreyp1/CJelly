@@ -80,6 +80,13 @@ int main(void) {
   // Set current engine
   cj_engine_set_current(engine);
 
+  // Create application object for window tracking
+  CJellyApplication* app = NULL;
+  cjelly_application_create(&app, "CJelly Test", 1);
+  if (app) {
+    cjelly_application_set_current(app);
+  }
+
   // Create three windows via new API (now that Vulkan is ready)
   cj_window_desc_t wdesc1 = {0};
   wdesc1.title.ptr = "CJelly Window 1 (Color Graph)";
@@ -171,7 +178,6 @@ int main(void) {
   }
 
   // Main render loop with FPS limiting
-  cj_window_t* windows[] = {win1, win2, win3};
 
   // FPS configuration
   const int target_fps = 30;  // Target FPS (reduced for better performance)
@@ -193,7 +199,8 @@ int main(void) {
   uint64_t max_frame_time = 0;
   uint64_t total_frame_time = 0;
 
-  while (!cj_should_close()) {
+  // Main loop: continue while there are active windows
+  while (app && cjelly_application_window_count(app) > 0) {
     uint64_t currentTime = getCurrentTimeInMilliseconds();
     frame_count++;
     fps_frame_count++;
@@ -214,28 +221,55 @@ int main(void) {
         float g = (colorIndex == 0) ? 0.0f : 1.0f;
         cj_bindless_set_color(colorOnly, r, g, 0.0f, 1.0f);
         cj_bindless_update_split_from_colorMul(colorOnly);
-        // REMOVED: cj_window_rerecord_bindless_color(win1, (const void*)colorOnly, &ctx_local);
-        // Command buffers should NOT be recreated every frame - this was causing major performance issues
       }
-      
-      // Update window 3's render graph parameters dynamically
-      cj_str_t param_time = {"time_ms", 7};
-      cj_str_t param_blur_intensity = {"blur_intensity", 12};
-      cj_rgraph_set_i32(graph3, param_time, (int32_t)(currentTime % 10000));
 
-      // Animate blur intensity over time (0.0 to 1.0) - slower for better performance
-      float blur_intensity = 0.5f + 0.5f * sin(currentTime * 0.001f); // Slower animation
-      cj_rgraph_set_i32(graph3, param_blur_intensity, (int32_t)(blur_intensity * 1000.0f)); // Store as integer * 1000
+      // Update window 3's render graph parameters dynamically (only if window still exists)
+      // Check if win3 is still in the application's window list by checking all active windows
+      uint32_t check_count = cjelly_application_window_count(app);
+      void* check_windows[10];
+      uint32_t check_actual = cjelly_application_get_windows(app, check_windows, check_count < 10 ? check_count : 10);
+      bool win3_still_exists = false;
+      for (uint32_t j = 0; j < check_actual; j++) {
+        if (check_windows[j] == win3) {
+          win3_still_exists = true;
+          break;
+        }
+      }
+
+      if (win3_still_exists) {
+        cj_str_t param_time = {"time_ms", 7};
+        cj_str_t param_blur_intensity = {"blur_intensity", 12};
+        cj_rgraph_set_i32(graph3, param_time, (int32_t)(currentTime % 10000));
+
+        // Animate blur intensity over time (0.0 to 1.0) - slower for better performance
+        float blur_intensity = 0.5f + 0.5f * sin(currentTime * 0.001f); // Slower animation
+        cj_rgraph_set_i32(graph3, param_blur_intensity, (int32_t)(blur_intensity * 1000.0f)); // Store as integer * 1000
+      }
 
       last_update_time = currentTime;
     }
 
-    // Render all three windows
-    for (int i = 0; i < 3; ++i) {
-      cj_frame_info_t frame = {0};
-      if (cj_window_begin_frame(windows[i], &frame) == CJ_SUCCESS) {
-        cj_window_execute(windows[i]);
-        cj_window_present(windows[i]);
+    // Get active windows from application and render them
+    // Get count first, then retrieve windows (count may change during iteration)
+    uint32_t window_count = cjelly_application_window_count(app);
+    if (window_count > 0) {
+      void* active_windows[10];  // Max 10 windows
+      uint32_t max_count = (window_count < 10) ? window_count : 10;
+      uint32_t actual_count = cjelly_application_get_windows(app, active_windows, max_count);
+
+      // Render each window (skip if window was destroyed during iteration)
+      for (uint32_t i = 0; i < actual_count; ++i) {
+        cj_window_t* window = (cj_window_t*)active_windows[i];
+        if (window) {
+          // Try to render - if window was destroyed, begin_frame will fail gracefully
+          cj_frame_info_t frame = {0};
+          cj_result_t result = cj_window_begin_frame(window, &frame);
+          if (result == CJ_SUCCESS) {
+            cj_window_execute(window);
+            cj_window_present(window);
+          }
+          // If begin_frame fails, window might be destroyed - that's okay, just skip it
+        }
       }
     }
 

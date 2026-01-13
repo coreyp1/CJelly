@@ -215,6 +215,19 @@ struct CJellyApplication {
   int transferQueueFamilyIndex;
   int computeQueueFamilyIndex;
   bool supportsBindlessRendering;
+
+  // Window tracking (for future mutex protection when multi-threaded)
+  void** windows;  // Window list for tracking (opaque pointers to cj_window_t*)
+  uint32_t window_count;
+  uint32_t window_capacity;
+
+  // Handle mapping for event routing
+  struct {
+    void* handle;  // HWND or Window (cast to void*)
+    void* window;  // Opaque pointer to cj_window_t*
+  }* handle_map;  // Array of handle->window mappings
+  uint32_t handle_map_count;
+  uint32_t handle_map_capacity;
 };
 
 
@@ -374,6 +387,76 @@ CJellyApplicationError cjelly_application_create_logical_device(
 CJellyApplicationError cjelly_application_create_command_pools(
     CJellyApplication * app);
 
+
+/**
+ * @brief Get the current application object.
+ *
+ * @return The current application object, or NULL if none is set.
+ */
+CJellyApplication* cjelly_application_get_current(void);
+
+/**
+ * @brief Set the current application object.
+ *
+ * @param app The application object to set as current.
+ */
+void cjelly_application_set_current(CJellyApplication* app);
+
+/**
+ * @brief Register a window with an application (internal use).
+ *
+ * @param app The application object, or NULL to use current application.
+ * @param window The window to register.
+ * @param handle The platform window handle.
+ * @return true if registration succeeded, false on out-of-memory.
+ */
+bool cjelly_application_register_window(CJellyApplication * app, void* window, void* handle);
+
+/**
+ * @brief Unregister a window from an application (internal use).
+ *
+ * @param app The application object, or NULL to use current application.
+ * @param window The window to unregister.
+ * @param handle The platform window handle.
+ */
+void cjelly_application_unregister_window(CJellyApplication * app, void* window, void* handle);
+
+/**
+ * @brief Get the number of active windows in the application.
+ *
+ * @param app The application object.
+ * @return The number of active windows.
+ */
+uint32_t cjelly_application_window_count(const CJellyApplication * app);
+
+/**
+ * @brief Get all active windows.
+ *
+ * @param app The application object.
+ * @param out_windows Array to fill with window pointers. Must be at least window_count in size.
+ * @param window_count Number of windows to retrieve (use cjelly_application_window_count first).
+ * @return Number of windows actually written to out_windows.
+ */
+uint32_t cjelly_application_get_windows(const CJellyApplication * app,
+                                        void** out_windows,
+                                        uint32_t window_count);
+
+/**
+ * @brief Find a window by its platform handle.
+ *
+ * @param app The application object.
+ * @param handle Platform window handle (HWND on Windows, Window on Linux).
+ * @return Window pointer if found, NULL if not found or window destroyed.
+ */
+void* cjelly_application_find_window_by_handle(CJellyApplication * app, void* handle);
+
+/**
+ * @brief Close all windows in the application.
+ *
+ * @param app The application object.
+ * @param cancellable If true, windows can prevent close via callbacks. If false, windows are closed regardless (for shutdown).
+ */
+void cjelly_application_close_all_windows(CJellyApplication * app, bool cancellable);
 
 /**
  * @brief Check if the application supports bindless rendering.

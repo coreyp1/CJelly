@@ -25,6 +25,9 @@
 
 #include <cjelly/cjelly.h>
 #include <cjelly/runtime.h>
+#include <cjelly/application.h>
+#include <cjelly/cj_window.h>
+#include <cjelly/window_internal.h>
 #include <cjelly/engine_internal.h>
 #include <cjelly/bindless_internal.h>
 #include <cjelly/textured_internal.h>
@@ -51,11 +54,6 @@
 Display * display; /* provided by main.c */
 #endif
 
-/* All Vulkan objects are engine-owned; read via engine getters */
-
-
-// Global flag to indicate that the window should close.
-int shouldClose;
 
 // Global flag to enable validation layers.
 int enableValidationLayers;
@@ -154,8 +152,6 @@ static void cjelly_atlas_update_descriptor_set_ctx(CJellyTextureAtlas * atlas, c
 /* forward declare OS function to avoid implicit warning */
 CJ_API void processWindowEvents(void);
 CJ_API void cj_poll_events(void) { processWindowEvents(); }
-CJ_API int  cj_should_close(void) { return shouldClose; }
-CJ_API void cj_set_should_close(int v) { shouldClose = v; }
 
 /* Public convenience setter for demo color updates without exposing struct layout */
 CJ_API void cj_bindless_set_color(CJellyBindlessResources* resources, float r, float g, float b, float a) {
@@ -900,7 +896,7 @@ LRESULT CALLBACK WindowProc(
     HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
   switch (uMsg) {
   case WM_CLOSE:
-    shouldClose = 1;
+    // Removed: shouldClose flag - window close now handled via callbacks
     PostQuitMessage(0);
     return 0;
   default:
@@ -937,16 +933,33 @@ CJ_API void processWindowEvents() {
     if (event.type == ClientMessage) {
       Atom wmDelete = XInternAtom(display, "WM_DELETE_WINDOW", False);
       if ((Atom)event.xclient.data.l[0] == wmDelete) {
-        shouldClose = 1;
+        // Look up window from handle via application
+        CJellyApplication* app = cjelly_application_get_current();
+        if (app) {
+          cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)event.xclient.window);
+          if (window) {
+            bool cancellable = true;  // User-initiated close
+            cj_window_close_with_callback(window, cancellable);
+          }
+        }
       }
     }
     if (event.type == DestroyNotify) {
-      shouldClose = 1;
+      // Window already destroyed, nothing to do
     }
     if (event.type == KeyPress) {
-      // Close on Escape for convenience
+      // Close on Escape for convenience (find window and close it)
       KeySym sym = XLookupKeysym(&event.xkey, 0);
-      if (sym == XK_Escape) shouldClose = 1;
+      if (sym == XK_Escape) {
+        CJellyApplication* app = cjelly_application_get_current();
+        if (app) {
+          cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)event.xkey.window);
+          if (window) {
+            bool cancellable = true;
+            cj_window_close_with_callback(window, cancellable);
+          }
+        }
+      }
     }
   }
 }

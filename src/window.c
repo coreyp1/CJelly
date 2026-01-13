@@ -9,13 +9,35 @@
 #endif
 
 #ifdef _WIN32
-/* Minimal Win32 window proc: on close, mark app should close and destroy window */
+/* Minimal Win32 window proc: on close, invoke callback and handle response */
 static LRESULT CALLBACK CjWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
   switch (uMsg) {
-    case WM_CLOSE:
-      cj_set_should_close(1);
-      DestroyWindow(hwnd);
-      return 0;
+    case WM_CLOSE: {
+      // Look up window from handle via application
+      CJellyApplication* app = cjelly_application_get_current();
+      if (app) {
+        cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)hwnd);
+        if (window) {
+          bool cancellable = true;  // User-initiated close
+          cj_window_close_response_t response = CJ_WINDOW_CLOSE_ALLOW;
+
+          // Invoke callback if present
+          if (window->close_callback) {
+            response = window->close_callback(window, cancellable, window->close_callback_user_data);
+          }
+
+          // If callback allows close, destroy window (which will destroy the platform window)
+          if (response == CJ_WINDOW_CLOSE_ALLOW) {
+            cj_window_destroy(window);
+          }
+          // If callback prevents close, return 1 to prevent default destruction
+          // Window stays open and visible
+          return (response == CJ_WINDOW_CLOSE_PREVENT) ? 1 : 0;
+        }
+      }
+      // Fallback: if no application or window not found, allow default destruction
+      return DefWindowProc(hwnd, uMsg, wParam, lParam);
+    }
     case WM_DESTROY:
       return 0;
     default:
@@ -41,6 +63,7 @@ extern Display* display; /* provided by main on Linux */
 #include <cjelly/bindless_internal.h>
 #include <cjelly/textured_internal.h>
 #include <cjelly/cj_rgraph.h>
+#include <cjelly/application.h>
 
 /* Platform window struct */
 typedef struct CJPlatformWindow {
@@ -114,26 +137,68 @@ static void plat_createSwapChainForWindow(CJPlatformWindow * win) {
   cj_engine_ensure_render_pass(cj_engine_get_current(), ci.imageFormat);
 }
 
-static void plat_createImageViewsForWindow(CJPlatformWindow * win) {
-  if (!win) return;
+static bool plat_createImageViewsForWindow(CJPlatformWindow * win) {
+  if (!win) return false;
   vkGetSwapchainImagesKHR(cj_engine_device(cj_engine_get_current()), win->swapChain, &win->swapChainImageCount, NULL);
   win->swapChainImages = (VkImage*)malloc(sizeof(VkImage)*win->swapChainImageCount);
+  if (!win->swapChainImages) {
+    fprintf(stderr, "Error: Failed to allocate swapChainImages\n");
+    return false;
+  }
   vkGetSwapchainImagesKHR(cj_engine_device(cj_engine_get_current()), win->swapChain, &win->swapChainImageCount, win->swapChainImages);
   win->swapChainImageViews = (VkImageView*)malloc(sizeof(VkImageView)*win->swapChainImageCount);
+  if (!win->swapChainImageViews) {
+    fprintf(stderr, "Error: Failed to allocate swapChainImageViews\n");
+    free(win->swapChainImages);
+    win->swapChainImages = NULL;
+    return false;
+  }
   for (uint32_t i=0;i<win->swapChainImageCount;i++) {
     VkImageViewCreateInfo vi = {0}; vi.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO; vi.image = win->swapChainImages[i]; vi.viewType = VK_IMAGE_VIEW_TYPE_2D; vi.format = VK_FORMAT_B8G8R8A8_SRGB; vi.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT; vi.subresourceRange.levelCount = 1; vi.subresourceRange.layerCount = 1;
-    vkCreateImageView(cj_engine_device(cj_engine_get_current()), &vi, NULL, &win->swapChainImageViews[i]);
+    if (vkCreateImageView(cj_engine_device(cj_engine_get_current()), &vi, NULL, &win->swapChainImageViews[i]) != VK_SUCCESS) {
+      fprintf(stderr, "Error: Failed to create image view %u\n", i);
+      // Clean up already created image views
+      VkDevice dev = cj_engine_device(cj_engine_get_current());
+      for (uint32_t j = 0; j < i; j++) {
+        if (win->swapChainImageViews[j] != VK_NULL_HANDLE) {
+          vkDestroyImageView(dev, win->swapChainImageViews[j], NULL);
+        }
+      }
+      free(win->swapChainImageViews);
+      win->swapChainImageViews = NULL;
+      free(win->swapChainImages);
+      win->swapChainImages = NULL;
+      return false;
+    }
   }
+  return true;
 }
 
-static void plat_createFramebuffersForWindow(CJPlatformWindow * win) {
-  if (!win) return;
+static bool plat_createFramebuffersForWindow(CJPlatformWindow * win) {
+  if (!win) return false;
   win->swapChainFramebuffers = (VkFramebuffer*)malloc(sizeof(VkFramebuffer)*win->swapChainImageCount);
+  if (!win->swapChainFramebuffers) {
+    fprintf(stderr, "Error: Failed to allocate swapChainFramebuffers\n");
+    return false;
+  }
+  VkDevice dev = cj_engine_device(cj_engine_get_current());
   for (uint32_t i=0;i<win->swapChainImageCount;i++) {
     VkImageView attachments[] = { win->swapChainImageViews[i] };
     VkFramebufferCreateInfo fi = {0}; fi.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO; fi.renderPass = cj_engine_render_pass(cj_engine_get_current()); fi.attachmentCount = 1; fi.pAttachments = attachments; fi.width = win->swapChainExtent.width; fi.height = win->swapChainExtent.height; fi.layers = 1;
-    vkCreateFramebuffer(cj_engine_device(cj_engine_get_current()), &fi, NULL, &win->swapChainFramebuffers[i]);
+    if (vkCreateFramebuffer(dev, &fi, NULL, &win->swapChainFramebuffers[i]) != VK_SUCCESS) {
+      fprintf(stderr, "Error: Failed to create framebuffer %u\n", i);
+      // Clean up already created framebuffers
+      for (uint32_t j = 0; j < i; j++) {
+        if (win->swapChainFramebuffers[j] != VK_NULL_HANDLE) {
+          vkDestroyFramebuffer(dev, win->swapChainFramebuffers[j], NULL);
+        }
+      }
+      free(win->swapChainFramebuffers);
+      win->swapChainFramebuffers = NULL;
+      return false;
+    }
   }
+  return true;
 }
 
 static void plat_createSyncObjectsForWindow(CJPlatformWindow * win) {
@@ -205,14 +270,15 @@ void cjelly_init_textured_pipeline_ctx(const CJellyVulkanContext* ctx);
 static void plat_createPlatformWindow(CJPlatformWindow * win, const char * title, int width, int height);
 static void plat_createSurfaceForWindow(CJPlatformWindow * win);
 static void plat_createSwapChainForWindow(CJPlatformWindow * win);
-static void plat_createImageViewsForWindow(CJPlatformWindow * win);
-static void plat_createFramebuffersForWindow(CJPlatformWindow * win);
+static bool plat_createImageViewsForWindow(CJPlatformWindow * win);
+static bool plat_createFramebuffersForWindow(CJPlatformWindow * win);
+static bool createTexturedCommandBuffersForWindowCtx(CJPlatformWindow * win, const CJellyVulkanContext* ctx);
 static void plat_createSyncObjectsForWindow(CJPlatformWindow * win);
 static void plat_drawFrameForWindow(CJPlatformWindow * win);
 static void plat_cleanupWindow(CJPlatformWindow * win);
 
 /* Command buffer recorders using engine/ctx */
-static void createTexturedCommandBuffersForWindowCtx(CJPlatformWindow * win, const CJellyVulkanContext* ctx);
+static bool createTexturedCommandBuffersForWindowCtx(CJPlatformWindow * win, const CJellyVulkanContext* ctx);
 static void createBindlessCommandBuffersForWindowCtx(CJPlatformWindow * win, const CJellyBindlessResources* resources, const CJellyVulkanContext* ctx);
 
 /* Bridge wrapper: implement cj_window_t in terms of legacy CJellyWindow
@@ -223,6 +289,9 @@ struct cj_window_t {
   CJPlatformWindow * plat;
   uint64_t frame_index;
   cj_rgraph_t* render_graph;  /* Render graph for this window (not owned) */
+  cj_window_close_callback_t close_callback;  /* Close callback (NULL if none) */
+  void* close_callback_user_data;  /* User data for close callback */
+  bool is_destroyed;  /* Flag to prevent double-destruction */
 };
 
 CJ_API cj_window_t* cj_window_create(cj_engine_t* engine, const cj_window_desc_t* desc) {
@@ -238,8 +307,16 @@ CJ_API cj_window_t* cj_window_create(cj_engine_t* engine, const cj_window_desc_t
   plat_createPlatformWindow(win->plat, title, (int)desc->width, (int)desc->height);
   plat_createSurfaceForWindow(win->plat);
   plat_createSwapChainForWindow(win->plat);
-  plat_createImageViewsForWindow(win->plat);
-  plat_createFramebuffersForWindow(win->plat);
+  if (!plat_createImageViewsForWindow(win->plat)) {
+    fprintf(stderr, "Error: Failed to create image views for window\n");
+    cj_window_destroy(win);
+    return NULL;
+  }
+  if (!plat_createFramebuffersForWindow(win->plat)) {
+    fprintf(stderr, "Error: Failed to create framebuffers for window\n");
+    cj_window_destroy(win);
+    return NULL;
+  }
 
   /* Initialize textured pipeline/resources via public ctx wrapper */
   CJellyVulkanContext ctx = {0};
@@ -254,18 +331,55 @@ CJ_API cj_window_t* cj_window_create(cj_engine_t* engine, const cj_window_desc_t
   cjelly_init_textured_pipeline_ctx(&ctx);
 
   /* Record textured command buffers using ctx variants */
-  createTexturedCommandBuffersForWindowCtx(win->plat, &ctx);
+  if (!createTexturedCommandBuffersForWindowCtx(win->plat, &ctx)) {
+    fprintf(stderr, "Error: Failed to create textured command buffers for window\n");
+    cj_window_destroy(win);
+    return NULL;
+  }
   plat_createSyncObjectsForWindow(win->plat);
 
   win->frame_index = 0u;
+  win->close_callback = NULL;
+  win->close_callback_user_data = NULL;
+  win->is_destroyed = false;
+
+  // Automatically register window with current application (if one exists)
+  // If registration fails (OOM), we must fail window creation to avoid zombie windows
+  void* handle = (void*)win->plat->handle;
+  if (!cjelly_application_register_window(NULL, win, handle)) {
+    // Registration failed (OOM) - destroy window and return NULL
+    // This prevents creating untracked "zombie" windows
+    fprintf(stderr, "Error: Failed to register window with application (out of memory). Destroying window.\n");
+    // Clean up the window we just created (use destroy function for proper cleanup)
+    // Note: is_destroyed is false, so destroy will proceed, but unregister will be a no-op
+    cj_window_destroy(win);
+    return NULL;
+  }
+
   return win;
 }
 
 CJ_API void cj_window_destroy(cj_window_t* win) {
-  if (!win) return;
+  if (!win || win->is_destroyed) return;  // Prevent double-destruction
+
+  // Mark as destroyed immediately to prevent re-entry
+  win->is_destroyed = true;
+
+  // Get handle BEFORE destroying platform window (handle becomes invalid after DestroyWindow)
+  void* handle = NULL;
+  if (win->plat) {
+    handle = (void*)win->plat->handle;
+  }
+
+  // Unregister from application BEFORE destroying platform window
+  // This ensures the handle is still valid for lookup and removal
+  cjelly_application_unregister_window(NULL, win, handle);
+
+  // Now safe to destroy platform window and free resources
   if (win->plat) {
     plat_cleanupWindow(win->plat);
     free(win->plat);
+    win->plat = NULL;  // Prevent double-free
   }
   free(win);
 }
@@ -288,34 +402,34 @@ CJ_API cj_result_t cj_window_begin_frame(cj_window_t* win, cj_frame_info_t* out_
 
 CJ_API cj_result_t cj_window_execute(cj_window_t* win) {
   if (!win || !win->plat) return CJ_E_INVALID_ARGUMENT;
-  
+
   /* Use render graph if available, otherwise fall back to legacy drawing */
   if (win->render_graph) {
     /* Execute render graph nodes */
     VkExtent2D extent = {win->plat->swapChainExtent.width, win->plat->swapChainExtent.height};
-    
+
     /* Get the current command buffer from the window's command buffers */
     if (win->plat->commandBuffers && win->plat->swapChainImageCount > 0) {
       /* Acquire the next swapchain image first to get the correct command buffer index */
       VkDevice dev = cj_engine_device(cj_engine_get_current());
       vkWaitForFences(dev, 1, &win->plat->inFlightFence, VK_TRUE, UINT64_MAX);
       vkResetFences(dev, 1, &win->plat->inFlightFence);
-      uint32_t imageIndex; 
+      uint32_t imageIndex;
       vkAcquireNextImageKHR(dev, win->plat->swapChain, UINT64_MAX, win->plat->imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
       VkCommandBuffer cmd = win->plat->commandBuffers[imageIndex]; // Use the correct command buffer for this frame
-      
+
       /* CRITICAL FIX: Properly prepare command buffer for render graph execution */
       VkCommandBufferBeginInfo beginInfo = {0};
       beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
       beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-      
+
       if (vkBeginCommandBuffer(cmd, &beginInfo) != VK_SUCCESS) {
         printf("WINDOWS FIX: Failed to begin command buffer for render graph\n");
         /* Fall back to legacy drawing if command buffer begin fails */
         plat_drawFrameForWindow(win->plat);
         return CJ_SUCCESS;
       }
-      
+
       /* Begin render pass for render graph */
       VkRenderPassBeginInfo renderPassInfo = {0};
       renderPassInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
@@ -327,7 +441,7 @@ CJ_API cj_result_t cj_window_execute(cj_window_t* win) {
       renderPassInfo.clearValueCount = 1;
       renderPassInfo.pClearValues = &clearColor;
       vkCmdBeginRenderPass(cmd, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
-      
+
       /* Set viewport and scissor */
       VkViewport viewport = {0};
       viewport.x = 0.0f;
@@ -337,15 +451,15 @@ CJ_API cj_result_t cj_window_execute(cj_window_t* win) {
       viewport.minDepth = 0.0f;
       viewport.maxDepth = 1.0f;
       vkCmdSetViewport(cmd, 0, 1, &viewport);
-      
+
       VkRect2D scissor = {0};
       scissor.offset = (VkOffset2D){0, 0};
       scissor.extent = win->plat->swapChainExtent;
       vkCmdSetScissor(cmd, 0, 1, &scissor);
-      
+
       /* Execute render graph */
       cj_result_t result = cj_rgraph_execute(win->render_graph, cmd, extent);
-      
+
       /* End render pass and command buffer */
       vkCmdEndRenderPass(cmd);
       if (vkEndCommandBuffer(cmd) != VK_SUCCESS) {
@@ -354,33 +468,33 @@ CJ_API cj_result_t cj_window_execute(cj_window_t* win) {
         plat_drawFrameForWindow(win->plat);
         return CJ_SUCCESS;
       }
-      
+
       if (result != CJ_SUCCESS) {
         printf("WINDOWS FIX: Render graph execution failed (result=%d), falling back to legacy\n", result);
         /* Fall back to legacy drawing if render graph execution fails */
         plat_drawFrameForWindow(win->plat);
       } else {
         /* Submit and present the command buffer (same as legacy path) */
-        VkSemaphore waitS[] = { win->plat->imageAvailableSemaphore }; 
+        VkSemaphore waitS[] = { win->plat->imageAvailableSemaphore };
         VkPipelineStageFlags stages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
-        VkSubmitInfo si = {0}; 
-        si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO; 
-        si.waitSemaphoreCount = 1; 
-        si.pWaitSemaphores = waitS; 
-        si.pWaitDstStageMask = stages; 
-        si.commandBufferCount = 1; 
-        si.pCommandBuffers = &win->plat->commandBuffers[imageIndex]; 
-        VkSemaphore sigS[] = { win->plat->renderFinishedSemaphore }; 
-        si.signalSemaphoreCount = 1; 
+        VkSubmitInfo si = {0};
+        si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+        si.waitSemaphoreCount = 1;
+        si.pWaitSemaphores = waitS;
+        si.pWaitDstStageMask = stages;
+        si.commandBufferCount = 1;
+        si.pCommandBuffers = &win->plat->commandBuffers[imageIndex];
+        VkSemaphore sigS[] = { win->plat->renderFinishedSemaphore };
+        si.signalSemaphoreCount = 1;
         si.pSignalSemaphores = sigS;
         vkQueueSubmit(cj_engine_graphics_queue(cj_engine_get_current()), 1, &si, win->plat->inFlightFence);
-        VkPresentInfoKHR pi = {0}; 
-        pi.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR; 
-        pi.waitSemaphoreCount = 1; 
-        pi.pWaitSemaphores = sigS; 
-        pi.swapchainCount = 1; 
-        pi.pSwapchains = &win->plat->swapChain; 
-        pi.pImageIndices = &imageIndex; 
+        VkPresentInfoKHR pi = {0};
+        pi.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+        pi.waitSemaphoreCount = 1;
+        pi.pWaitSemaphores = sigS;
+        pi.swapchainCount = 1;
+        pi.pSwapchains = &win->plat->swapChain;
+        pi.pImageIndices = &imageIndex;
         vkQueuePresentKHR(cj_engine_present_queue(cj_engine_get_current()), &pi);
       }
     } else {
@@ -392,7 +506,7 @@ CJ_API cj_result_t cj_window_execute(cj_window_t* win) {
     printf("DEBUG: Using legacy rendering path\n");
     plat_drawFrameForWindow(win->plat);
   }
-  
+
   return CJ_SUCCESS;
 }
 
@@ -417,6 +531,33 @@ CJ_API uint64_t cj_window_frame_index(const cj_window_t* win) {
   return win ? win->frame_index : 0u;
 }
 
+CJ_API void cj_window_on_close(cj_window_t* window,
+                                 cj_window_close_callback_t callback,
+                                 void* user_data) {
+  if (!window) return;
+  window->close_callback = callback;
+  window->close_callback_user_data = user_data;
+}
+
+// Internal helper to invoke close callback and destroy window if allowed
+void cj_window_close_with_callback(cj_window_t* window, bool cancellable) {
+  if (!window)
+    return;
+
+  cj_window_close_response_t response = CJ_WINDOW_CLOSE_ALLOW;
+
+  // Invoke callback if present
+  if (window->close_callback) {
+    response = window->close_callback(window, cancellable, window->close_callback_user_data);
+  }
+
+  // Destroy window if allowed (or if not cancellable)
+  if (!cancellable || response == CJ_WINDOW_CLOSE_ALLOW) {
+    cj_window_destroy(window);
+  }
+  // If cancellable and response is PREVENT, window stays open
+}
+
 /* Re-record color-only bindless commands for a window */
 CJ_API void cj_window_rerecord_bindless_color(cj_window_t* win,
                                        const void* resources,
@@ -438,10 +579,14 @@ CJ_API void cj_window_rerecord_bindless_color(cj_window_t* win,
 }
 
 /* Per-window textured command buffer recording using explicit ctx */
-static void createTexturedCommandBuffersForWindowCtx(CJPlatformWindow * win, const CJellyVulkanContext* ctx) {
-  if (!win || !ctx || ctx->device == VK_NULL_HANDLE || ctx->commandPool == VK_NULL_HANDLE || ctx->renderPass == VK_NULL_HANDLE) return;
+static bool createTexturedCommandBuffersForWindowCtx(CJPlatformWindow * win, const CJellyVulkanContext* ctx) {
+  if (!win || !ctx || ctx->device == VK_NULL_HANDLE || ctx->commandPool == VK_NULL_HANDLE || ctx->renderPass == VK_NULL_HANDLE) return false;
   win->commandBuffers =
       (VkCommandBuffer*)malloc(sizeof(VkCommandBuffer) * win->swapChainImageCount);
+  if (!win->commandBuffers) {
+    fprintf(stderr, "Error: Failed to allocate command buffers\n");
+    return false;
+  }
 
   VkCommandBufferAllocateInfo allocInfo = {0};
   allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
@@ -450,8 +595,10 @@ static void createTexturedCommandBuffersForWindowCtx(CJPlatformWindow * win, con
   allocInfo.commandBufferCount = win->swapChainImageCount;
 
   if (vkAllocateCommandBuffers(ctx->device, &allocInfo, win->commandBuffers) != VK_SUCCESS) {
-    fprintf(stderr, "Failed to allocate textured (ctx) command buffers\n");
-    exit(EXIT_FAILURE);
+    fprintf(stderr, "Error: Failed to allocate textured (ctx) command buffers\n");
+    free(win->commandBuffers);
+    win->commandBuffers = NULL;
+    return false;
   }
 
   for (uint32_t i = 0; i < win->swapChainImageCount; i++) {
@@ -501,10 +648,19 @@ static void createTexturedCommandBuffersForWindowCtx(CJPlatformWindow * win, con
     vkCmdEndRenderPass(win->commandBuffers[i]);
 
     if (vkEndCommandBuffer(win->commandBuffers[i]) != VK_SUCCESS) {
-      fprintf(stderr, "Failed to record textured (ctx) command buffer\n");
-      exit(EXIT_FAILURE);
+      fprintf(stderr, "Error: Failed to record textured (ctx) command buffer %u\n", i);
+      // Clean up already allocated command buffers
+      VkDevice dev = ctx->device;
+      VkCommandPool pool = ctx->commandPool;
+      if (dev != VK_NULL_HANDLE && pool != VK_NULL_HANDLE) {
+        vkFreeCommandBuffers(dev, pool, i + 1, win->commandBuffers);
+      }
+      free(win->commandBuffers);
+      win->commandBuffers = NULL;
+      return false;
     }
   }
+  return true;
 }
 
 /* Per-window bindless command buffer recording using explicit ctx */
@@ -520,6 +676,14 @@ static void createBindlessCommandBuffersForWindowCtx(CJPlatformWindow * win, con
   }
 
   win->commandBuffers = (VkCommandBuffer*)malloc(sizeof(VkCommandBuffer) * win->swapChainImageCount);
+  if (!win->commandBuffers) {
+    fprintf(stderr, "Error: Failed to allocate bindless command buffers\n");
+    // Fallback to textured
+    if (!createTexturedCommandBuffersForWindowCtx(win, ctx)) {
+      fprintf(stderr, "Error: Failed to create textured command buffers (fallback)\n");
+    }
+    return;
+  }
 
   VkCommandBufferAllocateInfo allocInfo = {0};
   allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
@@ -528,8 +692,12 @@ static void createBindlessCommandBuffersForWindowCtx(CJPlatformWindow * win, con
   allocInfo.commandBufferCount = win->swapChainImageCount;
 
   if (vkAllocateCommandBuffers(ctx->device, &allocInfo, win->commandBuffers) != VK_SUCCESS) {
-    fprintf(stderr, "Failed to allocate bindless command buffers, falling back to textured (ctx)\n");
-    createTexturedCommandBuffersForWindowCtx(win, ctx);
+    fprintf(stderr, "Error: Failed to allocate bindless command buffers, falling back to textured (ctx)\n");
+    free(win->commandBuffers);
+    win->commandBuffers = NULL;
+    if (!createTexturedCommandBuffersForWindowCtx(win, ctx)) {
+      fprintf(stderr, "Error: Failed to create textured command buffers (fallback)\n");
+    }
     return;
   }
 

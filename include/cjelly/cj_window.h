@@ -71,6 +71,29 @@ CJ_API void cj_window_get_size(const cj_window_t* win, uint32_t* out_w, uint32_t
 /** Per-window frame index (monotonic). */
 CJ_API uint64_t cj_window_frame_index(const cj_window_t* win);
 
+/** Window close callback response. */
+typedef enum cj_window_close_response_t {
+  CJ_WINDOW_CLOSE_ALLOW = 0,    /**< Allow the window to close. */
+  CJ_WINDOW_CLOSE_PREVENT = 1,  /**< Prevent the window from closing. */
+} cj_window_close_response_t;
+
+/** Window close callback function type.
+ *  @param window The window requesting to close.
+ *  @param cancellable True if the close can be prevented, false if close is mandatory (e.g., application shutdown).
+ *  @param user_data User-provided data pointer.
+ *  @return CJ_WINDOW_CLOSE_ALLOW to allow close, CJ_WINDOW_CLOSE_PREVENT to prevent (only honored if cancellable is true).
+ */
+typedef cj_window_close_response_t (*cj_window_close_callback_t)(cj_window_t* window, bool cancellable, void* user_data);
+
+/** Register a close callback for a window.
+ *  @param window The window to register the callback for.
+ *  @param callback Callback function to invoke when close is requested. NULL to remove callback.
+ *  @param user_data User data pointer passed to callback.
+ */
+CJ_API void cj_window_on_close(cj_window_t* window,
+                                 cj_window_close_callback_t callback,
+                                 void* user_data);
+
 /* Temporary helper during migration: re-record a color-only bindless command
  * buffer set for a window using provided resources/context. We intentionally
  * use an opaque pointer for resources here to avoid coupling public headers

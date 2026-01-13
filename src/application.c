@@ -15,12 +15,15 @@
  */
 
 #include <cjelly/application.h>
+#include <cjelly/cj_window.h>
+#include <cjelly/window_internal.h>
 
 #include <assert.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
 
 #define CJELLY_MINIMUM_VULKAN_VERSION VK_API_VERSION_1_2
 
@@ -33,6 +36,12 @@
  * It is only used in this file and is not exposed in the public API.
  */
 #define INITIAL_EXTENSION_CAPACITY 10
+
+// Handle map entry type (matches anonymous struct in application.h)
+typedef struct {
+  void* handle;
+  void* window;
+} HandleMapEntry;
 
 
 /**
@@ -332,6 +341,14 @@ CJellyApplicationError cjelly_application_create(
   newApp->graphicsQueue = VK_NULL_HANDLE;
   newApp->transferQueue = VK_NULL_HANDLE;
   newApp->computeQueue = VK_NULL_HANDLE;
+
+  // Initialize window tracking
+  newApp->windows = NULL;
+  newApp->window_count = 0;
+  newApp->window_capacity = 0;
+  newApp->handle_map = NULL;
+  newApp->handle_map_count = 0;
+  newApp->handle_map_capacity = 0;
 
   *app = newApp;
   return CJELLY_APPLICATION_ERROR_NONE;
@@ -1036,6 +1053,156 @@ bool cjelly_application_supports_bindless_rendering(CJellyApplication * app) {
     return false;
   }
   return app->supportsBindlessRendering;
+}
+
+// Window tracking implementation
+
+uint32_t cjelly_application_window_count(const CJellyApplication * app) {
+  if (!app)
+    return 0;
+  return app->window_count;
+}
+
+uint32_t cjelly_application_get_windows(const CJellyApplication * app, 
+                                        void** out_windows, 
+                                        uint32_t window_count) {
+  if (!app || !out_windows || window_count == 0)
+    return 0;
+
+  uint32_t count = (window_count < app->window_count) ? window_count : app->window_count;
+  for (uint32_t i = 0; i < count; i++) {
+    out_windows[i] = app->windows[i];
+  }
+  return count;
+}
+
+void* cjelly_application_find_window_by_handle(CJellyApplication * app, void* handle) {
+  if (!app || !handle || !app->handle_map)
+    return NULL;
+
+  HandleMapEntry* map = (HandleMapEntry*)app->handle_map;
+  for (uint32_t i = 0; i < app->handle_map_count; i++) {
+    if (map[i].handle == handle) {
+      return map[i].window;
+    }
+  }
+  return NULL;
+}
+
+// Global current application pointer (similar to engine)
+static CJellyApplication* g_current_application = NULL;
+
+CJellyApplication* cjelly_application_get_current(void) {
+  return g_current_application;
+}
+
+void cjelly_application_set_current(CJellyApplication* app) {
+  g_current_application = app;
+}
+
+// Returns true on success, false on failure (OOM)
+static bool add_window_to_application(CJellyApplication * app, void* window, void* handle) {
+  if (!app || !window || !handle)
+    return false;
+
+  // Add to window list
+  if (app->window_count >= app->window_capacity) {
+    uint32_t new_capacity = (app->window_capacity == 0) ? 4 : app->window_capacity * 2;
+    void** new_windows = realloc(app->windows, sizeof(void*) * new_capacity);
+    if (!new_windows)
+      return false;  // Out of memory - window list allocation failed
+    app->windows = new_windows;
+    app->window_capacity = new_capacity;
+  }
+
+  // Add to handle map BEFORE adding to window list, so we can rollback if handle map fails
+  if (app->handle_map_count >= app->handle_map_capacity) {
+    uint32_t new_capacity = (app->handle_map_capacity == 0) ? 4 : app->handle_map_capacity * 2;
+    HandleMapEntry* new_map = realloc(app->handle_map, sizeof(HandleMapEntry) * new_capacity);
+    if (!new_map)
+      return false;  // Out of memory - handle map allocation failed
+    // Cast through void* to work around anonymous struct type mismatch
+    app->handle_map = (void*)new_map;
+    app->handle_map_capacity = new_capacity;
+  }
+
+  // Both allocations succeeded, now add to both structures atomically
+  HandleMapEntry* map = (HandleMapEntry*)app->handle_map;
+  map[app->handle_map_count].handle = handle;
+  map[app->handle_map_count].window = window;
+  app->handle_map_count++;
+
+  app->windows[app->window_count++] = window;
+
+  return true;
+}
+
+static void remove_window_from_application(CJellyApplication * app, void* window, void* handle) {
+  if (!app || !window)
+    return;
+
+  // Remove from window list
+  for (uint32_t i = 0; i < app->window_count; i++) {
+    if (app->windows[i] == window) {
+      // Move last element to this position
+      app->windows[i] = app->windows[app->window_count - 1];
+      app->window_count--;
+      break;
+    }
+  }
+
+  // Remove from handle map
+  if (handle && app->handle_map) {
+    HandleMapEntry* map = (HandleMapEntry*)app->handle_map;
+    for (uint32_t i = 0; i < app->handle_map_count; i++) {
+      if (map[i].handle == handle) {
+        // Move last element to this position
+        map[i] = map[app->handle_map_count - 1];
+        app->handle_map_count--;
+        break;
+      }
+    }
+  }
+}
+
+bool cjelly_application_register_window(CJellyApplication * app, void* window, void* handle) {
+  if (!app) app = cjelly_application_get_current();
+  if (app) {
+    return add_window_to_application(app, window, handle);
+  }
+  return false;
+}
+
+void cjelly_application_unregister_window(CJellyApplication * app, void* window, void* handle) {
+  if (!app) app = cjelly_application_get_current();
+  if (app) {
+    remove_window_from_application(app, window, handle);
+  }
+}
+
+void cjelly_application_close_all_windows(CJellyApplication * app, bool cancellable) {
+  if (!app)
+    return;
+
+  // Create a copy of the window list to avoid issues if windows are destroyed during iteration
+  void** windows_copy = malloc(sizeof(void*) * app->window_count);
+  if (!windows_copy)
+    return;
+
+  for (uint32_t i = 0; i < app->window_count; i++) {
+    windows_copy[i] = app->windows[i];
+  }
+  uint32_t count = app->window_count;
+
+  // Close each window
+  for (uint32_t i = 0; i < count; i++) {
+    cj_window_t* window = (cj_window_t*)windows_copy[i];
+    if (window) {
+      cj_window_close_with_callback(window, cancellable);
+    }
+  }
+
+  free(windows_copy);
 }
 
 

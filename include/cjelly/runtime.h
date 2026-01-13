@@ -36,11 +36,7 @@ CJ_API void cj_bindless_update_split_from_colorMul(CJellyBindlessResources* reso
 
 /* Event loop helpers */
 CJ_API void cj_poll_events(void);      /* alias for processWindowEvents */
-CJ_API int  cj_should_close(void);
-CJ_API void cj_set_should_close(int v);
 
 #ifdef __cplusplus
 }
 #endif
-
-
