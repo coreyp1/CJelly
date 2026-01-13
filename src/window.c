@@ -24,6 +24,19 @@
 #include <cjelly/cj_rgraph.h>
 #include <cjelly/window_internal.h>
 
+/* Forward declarations */
+typedef struct CJPlatformWindow CJPlatformWindow;
+
+/* Internal definition of the opaque window type */
+struct cj_window_t {
+  CJPlatformWindow * plat;
+  uint64_t frame_index;
+  cj_rgraph_t* render_graph;  /* Render graph for this window (not owned) */
+  cj_window_close_callback_t close_callback;  /* Close callback (NULL if none) */
+  void* close_callback_user_data;  /* User data for close callback */
+  bool is_destroyed;  /* Flag to prevent double-destruction */
+};
+
 #ifdef _WIN32
 /* Minimal Win32 window proc: on close, invoke callback and handle response */
 static LRESULT CALLBACK CjWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
@@ -94,7 +107,6 @@ typedef struct CJPlatformWindow {
 } CJPlatformWindow;
 
 /* === Platform helpers (migrated) === */
-typedef struct CJPlatformWindow CJPlatformWindow;
 static void plat_createPlatformWindow(CJPlatformWindow * win, const char * title, int width, int height) {
   if (!win) return;
   win->width = width; win->height = height;
@@ -285,16 +297,6 @@ static void createBindlessCommandBuffersForWindowCtx(CJPlatformWindow * win, con
 
 /* Bridge wrapper: implement cj_window_t in terms of legacy CJellyWindow
  * so we can migrate callers incrementally. */
-
-/* Internal definition of the opaque window type */
-struct cj_window_t {
-  CJPlatformWindow * plat;
-  uint64_t frame_index;
-  cj_rgraph_t* render_graph;  /* Render graph for this window (not owned) */
-  cj_window_close_callback_t close_callback;  /* Close callback (NULL if none) */
-  void* close_callback_user_data;  /* User data for close callback */
-  bool is_destroyed;  /* Flag to prevent double-destruction */
-};
 
 CJ_API cj_window_t* cj_window_create(cj_engine_t* engine, const cj_window_desc_t* desc) {
   (void)engine; /* not used yet; legacy path */
