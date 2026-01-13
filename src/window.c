@@ -8,6 +8,22 @@
 #include <cjelly/runtime.h>
 #endif
 
+#include <stdio.h>
+#include <assert.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <cjelly/cj_window.h>
+#include <cjelly/cj_platform.h>
+#include <cjelly/runtime.h>
+#include <cjelly/application.h>
+#include <cjelly/engine_internal.h>
+#include <cjelly/bindless_internal.h>
+#include <cjelly/textured_internal.h>
+#include <cjelly/cj_rgraph.h>
+#include <cjelly/window_internal.h>
+
 #ifdef _WIN32
 /* Minimal Win32 window proc: on close, invoke callback and handle response */
 static LRESULT CALLBACK CjWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
@@ -50,20 +66,6 @@ static LRESULT CALLBACK CjWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
 #include <vulkan/vulkan_xlib.h>
 extern Display* display; /* provided by main on Linux */
 #endif
-#include <stdio.h>
-#include <assert.h>
-#include <stdlib.h>
-#include <string.h>
-#include <stdint.h>
-#include <stdbool.h>
-#include <cjelly/cj_window.h>
-#include <cjelly/cj_platform.h>
-#include <cjelly/runtime.h>
-#include <cjelly/engine_internal.h>
-#include <cjelly/bindless_internal.h>
-#include <cjelly/textured_internal.h>
-#include <cjelly/cj_rgraph.h>
-#include <cjelly/application.h>
 
 /* Platform window struct */
 typedef struct CJPlatformWindow {
