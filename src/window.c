@@ -56,6 +56,7 @@ typedef struct CJPlatformWindow {
   int needsRedraw;
   uint64_t nextFrameTime;
   bool is_minimized;  /* Cached minimized state (updated via window messages) */
+  bool needs_swapchain_recreate;  /* Flag to defer swapchain recreation until next frame */
 } CJPlatformWindow;
 
 /* Internal definition of the opaque window type */
@@ -67,13 +68,27 @@ struct cj_window_t {
   void* close_callback_user_data;  /* User data for close callback */
   cj_window_frame_callback_t frame_callback;  /* Per-frame callback (NULL if none) */
   void* frame_callback_user_data; /* User data for per-frame callback */
+  cj_window_resize_callback_t resize_callback;  /* Resize callback (NULL if none) */
+  void* resize_callback_user_data; /* User data for resize callback */
   bool is_destroyed;  /* Flag to prevent double-destruction */
 };
 
 /* Forward declarations for platform helpers - needed by window procedure */
 static void plat_cleanupWindow(CJPlatformWindow * win);
+static void plat_createSwapChainForWindow(CJPlatformWindow * win);
+static void plat_recreateSwapChainForWindow(CJPlatformWindow * win);
+static bool plat_createImageViewsForWindow(CJPlatformWindow * win);
+static bool plat_createFramebuffersForWindow(CJPlatformWindow * win);
+static bool createTexturedCommandBuffersForWindowCtx(CJPlatformWindow * win, const CJellyVulkanContext* ctx);
 
 #ifdef _WIN32
+/* Timer ID for resize rendering */
+#define CJ_RESIZE_TIMER_ID 1
+#define CJ_RESIZE_TIMER_MS 16  /* ~60 FPS during resize */
+
+/* Forward declaration for rendering during resize */
+static void cj_window__render_frame_immediate(cj_window_t* window);
+
 /*
  * Windows window procedure.
  *
@@ -82,6 +97,11 @@ static void plat_cleanupWindow(CJPlatformWindow * win);
  * 2. WM_CLOSE calls close callback, then cj_window_destroy() if allowed
  * 3. cj_window_destroy() does all cleanup and calls DestroyWindow()
  * 4. WM_DESTROY is sent but is a no-op (cleanup already done)
+ *
+ * Resize handling:
+ * Windows enters a modal loop during resize/move operations (WM_ENTERSIZEMOVE).
+ * During this modal loop, our main event loop doesn't run. To keep rendering,
+ * we start a timer that fires periodically to render frames.
  */
 static LRESULT CALLBACK CjWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
   switch (uMsg) {
@@ -109,17 +129,59 @@ static LRESULT CALLBACK CjWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
       return DefWindowProc(hwnd, uMsg, wParam, lParam);
     }
 
+    case WM_ENTERSIZEMOVE: {
+      // Windows is entering the modal resize/move loop.
+      // Start a timer to keep rendering during this modal loop.
+      SetTimer(hwnd, CJ_RESIZE_TIMER_ID, CJ_RESIZE_TIMER_MS, NULL);
+      return 0;
+    }
+
+    case WM_EXITSIZEMOVE: {
+      // Windows is exiting the modal resize/move loop.
+      // Stop the timer.
+      KillTimer(hwnd, CJ_RESIZE_TIMER_ID);
+      return 0;
+    }
+
+    case WM_TIMER: {
+      if (wParam == CJ_RESIZE_TIMER_ID) {
+        // Timer fired during modal resize loop - render a frame
+        CJellyApplication* app = cjelly_application_get_current();
+        if (app) {
+          cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)hwnd);
+          if (window && !window->is_destroyed) {
+            cj_window__render_frame_immediate(window);
+          }
+        }
+        return 0;
+      }
+      return DefWindowProc(hwnd, uMsg, wParam, lParam);
+    }
+
     case WM_SIZE: {
-      // Track minimized/restored state via window messages (no OS polling needed)
+      // Track minimized/restored state and handle resize
       CJellyApplication* app = cjelly_application_get_current();
       if (app) {
         cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)hwnd);
-        if (window) {
+        if (window && window->plat) {
           // wParam: SIZE_MINIMIZED, SIZE_MAXIMIZED, SIZE_RESTORED, SIZE_MAXSHOW, SIZE_MAXHIDE
           if (wParam == SIZE_MINIMIZED) {
             cj_window__set_minimized(window, true);
           } else if (wParam == SIZE_RESTORED || wParam == SIZE_MAXIMIZED) {
             cj_window__set_minimized(window, false);
+
+            // Extract new width and height from lParam
+            uint32_t new_width = (uint32_t)(LOWORD(lParam));
+            uint32_t new_height = (uint32_t)(HIWORD(lParam));
+
+            // Only update if size actually changed
+            if ((int)new_width != window->plat->width || (int)new_height != window->plat->height) {
+              // Update size and mark swapchain for recreation
+              cj_window__update_size_and_mark_recreate(window, new_width, new_height);
+
+              // Dispatch resize callback (user can do additional work)
+              cj_window__dispatch_resize_callback(window, new_width, new_height);
+            }
           }
         }
       }
@@ -154,11 +216,17 @@ static void plat_createPlatformWindow(CJPlatformWindow * win, const char * title
   ShowWindow(win->handle, SW_SHOW);
 #else
   int screen = DefaultScreen(display);
-  win->handle = XCreateSimpleWindow(display, RootWindow(display, screen), 0, 0, (unsigned)width, (unsigned)height, 1, BlackPixel(display, screen), WhitePixel(display, screen));
+  /* Use black background to reduce flickering during resize */
+  win->handle = XCreateSimpleWindow(display, RootWindow(display, screen), 0, 0, (unsigned)width, (unsigned)height, 0, BlackPixel(display, screen), BlackPixel(display, screen));
   XSelectInput(display, win->handle, StructureNotifyMask | KeyPressMask | ExposureMask);
   Atom wmDelete = XInternAtom(display, "WM_DELETE_WINDOW", False);
   XStoreName(display, win->handle, title);
   XSetWMProtocols(display, win->handle, &wmDelete, 1);
+
+  /* Set window background to None to prevent X11 from drawing background during resize.
+   * This reduces flickering as the compositor won't show a solid background between frames. */
+  XSetWindowBackgroundPixmap(display, win->handle, None);
+
   XMapWindow(display, win->handle);
   XFlush(display);
 #endif
@@ -184,6 +252,105 @@ static void plat_createSwapChainForWindow(CJPlatformWindow * win) {
   ci.oldSwapchain = VK_NULL_HANDLE;
   vkCreateSwapchainKHR(cj_engine_device(cj_engine_get_current()), &ci, NULL, &win->swapChain);
   cj_engine_ensure_render_pass(cj_engine_get_current(), ci.imageFormat);
+}
+
+/* Recreate swapchain for window resize. Destroys old swapchain resources and creates new ones. */
+static void plat_recreateSwapChainForWindow(CJPlatformWindow * win) {
+  if (!win || !win->swapChain) return;
+
+  VkDevice dev = cj_engine_device(cj_engine_get_current());
+  if (!dev) return;
+
+  /* Wait for device to finish all operations before recreating swapchain */
+  vkDeviceWaitIdle(dev);
+
+  /* Save old swapchain for recreation */
+  VkSwapchainKHR oldSwapchain = win->swapChain;
+
+  /* Destroy old swapchain-dependent resources */
+  VkCommandPool pool = cj_engine_command_pool(cj_engine_get_current());
+  if (win->commandBuffers && win->swapChainImageCount > 0) {
+    vkFreeCommandBuffers(dev, pool, win->swapChainImageCount, win->commandBuffers);
+    free(win->commandBuffers);
+    win->commandBuffers = NULL;
+  }
+  if (win->swapChainFramebuffers) {
+    for (uint32_t i = 0; i < win->swapChainImageCount; i++) {
+      if (win->swapChainFramebuffers[i]) {
+        vkDestroyFramebuffer(dev, win->swapChainFramebuffers[i], NULL);
+      }
+    }
+    free(win->swapChainFramebuffers);
+    win->swapChainFramebuffers = NULL;
+  }
+  if (win->swapChainImageViews) {
+    for (uint32_t i = 0; i < win->swapChainImageCount; i++) {
+      if (win->swapChainImageViews[i]) {
+        vkDestroyImageView(dev, win->swapChainImageViews[i], NULL);
+      }
+    }
+    free(win->swapChainImageViews);
+    win->swapChainImageViews = NULL;
+  }
+  if (win->swapChainImages) {
+    free(win->swapChainImages);
+    win->swapChainImages = NULL;
+  }
+
+  /* Query new surface capabilities */
+  VkSurfaceCapabilitiesKHR caps;
+  vkGetPhysicalDeviceSurfaceCapabilitiesKHR(cj_engine_physical_device(cj_engine_get_current()), win->surface, &caps);
+  win->swapChainExtent = caps.currentExtent;
+
+  /* Create new swapchain with old swapchain reference */
+  VkSwapchainCreateInfoKHR ci = {0};
+  ci.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+  ci.surface = win->surface;
+  ci.minImageCount = caps.minImageCount;
+  ci.imageFormat = VK_FORMAT_B8G8R8A8_SRGB;
+  ci.imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+  ci.imageExtent = win->swapChainExtent;
+  ci.imageArrayLayers = 1;
+  ci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+  ci.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+  ci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+  ci.presentMode = VK_PRESENT_MODE_FIFO_KHR;
+  ci.clipped = VK_TRUE;
+  ci.oldSwapchain = oldSwapchain;  /* Reference old swapchain for proper recreation */
+
+  if (vkCreateSwapchainKHR(dev, &ci, NULL, &win->swapChain) != VK_SUCCESS) {
+    fprintf(stderr, "Error: Failed to recreate swapchain\n");
+    return;
+  }
+
+  /* Destroy old swapchain after creating new one */
+  vkDestroySwapchainKHR(dev, oldSwapchain, NULL);
+
+  /* Recreate image views, framebuffers, and command buffers */
+  if (!plat_createImageViewsForWindow(win)) {
+    fprintf(stderr, "Error: Failed to recreate image views after resize\n");
+    return;
+  }
+  if (!plat_createFramebuffersForWindow(win)) {
+    fprintf(stderr, "Error: Failed to recreate framebuffers after resize\n");
+    return;
+  }
+
+  /* Recreate command buffers */
+  CJellyVulkanContext ctx = {0};
+  cj_engine_t* e = cj_engine_get_current();
+  ctx.instance = cj_engine_instance(e);
+  ctx.physicalDevice = cj_engine_physical_device(e);
+  ctx.device = cj_engine_device(e);
+  ctx.graphicsQueue = cj_engine_graphics_queue(e);
+  ctx.presentQueue = cj_engine_present_queue(e);
+  ctx.renderPass = cj_engine_render_pass(e);
+  ctx.commandPool = cj_engine_command_pool(e);
+
+  if (!createTexturedCommandBuffersForWindowCtx(win, &ctx)) {
+    fprintf(stderr, "Error: Failed to recreate command buffers after resize\n");
+    return;
+  }
 }
 
 static bool plat_createImageViewsForWindow(CJPlatformWindow * win) {
@@ -325,6 +492,7 @@ void cjelly_init_textured_pipeline_ctx(const CJellyVulkanContext* ctx);
 static void plat_createPlatformWindow(CJPlatformWindow * win, const char * title, int width, int height);
 static void plat_createSurfaceForWindow(CJPlatformWindow * win);
 static void plat_createSwapChainForWindow(CJPlatformWindow * win);
+static void plat_recreateSwapChainForWindow(CJPlatformWindow * win);
 static bool plat_createImageViewsForWindow(CJPlatformWindow * win);
 static bool plat_createFramebuffersForWindow(CJPlatformWindow * win);
 static bool createTexturedCommandBuffersForWindowCtx(CJPlatformWindow * win, const CJellyVulkanContext* ctx);
@@ -388,7 +556,10 @@ CJ_API cj_window_t* cj_window_create(cj_engine_t* engine, const cj_window_desc_t
   win->close_callback_user_data = NULL;
   win->frame_callback = NULL;
   win->frame_callback_user_data = NULL;
+  win->resize_callback = NULL;
+  win->resize_callback_user_data = NULL;
   win->is_destroyed = false;
+  win->plat->needs_swapchain_recreate = false;
 
   // Automatically register window with current application (if one exists)
   // If registration fails (OOM), we must fail window creation to avoid zombie windows
@@ -488,6 +659,12 @@ CJ_API cj_result_t cj_window_execute(cj_window_t* win) {
     return CJ_E_INVALID_ARGUMENT;
   }
 #endif
+
+  /* Check if swapchain needs recreation (deferred from resize event) */
+  if (win->plat->needs_swapchain_recreate) {
+    plat_recreateSwapChainForWindow(win->plat);
+    win->plat->needs_swapchain_recreate = false;
+  }
 
   /* Use render graph if available, otherwise fall back to legacy drawing */
   if (win->render_graph) {
@@ -633,6 +810,14 @@ CJ_API void cj_window_on_frame(cj_window_t* window,
   window->frame_callback_user_data = user_data;
 }
 
+CJ_API void cj_window_on_resize(cj_window_t* window,
+                                cj_window_resize_callback_t callback,
+                                void* user_data) {
+  if (!window) return;
+  window->resize_callback = callback;
+  window->resize_callback_user_data = user_data;
+}
+
 /* Internal helper for the framework event loop. */
 cj_frame_result_t cj_window__dispatch_frame_callback(cj_window_t* window,
                                                     const cj_frame_info_t* frame_info) {
@@ -674,6 +859,65 @@ void cj_window__set_minimized(cj_window_t* window, bool minimized) {
   if (!window || !window->plat || window->is_destroyed) return;
   window->plat->is_minimized = minimized;
 }
+
+/* Internal helper to update window size and mark swapchain for recreation. */
+void cj_window__update_size_and_mark_recreate(cj_window_t* window, uint32_t new_width, uint32_t new_height) {
+  if (!window || !window->plat || window->is_destroyed) return;
+  window->plat->width = (int)new_width;
+  window->plat->height = (int)new_height;
+  window->plat->needs_swapchain_recreate = true;
+}
+
+/* Internal helper to dispatch resize callback. */
+void cj_window__dispatch_resize_callback(cj_window_t* window, uint32_t new_width, uint32_t new_height) {
+  if (!window || window->is_destroyed || !window->plat) return;
+
+  /* Note: Swapchain recreation is deferred until next frame (via needs_swapchain_recreate flag)
+   * to avoid blocking the window message handler during resize drag. The flag should be set
+   * by the caller (WM_SIZE/ConfigureNotify handler) before calling this function. */
+
+  /* Dispatch user callback */
+  if (window->resize_callback) {
+    window->resize_callback(window, new_width, new_height, window->resize_callback_user_data);
+  }
+}
+
+#ifdef _WIN32
+/*
+ * Render a single frame immediately. Used during Windows modal resize loop.
+ * This bypasses the main event loop to keep the window responsive during resize.
+ */
+static void cj_window__render_frame_immediate(cj_window_t* window) {
+  if (!window || window->is_destroyed || !window->plat) return;
+
+  /* Recreate swapchain if needed */
+  if (window->plat->needs_swapchain_recreate) {
+    plat_recreateSwapChainForWindow(window->plat);
+    window->plat->needs_swapchain_recreate = false;
+  }
+
+  /* Skip if minimized */
+  if (window->plat->is_minimized) return;
+
+  /* Begin frame */
+  cj_frame_info_t frame = {0};
+  if (cj_window_begin_frame(window, &frame) != CJ_SUCCESS) {
+    return;
+  }
+
+  /* Call frame callback if present */
+  if (window->frame_callback) {
+    cj_frame_result_t result = window->frame_callback(window, &frame, window->frame_callback_user_data);
+    if (result == CJ_FRAME_SKIP || result == CJ_FRAME_CLOSE_WINDOW || result == CJ_FRAME_STOP_LOOP) {
+      return;
+    }
+  }
+
+  /* Execute and present */
+  cj_window_execute(window);
+  cj_window_present(window);
+}
+#endif
 
 // Internal helper to invoke close callback and destroy window if allowed
 void cj_window_close_with_callback(cj_window_t* window, bool cancellable) {

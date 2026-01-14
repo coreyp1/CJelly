@@ -56,6 +56,10 @@ typedef struct Window1Context {
   uint64_t last_tick_ms;
 } Window1Context;
 
+typedef struct Window2Context {
+  cj_rgraph_t* graph2;
+} Window2Context;
+
 typedef struct Window3Context {
   cj_rgraph_t* graph3;
   uint64_t last_tick_ms;
@@ -97,6 +101,26 @@ static cj_frame_result_t window3_on_frame(GCJ_MAYBE_UNUSED(cj_window_t* window),
     ctx->last_tick_ms = now;
   }
   return CJ_FRAME_CONTINUE;
+}
+
+/* Resize callbacks for all three windows */
+static void window1_on_resize(cj_window_t* window, uint32_t new_width, uint32_t new_height, GCJ_MAYBE_UNUSED(void* user_data)) {
+  printf("Window 1 resized to %ux%u\n", new_width, new_height);
+  /* Note: Swapchain recreation would happen here in a full implementation.
+   * For now, we just notify. The viewport will update automatically when
+   * the swapchain is recreated (which would be triggered by VK_ERROR_OUT_OF_DATE
+   * during present, or explicitly here). */
+  (void)window;  /* Suppress unused warning */
+}
+
+static void window2_on_resize(cj_window_t* window, uint32_t new_width, uint32_t new_height, GCJ_MAYBE_UNUSED(void* user_data)) {
+  printf("Window 2 resized to %ux%u\n", new_width, new_height);
+  (void)window;  /* Suppress unused warning */
+}
+
+static void window3_on_resize(cj_window_t* window, uint32_t new_width, uint32_t new_height, GCJ_MAYBE_UNUSED(void* user_data)) {
+  printf("Window 3 resized to %ux%u\n", new_width, new_height);
+  (void)window;  /* Suppress unused warning */
 }
 
 int main(void) {
@@ -236,6 +260,11 @@ int main(void) {
 
   cj_window_on_frame(win1, window1_on_frame, &w1ctx);
   cj_window_on_frame(win3, window3_on_frame, &w3ctx);
+
+  // Register resize callbacks for all windows
+  cj_window_on_resize(win1, window1_on_resize, NULL);
+  cj_window_on_resize(win2, window2_on_resize, NULL);
+  cj_window_on_resize(win3, window3_on_resize, NULL);
 
   // Register signal handlers automatically (handlers only set shutdown flag)
   cjelly_application_register_signal_handlers(app);

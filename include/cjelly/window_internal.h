@@ -48,6 +48,20 @@ bool cj_window__needs_redraw(cj_window_t* window);
  */
 void cj_window__set_minimized(cj_window_t* window, bool minimized);
 
+/** Internal helper to update window size and mark swapchain for recreation.
+ *  @param window The window that was resized.
+ *  @param new_width New width in pixels.
+ *  @param new_height New height in pixels.
+ */
+void cj_window__update_size_and_mark_recreate(cj_window_t* window, uint32_t new_width, uint32_t new_height);
+
+/** Internal helper to dispatch resize callback (called from window messages/events).
+ *  @param window The window that was resized.
+ *  @param new_width New width in pixels.
+ *  @param new_height New height in pixels.
+ */
+void cj_window__dispatch_resize_callback(cj_window_t* window, uint32_t new_width, uint32_t new_height);
+
 #ifdef __cplusplus
 }
 #endif

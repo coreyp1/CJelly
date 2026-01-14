@@ -951,6 +951,30 @@ CJ_API void processWindowEvents() {
         }
       }
     }
+    if (event.type == ConfigureNotify) {
+      // Window resized or moved
+      CJellyApplication* app = cjelly_application_get_current();
+      if (app) {
+        cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)event.xconfigure.window);
+        if (window) {
+          uint32_t new_width = (uint32_t)event.xconfigure.width;
+          uint32_t new_height = (uint32_t)event.xconfigure.height;
+
+          // Get current size to check if it changed
+          uint32_t current_width = 0, current_height = 0;
+          cj_window_get_size(window, &current_width, &current_height);
+
+          // Only dispatch if size actually changed
+          if (new_width != current_width || new_height != current_height) {
+            // Update size and mark swapchain for recreation (deferred until next frame to avoid blocking)
+            cj_window__update_size_and_mark_recreate(window, new_width, new_height);
+
+            // Dispatch resize callback (user can do additional work)
+            cj_window__dispatch_resize_callback(window, new_width, new_height);
+          }
+        }
+      }
+    }
     if (event.type == KeyPress) {
       // Close on Escape for convenience (find window and close it)
       KeySym sym = XLookupKeysym(&event.xkey, 0);

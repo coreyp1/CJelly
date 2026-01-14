@@ -107,6 +107,19 @@ typedef cj_frame_result_t (*cj_window_frame_callback_t)(cj_window_t* window,
                                                         const cj_frame_info_t* frame_info,
                                                         void* user_data);
 
+/** Window resize callback function type.
+ *  Called when a window is resized.
+ *
+ *  @param window The window that was resized.
+ *  @param new_width New width of the window in pixels.
+ *  @param new_height New height of the window in pixels.
+ *  @param user_data User-provided data pointer.
+ */
+typedef void (*cj_window_resize_callback_t)(cj_window_t* window,
+                                            uint32_t new_width,
+                                            uint32_t new_height,
+                                            void* user_data);
+
 /** Register a close callback for a window.
  *  @param window The window to register the callback for.
  *  @param callback Callback function to invoke when close is requested. NULL to remove callback.
@@ -124,6 +137,15 @@ CJ_API void cj_window_on_close(cj_window_t* window,
 CJ_API void cj_window_on_frame(cj_window_t* window,
                                cj_window_frame_callback_t callback,
                                void* user_data);
+
+/** Register a resize callback for a window.
+ *  @param window The window to register the callback for.
+ *  @param callback Callback invoked when window is resized. NULL to remove callback.
+ *  @param user_data User data pointer passed to callback.
+ */
+CJ_API void cj_window_on_resize(cj_window_t* window,
+                                cj_window_resize_callback_t callback,
+                                void* user_data);
 
 /* Temporary helper during migration: re-record a color-only bindless command
  * buffer set for a window using provided resources/context. We intentionally
