@@ -47,8 +47,12 @@ extern "C" {
 #include <vulkan/vulkan.h>
 
 // Signal handling headers
-#ifndef _WIN32
 #include <signal.h>
+#ifdef _WIN32
+// On Windows, sig_atomic_t might not be available, use int as fallback
+#ifndef sig_atomic_t
+typedef int sig_atomic_t;
+#endif
 #endif
 
 
