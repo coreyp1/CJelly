@@ -219,8 +219,20 @@ int main(void) {
 
     // Only update parameters periodically to reduce CPU usage
     if (currentTime - last_update_time >= update_interval_ms) {
-      // Toggle color each second for window 1 by updating push constants in recorded commands
-      if (colorOnly) {
+      // Get current window list to check which windows still exist
+      uint32_t check_count = cjelly_application_window_count(app);
+      void* check_windows[10];
+      uint32_t check_actual = cjelly_application_get_windows(app, check_windows, check_count < 10 ? check_count : 10);
+
+      // Check which windows still exist
+      bool win1_exists = false, win3_exists = false;
+      for (uint32_t j = 0; j < check_actual; j++) {
+        if (check_windows[j] == win1) win1_exists = true;
+        if (check_windows[j] == win3) win3_exists = true;
+      }
+
+      // Toggle color each second for window 1 (only if window still exists)
+      if (colorOnly && win1_exists) {
         int colorIndex = ((currentTime / 1000) % 2);
         float r = (colorIndex == 0) ? 1.0f : 0.0f;
         float g = (colorIndex == 0) ? 0.0f : 1.0f;
@@ -229,19 +241,7 @@ int main(void) {
       }
 
       // Update window 3's render graph parameters dynamically (only if window still exists)
-      // Check if win3 is still in the application's window list by checking all active windows
-      uint32_t check_count = cjelly_application_window_count(app);
-      void* check_windows[10];
-      uint32_t check_actual = cjelly_application_get_windows(app, check_windows, check_count < 10 ? check_count : 10);
-      bool win3_still_exists = false;
-      for (uint32_t j = 0; j < check_actual; j++) {
-        if (check_windows[j] == win3) {
-          win3_still_exists = true;
-          break;
-        }
-      }
-
-      if (win3_still_exists) {
+      if (win3_exists) {
         cj_str_t param_time = {"time_ms", 7};
         cj_str_t param_blur_intensity = {"blur_intensity", 12};
         cj_rgraph_set_i32(graph3, param_time, (int32_t)(currentTime % 10000));
@@ -320,10 +320,24 @@ int main(void) {
     }
     last_frame_time = getCurrentTimeInMilliseconds();
   }
-  // Destroy windows via new API (frees per-window resources and command buffers)
-  cj_window_destroy(win1);
-  cj_window_destroy(win2);
-  cj_window_destroy(win3);
+  // Destroy any remaining windows (some may have been closed via X button)
+  // Check which windows still exist before destroying
+  {
+    uint32_t final_count = cjelly_application_window_count(app);
+    void* final_windows[10];
+    uint32_t final_actual = cjelly_application_get_windows(app, final_windows, final_count < 10 ? final_count : 10);
+
+    bool win1_exists = false, win2_exists = false, win3_exists = false;
+    for (uint32_t j = 0; j < final_actual; j++) {
+      if (final_windows[j] == win1) win1_exists = true;
+      if (final_windows[j] == win2) win2_exists = true;
+      if (final_windows[j] == win3) win3_exists = true;
+    }
+
+    if (win1_exists) cj_window_destroy(win1);
+    if (win2_exists) cj_window_destroy(win2);
+    if (win3_exists) cj_window_destroy(win3);
+  }
 
   // Destroy render graphs
   cj_rgraph_destroy(graph1);

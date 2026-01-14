@@ -275,8 +275,7 @@ static void plat_cleanupWindow(CJPlatformWindow * win) {
   if (inst && win->surface) { vkDestroySurfaceKHR(inst, win->surface, NULL); win->surface = VK_NULL_HANDLE; }
 
 #ifdef _WIN32
-  // Note: On Windows, DestroyWindow is called in WM_CLOSE, not here
-  // Just clear the handle reference
+  // DestroyWindow is called in cj_window_destroy, not here
   win->handle = NULL;
 #else
   if (display && win->handle) XDestroyWindow(display, win->handle);
