@@ -77,6 +77,14 @@ typedef enum cj_window_close_response_t {
   CJ_WINDOW_CLOSE_PREVENT = 1,  /**< Prevent the window from closing. */
 } cj_window_close_response_t;
 
+/** Per-frame callback result. */
+typedef enum cj_frame_result_t {
+  CJ_FRAME_CONTINUE = 0,      /**< Normal: execute and present this frame. */
+  CJ_FRAME_SKIP = 1,          /**< Skip rendering this frame (window still alive). */
+  CJ_FRAME_CLOSE_WINDOW = 2,  /**< Request this window be closed. */
+  CJ_FRAME_STOP_LOOP = 3      /**< Request cj_run() to exit. */
+} cj_frame_result_t;
+
 /** Window close callback function type.
  *  @param window The window requesting to close.
  *  @param cancellable True if the close can be prevented, false if close is mandatory (e.g., application shutdown).
@@ -84,6 +92,20 @@ typedef enum cj_window_close_response_t {
  *  @return CJ_WINDOW_CLOSE_ALLOW to allow close, CJ_WINDOW_CLOSE_PREVENT to prevent (only honored if cancellable is true).
  */
 typedef cj_window_close_response_t (*cj_window_close_callback_t)(cj_window_t* window, bool cancellable, void* user_data);
+
+/** Window per-frame callback function type.
+ *  Called once per frame for windows that are able to begin a frame.
+ *
+ *  The callback may return a value to control the framework's behavior.
+ *
+ *  @param window The window to render.
+ *  @param frame_info Frame timing information.
+ *  @param user_data User-provided data pointer.
+ *  @return A cj_frame_result_t controlling what the framework does next.
+ */
+typedef cj_frame_result_t (*cj_window_frame_callback_t)(cj_window_t* window,
+                                                        const cj_frame_info_t* frame_info,
+                                                        void* user_data);
 
 /** Register a close callback for a window.
  *  @param window The window to register the callback for.
@@ -93,6 +115,15 @@ typedef cj_window_close_response_t (*cj_window_close_callback_t)(cj_window_t* wi
 CJ_API void cj_window_on_close(cj_window_t* window,
                                  cj_window_close_callback_t callback,
                                  void* user_data);
+
+/** Register a per-frame callback for a window.
+ *  @param window The window to register the callback for.
+ *  @param callback Callback invoked once per frame. NULL to remove callback.
+ *  @param user_data User data pointer passed to callback.
+ */
+CJ_API void cj_window_on_frame(cj_window_t* window,
+                               cj_window_frame_callback_t callback,
+                               void* user_data);
 
 /* Temporary helper during migration: re-record a color-only bindless command
  * buffer set for a window using provided resources/context. We intentionally

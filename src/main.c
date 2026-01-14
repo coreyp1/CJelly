@@ -7,6 +7,7 @@
 #include <math.h>
 
 #include <cjelly/application.h>
+#include <cjelly/macros.h>
 
 // #include <cjelly/format/3d/obj.h>
 // #include <cjelly/format/3d/mtl.h>
@@ -45,6 +46,58 @@ uint64_t getCurrentTimeInMilliseconds(void) {
 #include <cjelly/bindless_internal.h>
 
 /* Demo uses window API now; per-window rendering is managed internally */
+
+/* ---------------------------------------------------------------------- */
+/* Callback-based event loop demo helpers                                  */
+/* ---------------------------------------------------------------------- */
+
+typedef struct Window1Context {
+  CJellyBindlessResources* colorOnly;
+  uint64_t last_tick_ms;
+} Window1Context;
+
+typedef struct Window3Context {
+  cj_rgraph_t* graph3;
+  uint64_t last_tick_ms;
+} Window3Context;
+
+static cj_frame_result_t window1_on_frame(GCJ_MAYBE_UNUSED(cj_window_t* window),
+                                          GCJ_MAYBE_UNUSED(const cj_frame_info_t* frame),
+                                          void* user_data) {
+  Window1Context* ctx = (Window1Context*)user_data;
+  if (!ctx || !ctx->colorOnly) return CJ_FRAME_CONTINUE;
+
+  uint64_t now = getCurrentTimeInMilliseconds();
+  if (now - ctx->last_tick_ms >= 50) {
+    int colorIndex = (int)((now / 1000) % 2);
+    float r = (colorIndex == 0) ? 1.0f : 0.0f;
+    float g = (colorIndex == 0) ? 0.0f : 1.0f;
+    cj_bindless_set_color(ctx->colorOnly, r, g, 0.0f, 1.0f);
+    cj_bindless_update_split_from_colorMul(ctx->colorOnly);
+    ctx->last_tick_ms = now;
+  }
+  return CJ_FRAME_CONTINUE;
+}
+
+static cj_frame_result_t window3_on_frame(GCJ_MAYBE_UNUSED(cj_window_t* window),
+                                          GCJ_MAYBE_UNUSED(const cj_frame_info_t* frame),
+                                          void* user_data) {
+  Window3Context* ctx = (Window3Context*)user_data;
+  if (!ctx || !ctx->graph3) return CJ_FRAME_CONTINUE;
+
+  uint64_t now = getCurrentTimeInMilliseconds();
+  if (now - ctx->last_tick_ms >= 50) {
+    cj_str_t param_time = {"time_ms", 7};
+    cj_str_t param_blur_intensity = {"blur_intensity", 12};
+    cj_rgraph_set_i32(ctx->graph3, param_time, (int32_t)(now % 10000));
+
+    float blur_intensity = 0.5f + 0.5f * sin(now * 0.001f);
+    cj_rgraph_set_i32(ctx->graph3, param_blur_intensity,
+                      (int32_t)(blur_intensity * 1000.0f));
+    ctx->last_tick_ms = now;
+  }
+  return CJ_FRAME_CONTINUE;
+}
 
 int main(void) {
 #ifndef _WIN32
@@ -177,149 +230,23 @@ int main(void) {
     cj_window_rerecord_bindless_color(win1, (const void*)colorOnly, &ctx_local);
   }
 
-  // Main render loop with FPS limiting
+  uint64_t start_ms = getCurrentTimeInMilliseconds();
+  Window1Context w1ctx = { colorOnly, start_ms };
+  Window3Context w3ctx = { graph3, start_ms };
 
-  // FPS configuration
-  const int target_fps = 30;  // Target FPS (reduced for better performance)
-  const uint64_t frame_time_ms = 1000 / target_fps;  // Target frame time in milliseconds
-  uint64_t last_frame_time = getCurrentTimeInMilliseconds();
-  uint64_t last_update_time = last_frame_time;
-  uint64_t last_poll_time = last_frame_time;
-  const uint64_t update_interval_ms = 50; // Update parameters only every 50ms (20 times per second)
-  const uint64_t poll_interval_ms = 16;   // Poll events every 16ms (60 times per second)
+  cj_window_on_frame(win1, window1_on_frame, &w1ctx);
+  cj_window_on_frame(win3, window3_on_frame, &w3ctx);
 
-  printf("Starting main render loop...\n");
-  int frame_count = 0;
-
-  // FPS profiling variables
-  uint64_t last_fps_print_time = last_frame_time;
-  int fps_frame_count = 0;
-  uint64_t fps_start_time = last_frame_time;
-  uint64_t min_frame_time = UINT64_MAX;
-  uint64_t max_frame_time = 0;
-  uint64_t total_frame_time = 0;
-
-  // Register signal handlers automatically
+  // Register signal handlers automatically (handlers only set shutdown flag)
   cjelly_application_register_signal_handlers(app);
 
-  // Main loop: continue while there are active windows and shutdown not requested
-  while (app &&
-         cjelly_application_window_count(app) > 0 &&
-         !cjelly_application_should_shutdown(app)) {
-    uint64_t currentTime = getCurrentTimeInMilliseconds();
-    frame_count++;
-    fps_frame_count++;
+  printf("Starting callback-based event loop...\n");
+  cj_run_config_t run_cfg = {0};
+  run_cfg.target_fps = 30;
+  cj_run_with_config(engine, &run_cfg);
 
+  printf("Event loop exited.\n");
 
-    // Only poll events periodically to reduce CPU usage
-    if (currentTime - last_poll_time >= poll_interval_ms) {
-      cj_poll_events();
-      last_poll_time = currentTime;
-    }
-
-    // Only update parameters periodically to reduce CPU usage
-    if (currentTime - last_update_time >= update_interval_ms) {
-      // Get current window list to check which windows still exist
-      uint32_t check_count = cjelly_application_window_count(app);
-      void* check_windows[10];
-      uint32_t check_actual = cjelly_application_get_windows(app, check_windows, check_count < 10 ? check_count : 10);
-
-      // Check which windows still exist
-      bool win1_exists = false, win3_exists = false;
-      for (uint32_t j = 0; j < check_actual; j++) {
-        if (check_windows[j] == win1) win1_exists = true;
-        if (check_windows[j] == win3) win3_exists = true;
-      }
-
-      // Toggle color each second for window 1 (only if window still exists)
-      if (colorOnly && win1_exists) {
-        int colorIndex = ((currentTime / 1000) % 2);
-        float r = (colorIndex == 0) ? 1.0f : 0.0f;
-        float g = (colorIndex == 0) ? 0.0f : 1.0f;
-        cj_bindless_set_color(colorOnly, r, g, 0.0f, 1.0f);
-        cj_bindless_update_split_from_colorMul(colorOnly);
-      }
-
-      // Update window 3's render graph parameters dynamically (only if window still exists)
-      if (win3_exists) {
-        cj_str_t param_time = {"time_ms", 7};
-        cj_str_t param_blur_intensity = {"blur_intensity", 12};
-        cj_rgraph_set_i32(graph3, param_time, (int32_t)(currentTime % 10000));
-
-        // Animate blur intensity over time (0.0 to 1.0) - slower for better performance
-        float blur_intensity = 0.5f + 0.5f * sin(currentTime * 0.001f); // Slower animation
-        cj_rgraph_set_i32(graph3, param_blur_intensity, (int32_t)(blur_intensity * 1000.0f)); // Store as integer * 1000
-      }
-
-      last_update_time = currentTime;
-    }
-
-    // Process window events (handles WM_CLOSE, etc.)
-    cj_poll_events();
-
-    // Check if shutdown was requested (Ctrl+C sets this flag)
-    if (cjelly_application_should_shutdown(app)) {
-      break;
-    }
-
-    // Render all active windows
-    uint32_t window_count = cjelly_application_window_count(app);
-    if (window_count > 0) {
-      void* active_windows[10];
-      uint32_t max_count = (window_count < 10) ? window_count : 10;
-      uint32_t actual_count = cjelly_application_get_windows(app, active_windows, max_count);
-
-      for (uint32_t i = 0; i < actual_count; ++i) {
-        cj_window_t* window = (cj_window_t*)active_windows[i];
-        if (!window) continue;
-
-        // Render frame - begin_frame checks if window is still valid
-        cj_frame_info_t frame = {0};
-        if (cj_window_begin_frame(window, &frame) == CJ_SUCCESS) {
-          cj_window_execute(window);
-          cj_window_present(window);
-        }
-      }
-    }
-
-    // FPS limiting - sleep for the remaining frame time
-    uint64_t frame_end_time = getCurrentTimeInMilliseconds();
-    uint64_t frame_duration = frame_end_time - last_frame_time;
-
-    // Track frame time statistics for profiling
-    if (frame_duration < min_frame_time) min_frame_time = frame_duration;
-    if (frame_duration > max_frame_time) max_frame_time = frame_duration;
-    total_frame_time += frame_duration;
-
-    // Print FPS statistics every second
-    if (currentTime - last_fps_print_time >= 1000) {
-      double elapsed_seconds = (currentTime - fps_start_time) / 1000.0;
-      double fps = fps_frame_count / elapsed_seconds;
-      double avg_frame_time = (double)total_frame_time / fps_frame_count;
-
-      printf("FPS: %.2f | Frame time: avg=%.2fms min=%.2fms max=%.2fms | Frames: %d\n",
-             fps, avg_frame_time, (double)min_frame_time, (double)max_frame_time, fps_frame_count);
-
-      // Reset profiling counters
-      last_fps_print_time = currentTime;
-      fps_frame_count = 0;
-      fps_start_time = currentTime;
-      min_frame_time = UINT64_MAX;
-      max_frame_time = 0;
-      total_frame_time = 0;
-    }
-
-    if (frame_duration < frame_time_ms) {
-      uint64_t sleep_time = frame_time_ms - frame_duration;
-#ifdef _WIN32
-      Sleep((DWORD)sleep_time);
-#else
-      struct timespec req = {0, (long)(sleep_time * 1000000)}; // Convert ms to nanoseconds
-      nanosleep(&req, NULL);
-#endif
-    }
-    last_frame_time = getCurrentTimeInMilliseconds();
-  }
   // Destroy any remaining windows (some may have been closed via X button)
   // Check which windows still exist before destroying
   {

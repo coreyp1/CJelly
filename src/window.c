@@ -64,6 +64,8 @@ struct cj_window_t {
   cj_rgraph_t* render_graph;  /* Render graph for this window (not owned) */
   cj_window_close_callback_t close_callback;  /* Close callback (NULL if none) */
   void* close_callback_user_data;  /* User data for close callback */
+  cj_window_frame_callback_t frame_callback;  /* Per-frame callback (NULL if none) */
+  void* frame_callback_user_data; /* User data for per-frame callback */
   bool is_destroyed;  /* Flag to prevent double-destruction */
 };
 
@@ -365,6 +367,8 @@ CJ_API cj_window_t* cj_window_create(cj_engine_t* engine, const cj_window_desc_t
   win->frame_index = 0u;
   win->close_callback = NULL;
   win->close_callback_user_data = NULL;
+  win->frame_callback = NULL;
+  win->frame_callback_user_data = NULL;
   win->is_destroyed = false;
 
   // Automatically register window with current application (if one exists)
@@ -600,6 +604,22 @@ CJ_API void cj_window_on_close(cj_window_t* window,
   if (!window) return;
   window->close_callback = callback;
   window->close_callback_user_data = user_data;
+}
+
+CJ_API void cj_window_on_frame(cj_window_t* window,
+                               cj_window_frame_callback_t callback,
+                               void* user_data) {
+  if (!window) return;
+  window->frame_callback = callback;
+  window->frame_callback_user_data = user_data;
+}
+
+/* Internal helper for the framework event loop. */
+cj_frame_result_t cj_window__dispatch_frame_callback(cj_window_t* window,
+                                                    const cj_frame_info_t* frame_info) {
+  if (!window || window->is_destroyed) return CJ_FRAME_SKIP;
+  if (!window->frame_callback) return CJ_FRAME_CONTINUE;
+  return window->frame_callback(window, frame_info, window->frame_callback_user_data);
 }
 
 // Internal helper to invoke close callback and destroy window if allowed

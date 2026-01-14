@@ -20,6 +20,10 @@ extern "C" {
  */
 void cj_window_close_with_callback(cj_window_t* window, bool cancellable);
 
+/** Internal helper used by the framework event loop to run a window's per-frame callback. */
+cj_frame_result_t cj_window__dispatch_frame_callback(cj_window_t* window,
+                                                    const cj_frame_info_t* frame_info);
+
 #ifdef __cplusplus
 }
 #endif

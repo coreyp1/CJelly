@@ -1,7 +1,9 @@
 /* CJelly runtime utilities: context, bindless helpers, event loop */
 #pragma once
 #include <stdint.h>
+#include <stdbool.h>
 #include "cj_macros.h"
+#include "cj_types.h"
 #include <vulkan/vulkan.h>
 
 #ifdef __cplusplus
@@ -36,6 +38,29 @@ CJ_API void cj_bindless_update_split_from_colorMul(CJellyBindlessResources* reso
 
 /* Event loop helpers */
 CJ_API void cj_poll_events(void);      /* alias for processWindowEvents */
+
+/* ============================================================================
+ * Callback-based main loop helpers
+ * ============================================================================
+ */
+
+typedef struct cj_run_config_t {
+  uint32_t target_fps;        /* 0 = unlimited */
+  bool     vsync;             /* reserved; not implemented yet */
+  bool     run_when_minimized;/* reserved; not implemented yet */
+} cj_run_config_t;
+
+/* Run the event loop until all windows are closed or shutdown requested. */
+CJ_API void cj_run(cj_engine_t* engine);
+
+/* Run the event loop with configuration. */
+CJ_API void cj_run_with_config(cj_engine_t* engine, const cj_run_config_t* config);
+
+/* Run a single iteration. Returns false when loop should stop. */
+CJ_API bool cj_run_once(cj_engine_t* engine);
+
+/* Request the event loop to stop (implemented as a global flag for now). */
+CJ_API void cj_request_stop(cj_engine_t* engine);
 
 #ifdef __cplusplus
 }
