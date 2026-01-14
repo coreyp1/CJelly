@@ -1096,8 +1096,8 @@ CJ_API uint32_t cjelly_application_window_count(const CJellyApplication * app) {
   return app->window_count;
 }
 
-CJ_API uint32_t cjelly_application_get_windows(const CJellyApplication * app, 
-                                        void** out_windows, 
+CJ_API uint32_t cjelly_application_get_windows(const CJellyApplication * app,
+                                        void** out_windows,
                                         uint32_t window_count) {
   if (!app || !out_windows || window_count == 0)
     return 0;
@@ -1430,7 +1430,7 @@ CJ_API void cjelly_application_on_signal(CJellyApplication* app,
   // Add new handler
   if (app->custom_signal_handler_count >= app->custom_signal_handler_capacity) {
     uint32_t new_capacity = app->custom_signal_handler_capacity == 0 ? 4 : app->custom_signal_handler_capacity * 2;
-    void* new_handlers = realloc(app->custom_signal_handlers, 
+    void* new_handlers = realloc(app->custom_signal_handlers,
                                  new_capacity * sizeof(*app->custom_signal_handlers));
     if (!new_handlers)
       return;  // OOM

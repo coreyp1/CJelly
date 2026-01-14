@@ -46,8 +46,9 @@ CJ_API void cj_poll_events(void);      /* alias for processWindowEvents */
 
 typedef struct cj_run_config_t {
   uint32_t target_fps;        /* 0 = unlimited */
-  bool     vsync;             /* reserved; not implemented yet */
-  bool     run_when_minimized;/* reserved; not implemented yet */
+  bool     vsync;             /* Use VSync for timing (skip sleep when VSync active) */
+  bool     run_when_minimized;/* Continue running when all windows minimized */
+  bool     enable_fps_profiling; /* Print FPS statistics to stdout every second */
 } cj_run_config_t;
 
 /* Run the event loop until all windows are closed or shutdown requested. */

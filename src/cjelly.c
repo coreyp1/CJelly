@@ -931,6 +931,26 @@ CJ_API void processWindowEvents() {
     if (event.type == DestroyNotify) {
       // Window already destroyed, nothing to do
     }
+    if (event.type == MapNotify) {
+      // Window mapped (restored from minimized)
+      CJellyApplication* app = cjelly_application_get_current();
+      if (app) {
+        cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)event.xmap.window);
+        if (window) {
+          cj_window__set_minimized(window, false);
+        }
+      }
+    }
+    if (event.type == UnmapNotify) {
+      // Window unmapped (minimized)
+      CJellyApplication* app = cjelly_application_get_current();
+      if (app) {
+        cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)event.xunmap.window);
+        if (window) {
+          cj_window__set_minimized(window, true);
+        }
+      }
+    }
     if (event.type == KeyPress) {
       // Close on Escape for convenience (find window and close it)
       KeySym sym = XLookupKeysym(&event.xkey, 0);

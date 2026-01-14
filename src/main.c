@@ -243,6 +243,7 @@ int main(void) {
   printf("Starting callback-based event loop...\n");
   cj_run_config_t run_cfg = {0};
   run_cfg.target_fps = 30;
+  run_cfg.enable_fps_profiling = true;  /* Enable FPS statistics output */
   cj_run_with_config(engine, &run_cfg);
 
   printf("Event loop exited.\n");

@@ -55,6 +55,7 @@ typedef struct CJPlatformWindow {
   uint32_t fixedFramerate;
   int needsRedraw;
   uint64_t nextFrameTime;
+  bool is_minimized;  /* Cached minimized state (updated via window messages) */
 } CJPlatformWindow;
 
 /* Internal definition of the opaque window type */
@@ -108,6 +109,23 @@ static LRESULT CALLBACK CjWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
       return DefWindowProc(hwnd, uMsg, wParam, lParam);
     }
 
+    case WM_SIZE: {
+      // Track minimized/restored state via window messages (no OS polling needed)
+      CJellyApplication* app = cjelly_application_get_current();
+      if (app) {
+        cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)hwnd);
+        if (window) {
+          // wParam: SIZE_MINIMIZED, SIZE_MAXIMIZED, SIZE_RESTORED, SIZE_MAXSHOW, SIZE_MAXHIDE
+          if (wParam == SIZE_MINIMIZED) {
+            cj_window__set_minimized(window, true);
+          } else if (wParam == SIZE_RESTORED || wParam == SIZE_MAXIMIZED) {
+            cj_window__set_minimized(window, false);
+          }
+        }
+      }
+      return DefWindowProc(hwnd, uMsg, wParam, lParam);
+    }
+
     case WM_DESTROY:
       // Window is being destroyed. Cleanup is already done by cj_window_destroy(),
       // so this is just a no-op. The user data should already be cleared.
@@ -126,6 +144,7 @@ static LRESULT CALLBACK CjWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
 static void plat_createPlatformWindow(CJPlatformWindow * win, const char * title, int width, int height) {
   if (!win) return;
   win->width = width; win->height = height;
+  win->is_minimized = false;  /* Initialize minimized state */
 #ifdef _WIN32
   HINSTANCE hInstance = GetModuleHandle(NULL);
   WNDCLASS wc = {0};
@@ -620,6 +639,40 @@ cj_frame_result_t cj_window__dispatch_frame_callback(cj_window_t* window,
   if (!window || window->is_destroyed) return CJ_FRAME_SKIP;
   if (!window->frame_callback) return CJ_FRAME_CONTINUE;
   return window->frame_callback(window, frame_info, window->frame_callback_user_data);
+}
+
+/* Internal helper to check if a window is minimized.
+ * Uses cached state updated via window messages (no OS polling).
+ */
+bool cj_window__is_minimized(cj_window_t* window) {
+  if (!window || !window->plat || window->is_destroyed) return false;
+  return window->plat->is_minimized;
+}
+
+/* Internal helper to check if a window uses VSync (FIFO present mode).
+ * Currently hardcoded to FIFO, but could query swapchain in the future.
+ */
+bool cj_window__uses_vsync(cj_window_t* window) {
+  if (!window || !window->plat || window->is_destroyed) return false;
+  // For now, we always use FIFO (VSync) mode. In the future, we could
+  // store the present mode when creating the swapchain and check it here.
+  (void)window;  // Suppress unused warning
+  return true;  // FIFO is VSync
+}
+
+/* Internal helper to check if a window needs redraw. */
+bool cj_window__needs_redraw(cj_window_t* window) {
+  if (!window || !window->plat || window->is_destroyed) return false;
+  // For now, always return true. In the future, we could use the needsRedraw
+  // field or implement dirty tracking.
+  (void)window;  // Suppress unused warning
+  return true;  // Always redraw for now
+}
+
+/* Internal helper to set minimized state (called from window messages/events). */
+void cj_window__set_minimized(cj_window_t* window, bool minimized) {
+  if (!window || !window->plat || window->is_destroyed) return;
+  window->plat->is_minimized = minimized;
 }
 
 // Internal helper to invoke close callback and destroy window if allowed
