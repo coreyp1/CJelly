@@ -46,6 +46,11 @@ extern "C" {
 #include <stdint.h>
 #include <vulkan/vulkan.h>
 
+// Signal handling headers
+#ifndef _WIN32
+#include <signal.h>
+#endif
+
 
 /**
  * @brief Enum representing possible error codes for CJelly Application
@@ -228,6 +233,22 @@ struct CJellyApplication {
   }* handle_map;  // Array of handle->window mappings
   uint32_t handle_map_count;
   uint32_t handle_map_capacity;
+
+  // Signal handling
+  volatile sig_atomic_t shutdown_requested;  // Flag indicating shutdown was requested
+  void (*shutdown_callback)(CJellyApplication* app, void* user_data);  // Shutdown callback
+  void* shutdown_callback_user_data;  // User data for shutdown callback
+
+  // Custom signal handlers (array of {signal, handler, user_data})
+  struct {
+    int signal;
+    void (*handler)(int signal, void* user_data);
+    void* user_data;
+  }* custom_signal_handlers;  // Array of custom signal handlers
+  uint32_t custom_signal_handler_count;
+  uint32_t custom_signal_handler_capacity;
+
+  bool signal_handlers_registered;  // Track if signal handlers have been registered
 };
 
 
@@ -468,6 +489,83 @@ CJ_API void cjelly_application_close_all_windows(CJellyApplication * app, bool c
  * @return true if bindless rendering is supported, false otherwise.
  */
 CJ_API bool cjelly_application_supports_bindless_rendering(CJellyApplication * app);
+
+/**
+ * @brief Shutdown callback function type.
+ *
+ * Called when the application is shutting down (e.g., due to a signal).
+ * This is called before windows are closed, allowing the application to
+ * save state or perform custom cleanup.
+ *
+ * @param app The application object.
+ * @param user_data User-provided data pointer.
+ */
+typedef void (*cjelly_shutdown_callback_t)(CJellyApplication* app, void* user_data);
+
+/**
+ * @brief Custom signal handler function type.
+ *
+ * Called when a specific signal is received, before the default shutdown
+ * sequence. Allows custom handling for specific signals.
+ *
+ * @param signal The signal number that was received.
+ * @param user_data User-provided data pointer.
+ */
+typedef void (*cjelly_signal_handler_t)(int signal, void* user_data);
+
+/**
+ * @brief Register a shutdown callback.
+ *
+ * The callback is invoked when the application is shutting down (e.g., due to
+ * a signal), before windows are closed. This allows the application to save
+ * state or perform custom cleanup.
+ *
+ * @param app The application object.
+ * @param callback The callback function to register. NULL to remove callback.
+ * @param user_data User data pointer passed to callback.
+ */
+CJ_API void cjelly_application_on_shutdown(CJellyApplication* app,
+                                            cjelly_shutdown_callback_t callback,
+                                            void* user_data);
+
+/**
+ * @brief Register a custom signal handler.
+ *
+ * The handler is called when the specified signal is received, before the
+ * default shutdown sequence. This allows custom handling for specific signals
+ * (e.g., logging, special cleanup).
+ *
+ * @param app The application object.
+ * @param signal The signal number to handle (e.g., SIGTERM, SIGINT).
+ * @param handler The handler function to register. NULL to remove handler.
+ * @param user_data User data pointer passed to handler.
+ */
+CJ_API void cjelly_application_on_signal(CJellyApplication* app,
+                                          int signal,
+                                          cjelly_signal_handler_t handler,
+                                          void* user_data);
+
+/**
+ * @brief Check if shutdown has been requested.
+ *
+ * Returns true if a shutdown signal has been received (e.g., SIGTERM, SIGINT).
+ * The main loop should check this and exit when true.
+ *
+ * @param app The application object.
+ * @return true if shutdown has been requested, false otherwise.
+ */
+CJ_API bool cjelly_application_should_shutdown(const CJellyApplication* app);
+
+/**
+ * @brief Register signal handlers automatically.
+ *
+ * This function registers signal handlers for common termination signals
+ * (SIGTERM, SIGINT, SIGHUP on Unix). It should be called once when the
+ * application starts. It is safe to call multiple times (idempotent).
+ *
+ * @param app The application object.
+ */
+CJ_API void cjelly_application_register_signal_handlers(CJellyApplication* app);
 
 #ifdef __cplusplus
 }

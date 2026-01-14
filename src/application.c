@@ -25,6 +25,14 @@
 #include <string.h>
 #include <stdbool.h>
 
+// Signal handling headers
+#ifndef _WIN32
+#include <signal.h>
+#include <unistd.h>
+#else
+#include <windows.h>
+#endif
+
 #define CJELLY_MINIMUM_VULKAN_VERSION VK_API_VERSION_1_2
 
 /**
@@ -349,6 +357,15 @@ CJ_API CJellyApplicationError cjelly_application_create(
   newApp->handle_map = NULL;
   newApp->handle_map_count = 0;
   newApp->handle_map_capacity = 0;
+
+  // Initialize signal handling fields
+  newApp->shutdown_requested = 0;
+  newApp->shutdown_callback = NULL;
+  newApp->shutdown_callback_user_data = NULL;
+  newApp->custom_signal_handlers = NULL;
+  newApp->custom_signal_handler_count = 0;
+  newApp->custom_signal_handler_capacity = 0;
+  newApp->signal_handlers_registered = false;
 
   *app = newApp;
   return CJELLY_APPLICATION_ERROR_NONE;
@@ -862,6 +879,22 @@ CJ_API void cjelly_application_destroy(CJellyApplication * app) {
   // Destroy the options.
   free_options(&app->options);
 
+  // Free window tracking
+  if (app->windows) {
+    free(app->windows);
+    app->windows = NULL;
+  }
+  if (app->handle_map) {
+    free(app->handle_map);
+    app->handle_map = NULL;
+  }
+
+  // Free signal handling
+  if (app->custom_signal_handlers) {
+    free(app->custom_signal_handlers);
+    app->custom_signal_handlers = NULL;
+  }
+
   // Free the application name if it was allocated.
   if (app->appName) {
     free(app->appName);
@@ -1268,4 +1301,128 @@ CJ_API CJellyApplicationError cjelly_application_create_command_pools(
   }
 
   return CJELLY_APPLICATION_ERROR_NONE;
+}
+
+// Signal handling implementation
+
+#ifdef _WIN32
+// Windows console control handler
+static BOOL WINAPI console_ctrl_handler(DWORD dwCtrlType) {
+  CJellyApplication* app = cjelly_application_get_current();
+  if (!app)
+    return FALSE;
+
+  // Call custom handlers if registered
+  for (uint32_t i = 0; i < app->custom_signal_handler_count; i++) {
+    if (app->custom_signal_handlers[i].signal == SIGINT) {
+      app->custom_signal_handlers[i].handler(SIGINT, app->custom_signal_handlers[i].user_data);
+    }
+  }
+
+  // Set shutdown flag
+  app->shutdown_requested = 1;
+
+  // Call shutdown callback if registered
+  if (app->shutdown_callback) {
+    app->shutdown_callback(app, app->shutdown_callback_user_data);
+  }
+
+  // Close all windows (non-cancellable)
+  cjelly_application_close_all_windows(app, false);
+
+  return TRUE;  // We handled it
+}
+#else
+// POSIX signal handler
+static void default_signal_handler(int sig) {
+  CJellyApplication* app = cjelly_application_get_current();
+  if (!app)
+    return;
+
+  // Call custom handlers if registered for this signal
+  for (uint32_t i = 0; i < app->custom_signal_handler_count; i++) {
+    if (app->custom_signal_handlers[i].signal == sig) {
+      app->custom_signal_handlers[i].handler(sig, app->custom_signal_handlers[i].user_data);
+    }
+  }
+
+  // Set shutdown flag
+  app->shutdown_requested = 1;
+
+  // Call shutdown callback if registered
+  if (app->shutdown_callback) {
+    app->shutdown_callback(app, app->shutdown_callback_user_data);
+  }
+
+  // Close all windows (non-cancellable)
+  cjelly_application_close_all_windows(app, false);
+}
+#endif
+
+CJ_API void cjelly_application_register_signal_handlers(CJellyApplication* app) {
+  if (!app || app->signal_handlers_registered)
+    return;
+
+#ifdef _WIN32
+  // Register console control handler for Windows
+  SetConsoleCtrlHandler(console_ctrl_handler, TRUE);
+#else
+  // Register POSIX signal handlers
+  signal(SIGTERM, default_signal_handler);
+  signal(SIGINT, default_signal_handler);
+  signal(SIGHUP, default_signal_handler);
+  signal(SIGQUIT, default_signal_handler);
+#endif
+
+  app->signal_handlers_registered = true;
+}
+
+CJ_API bool cjelly_application_should_shutdown(const CJellyApplication* app) {
+  if (!app)
+    return false;
+  return app->shutdown_requested != 0;
+}
+
+CJ_API void cjelly_application_on_shutdown(CJellyApplication* app,
+                                            cjelly_shutdown_callback_t callback,
+                                            void* user_data) {
+  if (!app)
+    return;
+  app->shutdown_callback = callback;
+  app->shutdown_callback_user_data = user_data;
+}
+
+CJ_API void cjelly_application_on_signal(CJellyApplication* app,
+                                          int signal,
+                                          cjelly_signal_handler_t handler,
+                                          void* user_data) {
+  if (!app)
+    return;
+
+  // Find existing handler for this signal
+  for (uint32_t i = 0; i < app->custom_signal_handler_count; i++) {
+    if (app->custom_signal_handlers[i].signal == signal) {
+      // Update existing handler
+      app->custom_signal_handlers[i].handler = handler;
+      app->custom_signal_handlers[i].user_data = user_data;
+      return;
+    }
+  }
+
+  // Add new handler
+  if (app->custom_signal_handler_count >= app->custom_signal_handler_capacity) {
+    uint32_t new_capacity = app->custom_signal_handler_capacity == 0 ? 4 : app->custom_signal_handler_capacity * 2;
+    void* new_handlers = realloc(app->custom_signal_handlers, 
+                                 new_capacity * sizeof(*app->custom_signal_handlers));
+    if (!new_handlers)
+      return;  // OOM
+    // Cast through void* to work around anonymous struct type mismatch (same pattern as handle_map)
+    app->custom_signal_handlers = (void*)new_handlers;
+    app->custom_signal_handler_capacity = new_capacity;
+  }
+
+  app->custom_signal_handlers[app->custom_signal_handler_count].signal = signal;
+  app->custom_signal_handlers[app->custom_signal_handler_count].handler = handler;
+  app->custom_signal_handlers[app->custom_signal_handler_count].user_data = user_data;
+  app->custom_signal_handler_count++;
 }

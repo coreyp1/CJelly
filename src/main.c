@@ -199,8 +199,13 @@ int main(void) {
   uint64_t max_frame_time = 0;
   uint64_t total_frame_time = 0;
 
-  // Main loop: continue while there are active windows
-  while (app && cjelly_application_window_count(app) > 0) {
+  // Register signal handlers automatically
+  cjelly_application_register_signal_handlers(app);
+
+  // Main loop: continue while there are active windows and shutdown not requested
+  while (app &&
+         cjelly_application_window_count(app) > 0 &&
+         !cjelly_application_should_shutdown(app)) {
     uint64_t currentTime = getCurrentTimeInMilliseconds();
     frame_count++;
     fps_frame_count++;
