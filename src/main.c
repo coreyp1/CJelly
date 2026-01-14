@@ -317,9 +317,12 @@ int main(void) {
     last_frame_time = getCurrentTimeInMilliseconds();
   }
   // Destroy windows via new API (frees per-window resources and command buffers)
-  cj_window_destroy(win1);
-  cj_window_destroy(win2);
-  cj_window_destroy(win3);
+  // Note: Windows may have already been destroyed by user closing them, so we check
+  // by trying to get the window count. If windows are still tracked, destroy them.
+  // Otherwise, they've already been destroyed and cj_window_destroy will safely no-op.
+  if (win1) cj_window_destroy(win1);
+  if (win2) cj_window_destroy(win2);
+  if (win3) cj_window_destroy(win3);
 
   // Destroy render graphs
   cj_rgraph_destroy(graph1);

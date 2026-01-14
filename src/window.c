@@ -46,7 +46,7 @@ static LRESULT CALLBACK CjWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
       CJellyApplication* app = cjelly_application_get_current();
       if (app) {
         cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)hwnd);
-        if (window) {
+        if (window && !window->is_destroyed) {
           bool cancellable = true;  // User-initiated close
           cj_window_close_response_t response = CJ_WINDOW_CLOSE_ALLOW;
 
@@ -64,10 +64,17 @@ static LRESULT CALLBACK CjWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
           return (response == CJ_WINDOW_CLOSE_PREVENT) ? 1 : 0;
         }
       }
-      // Fallback: if no application or window not found, allow default destruction
+      // Fallback: if no application, window not found, or window already destroyed, allow default destruction
       return DefWindowProc(hwnd, uMsg, wParam, lParam);
     }
     case WM_DESTROY:
+      // WM_DESTROY is sent by Windows after DestroyWindow() is called.
+      // By the time this message arrives, we've already:
+      // 1. Unregistered the window from application tracking (in cj_window_destroy)
+      // 2. Cleared the handle (in plat_cleanupWindow)
+      // 3. Freed the window object
+      // So we can't (and don't need to) look up the window here.
+      // Just return 0 to indicate we processed the message.
       return 0;
     default:
       return DefWindowProc(hwnd, uMsg, wParam, lParam);
@@ -256,8 +263,15 @@ static void plat_cleanupWindow(CJPlatformWindow * win) {
   if (dev && win->swapChain) { vkDestroySwapchainKHR(dev, win->swapChain, NULL); win->swapChain = VK_NULL_HANDLE; }
   if (inst && win->surface) { vkDestroySurfaceKHR(inst, win->surface, NULL); win->surface = VK_NULL_HANDLE; }
 #ifdef _WIN32
-  if (win->handle && IsWindow(win->handle)) DestroyWindow(win->handle);
+  // Save handle before clearing it (needed for DestroyWindow)
+  HWND hwnd = win->handle;
+  // Clear handle BEFORE DestroyWindow to prevent CjWndProc from accessing
+  // the window object if Windows sends messages during/after destruction
   win->handle = NULL;
+  // Now destroy the window - any messages sent will not find the window in our tracking
+  if (hwnd && IsWindow(hwnd)) {
+    DestroyWindow(hwnd);
+  }
 #else
   if (display && win->handle) XDestroyWindow(display, win->handle);
 #endif
@@ -377,6 +391,7 @@ CJ_API void cj_window_destroy(cj_window_t* win) {
 
   // Unregister from application BEFORE destroying platform window
   // This ensures the handle is still valid for lookup and removal
+  // This also prevents CjWndProc from finding the window if Windows sends messages
   cjelly_application_unregister_window(NULL, win, handle);
 
   // Now safe to destroy platform window and free resources
