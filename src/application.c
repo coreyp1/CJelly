@@ -1306,46 +1306,74 @@ CJ_API CJellyApplicationError cjelly_application_create_command_pools(
   return CJELLY_APPLICATION_ERROR_NONE;
 }
 
-// Signal handling implementation
+/*
+ * =============================================================================
+ * SIGNAL HANDLING
+ * =============================================================================
+ *
+ * Signal handlers require special care because they execute in unsafe contexts
+ * where most operations (malloc, free, Vulkan calls, etc.) are prohibited.
+ *
+ * WINDOWS vs LINUX - Different Mechanisms, Same Solution
+ * -------------------------------------------------------
+ *
+ * WINDOWS (SetConsoleCtrlHandler):
+ *   - Handler runs in a SEPARATE THREAD created by Windows
+ *   - Main thread continues running concurrently
+ *   - Problem: True race condition - two threads accessing same data
+ *   - If handler destroys windows while main thread renders: CRASH
+ *
+ * LINUX/UNIX (signal()):
+ *   - Handler runs in the SAME THREAD, but at an arbitrary interruption point
+ *   - Kernel interrupts main thread (e.g., mid-malloc, mid-Vulkan call)
+ *   - Handler executes, then main thread resumes where it was interrupted
+ *   - Problem: Main thread state may be inconsistent
+ *   - Only "async-signal-safe" functions can be called (very limited set)
+ *   - malloc, free, printf, and ALL Vulkan functions are NOT safe
+ *
+ * THE SOLUTION (both platforms):
+ *   - Signal handlers ONLY set a flag: app->shutdown_requested = 1
+ *   - Main loop checks cjelly_application_should_shutdown() each iteration
+ *   - Cleanup happens safely in the main thread after the loop exits
+ *
+ * WHY volatile sig_atomic_t:
+ *   - volatile: prevents compiler from caching the value in a register
+ *   - sig_atomic_t: guaranteed atomic read/write even when interrupted
+ *   - This type is safe to access from signal handlers on all platforms
+ *
+ * =============================================================================
+ */
 
 #ifdef _WIN32
-// Windows console control handler
-// IMPORTANT: This runs in a SEPARATE THREAD from the main loop!
-// We must NOT destroy windows or free memory here - that would race with the main loop.
-// Instead, just set the shutdown flag and let the main loop exit gracefully.
+/*
+ * Windows console control handler.
+ *
+ * IMPORTANT: This runs in a SEPARATE THREAD from the main loop!
+ * We must NOT destroy windows or free memory here - that would race with
+ * the main loop which may be in the middle of rendering.
+ */
 static BOOL WINAPI console_ctrl_handler(GCJ_MAYBE_UNUSED(DWORD dwCtrlType)) {
   CJellyApplication* app = cjelly_application_get_current();
   if (!app)
     return FALSE;
 
-  // Set shutdown flag - the main loop will see this and exit
-  // Use volatile write to ensure visibility across threads
   app->shutdown_requested = 1;
-
-  // NOTE: We intentionally do NOT call cjelly_application_close_all_windows() here
-  // because this handler runs in a different thread than the main loop.
-  // Destroying windows from here would race with rendering in the main thread.
-  // The main loop checks cjelly_application_should_shutdown() and will exit,
-  // then cleanup happens in the application's normal shutdown path.
-
-  return TRUE;  // We handled it
+  return TRUE;
 }
 #else
-// POSIX signal handler
-// NOTE: Signal handlers have strict limitations on what functions can be called.
-// We only set the shutdown flag here - cleanup happens in the main loop.
-static void default_signal_handler(int sig) {
-  (void)sig;  // Unused for now, but could be used to differentiate signals
+/*
+ * POSIX signal handler.
+ *
+ * IMPORTANT: This interrupts the main thread at an arbitrary point!
+ * The main thread could be in the middle of malloc(), a Vulkan call, or
+ * any other non-reentrant operation. We can ONLY set a flag here.
+ */
+static void default_signal_handler(GCJ_MAYBE_UNUSED(int sig)) {
   CJellyApplication* app = cjelly_application_get_current();
   if (!app)
     return;
 
-  // Set shutdown flag - the main loop will see this and exit
   app->shutdown_requested = 1;
-
-  // NOTE: We intentionally do NOT call callbacks or close windows here.
-  // Signal handlers should do minimal work. The main loop checks
-  // cjelly_application_should_shutdown() and handles cleanup safely.
 }
 #endif
 
