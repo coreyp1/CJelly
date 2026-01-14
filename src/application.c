@@ -1177,8 +1177,9 @@ static void remove_window_from_application(CJellyApplication * app, void* window
   // Remove from window list
   for (uint32_t i = 0; i < app->window_count; i++) {
     if (app->windows[i] == window) {
-      // Move last element to this position
+      // Move last element to this position and clear it
       app->windows[i] = app->windows[app->window_count - 1];
+      app->windows[app->window_count - 1] = NULL;  // Clear the moved pointer
       app->window_count--;
       break;
     }
@@ -1189,8 +1190,10 @@ static void remove_window_from_application(CJellyApplication * app, void* window
     HandleMapEntry* map = (HandleMapEntry*)app->handle_map;
     for (uint32_t i = 0; i < app->handle_map_count; i++) {
       if (map[i].handle == handle) {
-        // Move last element to this position
+        // Move last element to this position and clear it
         map[i] = map[app->handle_map_count - 1];
+        map[app->handle_map_count - 1].handle = NULL;
+        map[app->handle_map_count - 1].window = NULL;
         app->handle_map_count--;
         break;
       }
@@ -1307,55 +1310,42 @@ CJ_API CJellyApplicationError cjelly_application_create_command_pools(
 
 #ifdef _WIN32
 // Windows console control handler
+// IMPORTANT: This runs in a SEPARATE THREAD from the main loop!
+// We must NOT destroy windows or free memory here - that would race with the main loop.
+// Instead, just set the shutdown flag and let the main loop exit gracefully.
 static BOOL WINAPI console_ctrl_handler(GCJ_MAYBE_UNUSED(DWORD dwCtrlType)) {
   CJellyApplication* app = cjelly_application_get_current();
   if (!app)
     return FALSE;
 
-  // Call custom handlers if registered
-  for (uint32_t i = 0; i < app->custom_signal_handler_count; i++) {
-    if (app->custom_signal_handlers[i].signal == SIGINT) {
-      app->custom_signal_handlers[i].handler(SIGINT, app->custom_signal_handlers[i].user_data);
-    }
-  }
-
-  // Set shutdown flag
+  // Set shutdown flag - the main loop will see this and exit
+  // Use volatile write to ensure visibility across threads
   app->shutdown_requested = 1;
 
-  // Call shutdown callback if registered
-  if (app->shutdown_callback) {
-    app->shutdown_callback(app, app->shutdown_callback_user_data);
-  }
-
-  // Close all windows (non-cancellable)
-  cjelly_application_close_all_windows(app, false);
+  // NOTE: We intentionally do NOT call cjelly_application_close_all_windows() here
+  // because this handler runs in a different thread than the main loop.
+  // Destroying windows from here would race with rendering in the main thread.
+  // The main loop checks cjelly_application_should_shutdown() and will exit,
+  // then cleanup happens in the application's normal shutdown path.
 
   return TRUE;  // We handled it
 }
 #else
 // POSIX signal handler
+// NOTE: Signal handlers have strict limitations on what functions can be called.
+// We only set the shutdown flag here - cleanup happens in the main loop.
 static void default_signal_handler(int sig) {
+  (void)sig;  // Unused for now, but could be used to differentiate signals
   CJellyApplication* app = cjelly_application_get_current();
   if (!app)
     return;
 
-  // Call custom handlers if registered for this signal
-  for (uint32_t i = 0; i < app->custom_signal_handler_count; i++) {
-    if (app->custom_signal_handlers[i].signal == sig) {
-      app->custom_signal_handlers[i].handler(sig, app->custom_signal_handlers[i].user_data);
-    }
-  }
-
-  // Set shutdown flag
+  // Set shutdown flag - the main loop will see this and exit
   app->shutdown_requested = 1;
 
-  // Call shutdown callback if registered
-  if (app->shutdown_callback) {
-    app->shutdown_callback(app, app->shutdown_callback_user_data);
-  }
-
-  // Close all windows (non-cancellable)
-  cjelly_application_close_all_windows(app, false);
+  // NOTE: We intentionally do NOT call callbacks or close windows here.
+  // Signal handlers should do minimal work. The main loop checks
+  // cjelly_application_should_shutdown() and handles cleanup safely.
 }
 #endif
 

@@ -882,32 +882,6 @@ void DestroyDebugUtilsMessengerEXT(VkInstance instance,
 }
 
 
-//
-// === PLATFORM-SPECIFIC WINDOW CREATION ===
-
-/* Use shared internal window definition */
-/* window_internal.h no longer needed; window internals migrated to window.c */
-//
-
-// Window procedure for Windows.
-#ifdef _WIN32
-
-LRESULT CALLBACK WindowProc(
-    HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
-  switch (uMsg) {
-  case WM_CLOSE:
-    // Removed: shouldClose flag - window close now handled via callbacks
-    PostQuitMessage(0);
-    return 0;
-  default:
-    return DefWindowProc(hwnd, uMsg, wParam, lParam);
-  }
-}
-
-#endif
-
-
-/* migrated to window.c */
 
 
 //
@@ -919,6 +893,16 @@ LRESULT CALLBACK WindowProc(
 CJ_API void processWindowEvents() {
   MSG msg;
   while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
+    // Handle WM_QUIT specially - this is posted when the last window closes
+    // We should not dispatch it, but rather let the application handle it
+    // Since we used PM_REMOVE, the message is already removed from the queue
+    if (msg.message == WM_QUIT) {
+      // WM_QUIT indicates the application should exit
+      // Don't dispatch it, just break out of the loop
+      // The application's main loop should check for this condition
+      // Note: The message has already been removed from the queue by PeekMessage
+      break;
+    }
     TranslateMessage(&msg);
     DispatchMessage(&msg);
   }
@@ -967,24 +951,6 @@ CJ_API void processWindowEvents() {
 #endif
 
 
-//
-// === PER-WINDOW VULKAN OBJECTS ===
-//
-
-// Create a Vulkan surface for a given window.
-/* migrated to window.c */
-
-/* migrated */
-
-
-/* migrated to window.c */
-
-
-//
-// === CLEANUP FOR A WINDOW ===
-//
-
-/* migrated to window.c */
 
 
 
@@ -2085,7 +2051,7 @@ CJellyTextureAtlas * cjelly_create_texture_atlas(uint32_t width, uint32_t height
     return NULL;
   }
   memset(atlas->entries, 0, sizeof(CJellyTextureEntry) * atlas->maxTextures);
-  
+
   // Create the atlas image
   createImage(width, height, VK_FORMAT_R8G8B8A8_UNORM,
               VK_IMAGE_TILING_OPTIMAL,
@@ -2095,7 +2061,7 @@ CJellyTextureAtlas * cjelly_create_texture_atlas(uint32_t width, uint32_t height
   // Transition to TRANSFER_DST for subsequent copies
   transitionImageLayout(atlas->atlasImage, VK_FORMAT_R8G8B8A8_UNORM,
                         VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
-  
+
   // Create image view
   VkImageViewCreateInfo viewInfo = {0};
   viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -2111,7 +2077,7 @@ CJellyTextureAtlas * cjelly_create_texture_atlas(uint32_t width, uint32_t height
   viewInfo.subresourceRange.levelCount = 1;
   viewInfo.subresourceRange.baseArrayLayer = 0;
   viewInfo.subresourceRange.layerCount = 1;
-  
+
   if (vkCreateImageView(cur_device(), &viewInfo, NULL, &atlas->atlasImageView) != VK_SUCCESS) {
     fprintf(stderr, "Failed to create atlas image view\n");
     vkDestroyImage(cur_device(), atlas->atlasImage, NULL);
@@ -2120,19 +2086,19 @@ CJellyTextureAtlas * cjelly_create_texture_atlas(uint32_t width, uint32_t height
     free(atlas);
     return NULL;
   }
-  
+
   // Create sampler (reuse textured resources' sampler)
   {
     CJellyTexturedResources* tx = cur_tx();
     atlas->atlasSampler = tx ? tx->sampler : VK_NULL_HANDLE;
   }
-  
+
   // Create descriptor set layout (single combined sampler)
   atlas->bindlessDescriptorSetLayout = cj_engine_bindless_layout(cur_eng());
-  
+
   // Create descriptor pool
   atlas->bindlessDescriptorPool = cj_engine_bindless_pool(cur_eng());
-  
+
   // Allocate descriptor set
   VkDescriptorSetAllocateInfo allocInfo = {0};
   allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
@@ -2140,7 +2106,7 @@ CJellyTextureAtlas * cjelly_create_texture_atlas(uint32_t width, uint32_t height
   allocInfo.descriptorSetCount = 1;
   allocInfo.pSetLayouts = &atlas->bindlessDescriptorSetLayout;
   allocInfo.pNext = NULL;
-  
+
   if (vkAllocateDescriptorSets(cur_device(), &allocInfo, &atlas->bindlessDescriptorSet) != VK_SUCCESS) {
     fprintf(stderr, "Failed to allocate bindless descriptor set\n");
     vkDestroyDescriptorPool(cur_device(), atlas->bindlessDescriptorPool, NULL);
@@ -2152,7 +2118,7 @@ CJellyTextureAtlas * cjelly_create_texture_atlas(uint32_t width, uint32_t height
     free(atlas);
     return NULL;
   }
-  
+
   return atlas;
 }
 
@@ -2322,17 +2288,17 @@ uint32_t cjelly_atlas_add_texture(CJellyTextureAtlas * atlas, const char * fileP
   if (!atlas || atlas->textureCount >= atlas->maxTextures) {
     return 0; // Invalid texture ID
   }
-  
+
   // Load the image
   CJellyFormatImage * image;
   if (cjelly_format_image_load(filePath, &image) != CJELLY_FORMAT_IMAGE_SUCCESS) {
     fprintf(stderr, "Failed to load texture: %s\n", filePath);
     return 0;
   }
-  
+
   uint32_t texWidth = image->raw->width;
   uint32_t texHeight = image->raw->height;
-  
+
   // Check if texture fits in current row
   if (atlas->nextTextureX + texWidth > atlas->atlasWidth) {
     // Move to next row
@@ -2340,27 +2306,27 @@ uint32_t cjelly_atlas_add_texture(CJellyTextureAtlas * atlas, const char * fileP
     atlas->nextTextureY += atlas->currentRowHeight;
     atlas->currentRowHeight = 0;
   }
-  
+
   // Check if texture fits in atlas
   if (atlas->nextTextureY + texHeight > atlas->atlasHeight) {
     fprintf(stderr, "Texture atlas is full\n");
     cjelly_format_image_free(image);
     return 0;
   }
-  
+
   // Create staging buffer for the texture
   VkDeviceSize imageSize = texWidth * texHeight * 4; // RGBA
   VkBuffer stagingBuffer;
   VkDeviceMemory stagingBufferMemory;
-  
+
   createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
                VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
                &stagingBuffer, &stagingBufferMemory);
-  
+
   // Copy image data to staging buffer
   void * data;
   vkMapMemory(cur_device(), stagingBufferMemory, 0, imageSize, 0, &data);
-  
+
   // Convert RGB to RGBA and copy to staging buffer
   uint8_t * pixels = (uint8_t *)data;
   for (uint32_t y = 0; y < texHeight; y++) {
@@ -2373,9 +2339,9 @@ uint32_t cjelly_atlas_add_texture(CJellyTextureAtlas * atlas, const char * fileP
       pixels[dstIndex + 3] = 255; // A
     }
   }
-  
+
   vkUnmapMemory(cur_device(), stagingBufferMemory);
-  
+
   // Copy staging buffer to atlas image at the correct position
   VkBufferImageCopy region = {0};
   region.bufferOffset = 0;
@@ -2391,12 +2357,12 @@ uint32_t cjelly_atlas_add_texture(CJellyTextureAtlas * atlas, const char * fileP
   region.imageExtent.width = texWidth;
   region.imageExtent.height = texHeight;
   region.imageExtent.depth = 1;
-  
+
   VkCommandBuffer commandBuffer = beginSingleTimeCommands();
   vkCmdCopyBufferToImage(commandBuffer, stagingBuffer, atlas->atlasImage,
                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
   endSingleTimeCommands(commandBuffer);
-  
+
   // Store texture entry
   uint32_t textureID = atlas->textureCount + 1; // Start from 1, 0 means no texture
   CJellyTextureEntry * entry = &atlas->entries[atlas->textureCount];
@@ -2405,25 +2371,25 @@ uint32_t cjelly_atlas_add_texture(CJellyTextureAtlas * atlas, const char * fileP
   entry->y = atlas->nextTextureY;
   entry->width = texWidth;
   entry->height = texHeight;
-  
+
   // Calculate UV coordinates
   entry->uMin = (float)atlas->nextTextureX / (float)atlas->atlasWidth;
   entry->uMax = (float)(atlas->nextTextureX + texWidth) / (float)atlas->atlasWidth;
   entry->vMin = (float)atlas->nextTextureY / (float)atlas->atlasHeight;
   entry->vMax = (float)(atlas->nextTextureY + texHeight) / (float)atlas->atlasHeight;
-  
+
   // Update atlas position
   atlas->nextTextureX += texWidth;
   if (texHeight > atlas->currentRowHeight) {
     atlas->currentRowHeight = texHeight;
   }
   atlas->textureCount++;
-  
+
   // Clean up
   vkDestroyBuffer(cur_device(), stagingBuffer, NULL);
   vkFreeMemory(cur_device(), stagingBufferMemory, NULL);
   cjelly_format_image_free(image);
-  
+
   return textureID;
 }
 
@@ -2541,20 +2507,20 @@ CJellyTextureEntry * cjelly_atlas_get_texture_entry(CJellyTextureAtlas * atlas, 
   if (!atlas || textureID == 0 || textureID > atlas->textureCount) {
     return NULL;
   }
-  
+
   return &atlas->entries[textureID - 1];
 }
 
 void cjelly_atlas_update_descriptor_set(CJellyTextureAtlas * atlas) {
   if (!atlas) return;
-  
+
   // Update the descriptor set with the atlas image view
   VkDescriptorImageInfo imageInfo = {0};
   imageInfo.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
   // Use atlas-provided view and sampler
   imageInfo.imageView = atlas->atlasImageView;
   imageInfo.sampler = atlas->atlasSampler;
-  
+
   VkWriteDescriptorSet descriptorWrite = {0};
   descriptorWrite.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
   descriptorWrite.dstSet = atlas->bindlessDescriptorSet;
@@ -2563,7 +2529,7 @@ void cjelly_atlas_update_descriptor_set(CJellyTextureAtlas * atlas) {
   descriptorWrite.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   descriptorWrite.descriptorCount = 1;
   descriptorWrite.pImageInfo = &imageInfo;
-  
+
   vkUpdateDescriptorSets(cur_device(), 1, &descriptorWrite, 0, NULL);
 }
 

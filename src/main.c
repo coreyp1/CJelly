@@ -254,26 +254,30 @@ int main(void) {
       last_update_time = currentTime;
     }
 
-    // Get active windows from application and render them
-    // Get count first, then retrieve windows (count may change during iteration)
+    // Process window events (handles WM_CLOSE, etc.)
+    cj_poll_events();
+
+    // Check if shutdown was requested (Ctrl+C sets this flag)
+    if (cjelly_application_should_shutdown(app)) {
+      break;
+    }
+
+    // Render all active windows
     uint32_t window_count = cjelly_application_window_count(app);
     if (window_count > 0) {
-      void* active_windows[10];  // Max 10 windows
+      void* active_windows[10];
       uint32_t max_count = (window_count < 10) ? window_count : 10;
       uint32_t actual_count = cjelly_application_get_windows(app, active_windows, max_count);
 
-      // Render each window (skip if window was destroyed during iteration)
       for (uint32_t i = 0; i < actual_count; ++i) {
         cj_window_t* window = (cj_window_t*)active_windows[i];
-        if (window) {
-          // Try to render - if window was destroyed, begin_frame will fail gracefully
-          cj_frame_info_t frame = {0};
-          cj_result_t result = cj_window_begin_frame(window, &frame);
-          if (result == CJ_SUCCESS) {
-            cj_window_execute(window);
-            cj_window_present(window);
-          }
-          // If begin_frame fails, window might be destroyed - that's okay, just skip it
+        if (!window) continue;
+
+        // Render frame - begin_frame checks if window is still valid
+        cj_frame_info_t frame = {0};
+        if (cj_window_begin_frame(window, &frame) == CJ_SUCCESS) {
+          cj_window_execute(window);
+          cj_window_present(window);
         }
       }
     }

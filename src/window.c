@@ -5,7 +5,11 @@
 #include <windows.h>
 #include <vulkan/vulkan.h>
 #include <vulkan/vulkan_win32.h>
-#include <cjelly/runtime.h>
+#else
+#include <X11/Xlib.h>
+#include <vulkan/vulkan.h>
+#include <vulkan/vulkan_xlib.h>
+extern Display* display; /* provided by main on Linux */
 #endif
 
 #include <stdio.h>
@@ -27,60 +31,7 @@
 /* Forward declarations */
 typedef struct CJPlatformWindow CJPlatformWindow;
 
-/* Internal definition of the opaque window type */
-struct cj_window_t {
-  CJPlatformWindow * plat;
-  uint64_t frame_index;
-  cj_rgraph_t* render_graph;  /* Render graph for this window (not owned) */
-  cj_window_close_callback_t close_callback;  /* Close callback (NULL if none) */
-  void* close_callback_user_data;  /* User data for close callback */
-  bool is_destroyed;  /* Flag to prevent double-destruction */
-};
-
-#ifdef _WIN32
-/* Minimal Win32 window proc: on close, invoke callback and handle response */
-static LRESULT CALLBACK CjWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
-  switch (uMsg) {
-    case WM_CLOSE: {
-      // Look up window from handle via application
-      CJellyApplication* app = cjelly_application_get_current();
-      if (app) {
-        cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)hwnd);
-        if (window) {
-          bool cancellable = true;  // User-initiated close
-          cj_window_close_response_t response = CJ_WINDOW_CLOSE_ALLOW;
-
-          // Invoke callback if present
-          if (window->close_callback) {
-            response = window->close_callback(window, cancellable, window->close_callback_user_data);
-          }
-
-          // If callback allows close, destroy window (which will destroy the platform window)
-          if (response == CJ_WINDOW_CLOSE_ALLOW) {
-            cj_window_destroy(window);
-          }
-          // If callback prevents close, return 1 to prevent default destruction
-          // Window stays open and visible
-          return (response == CJ_WINDOW_CLOSE_PREVENT) ? 1 : 0;
-        }
-      }
-      // Fallback: if no application or window not found, allow default destruction
-      return DefWindowProc(hwnd, uMsg, wParam, lParam);
-    }
-    case WM_DESTROY:
-      return 0;
-    default:
-      return DefWindowProc(hwnd, uMsg, wParam, lParam);
-  }
-}
-#else
-#include <X11/Xlib.h>
-#include <vulkan/vulkan.h>
-#include <vulkan/vulkan_xlib.h>
-extern Display* display; /* provided by main on Linux */
-#endif
-
-/* Platform window struct */
+/* Platform window struct - defined early so window procedure can access it */
 typedef struct CJPlatformWindow {
 #ifdef _WIN32
   HWND handle;
@@ -106,7 +57,70 @@ typedef struct CJPlatformWindow {
   uint64_t nextFrameTime;
 } CJPlatformWindow;
 
-/* === Platform helpers (migrated) === */
+/* Internal definition of the opaque window type */
+struct cj_window_t {
+  CJPlatformWindow * plat;
+  uint64_t frame_index;
+  cj_rgraph_t* render_graph;  /* Render graph for this window (not owned) */
+  cj_window_close_callback_t close_callback;  /* Close callback (NULL if none) */
+  void* close_callback_user_data;  /* User data for close callback */
+  bool is_destroyed;  /* Flag to prevent double-destruction */
+};
+
+/* Forward declarations for platform helpers - needed by window procedure */
+static void plat_cleanupWindow(CJPlatformWindow * win);
+
+#ifdef _WIN32
+/*
+ * Windows window procedure.
+ *
+ * Window closing flow:
+ * 1. User clicks X -> WM_CLOSE sent
+ * 2. WM_CLOSE calls close callback, then cj_window_destroy() if allowed
+ * 3. cj_window_destroy() does all cleanup and calls DestroyWindow()
+ * 4. WM_DESTROY is sent but is a no-op (cleanup already done)
+ */
+static LRESULT CALLBACK CjWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam) {
+  switch (uMsg) {
+    case WM_CLOSE: {
+      // User requested window close (clicked X button)
+      CJellyApplication* app = cjelly_application_get_current();
+      if (app) {
+        cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)hwnd);
+        if (window && !window->is_destroyed) {
+          // Invoke close callback if present
+          cj_window_close_response_t response = CJ_WINDOW_CLOSE_ALLOW;
+          if (window->close_callback) {
+            response = window->close_callback(window, true, window->close_callback_user_data);
+          }
+
+          if (response == CJ_WINDOW_CLOSE_ALLOW) {
+            // Destroy window - this handles all cleanup
+            cj_window_destroy(window);
+          }
+          // Return 0 to indicate we handled the message (whether closed or not)
+          return 0;
+        }
+      }
+      // Window not found or invalid - use default behavior
+      return DefWindowProc(hwnd, uMsg, wParam, lParam);
+    }
+
+    case WM_DESTROY:
+      // Window is being destroyed. Cleanup is already done by cj_window_destroy(),
+      // so this is just a no-op. The user data should already be cleared.
+      return DefWindowProc(hwnd, uMsg, wParam, lParam);
+
+    default:
+      return DefWindowProc(hwnd, uMsg, wParam, lParam);
+  }
+}
+#else
+// Linux window handling is done in processWindowEvents() in cjelly.c
+// No window procedure needed for X11
+#endif
+
+/* === Platform helpers === */
 static void plat_createPlatformWindow(CJPlatformWindow * win, const char * title, int width, int height) {
   if (!win) return;
   win->width = width; win->height = height;
@@ -228,7 +242,7 @@ static void plat_drawFrameForWindow(CJPlatformWindow * win) {
   VkDevice dev = cj_engine_device(cj_engine_get_current());
 #ifdef _WIN32
   /* Skip draw if window has been destroyed */
-  if (!IsWindow(win->handle)) return;
+  if (!win->handle || !IsWindow(win->handle)) return;
 #endif
   vkWaitForFences(dev, 1, &win->inFlightFence, VK_TRUE, UINT64_MAX);
   vkResetFences(dev, 1, &win->inFlightFence);
@@ -242,7 +256,11 @@ static void plat_drawFrameForWindow(CJPlatformWindow * win) {
 static void plat_cleanupWindow(CJPlatformWindow * win) {
   if (!win) return;
   VkDevice dev = cj_engine_device(cj_engine_get_current()); VkInstance inst = cj_engine_instance(cj_engine_get_current()); VkCommandPool pool = cj_engine_command_pool(cj_engine_get_current());
+
+  // Wait for device to be idle before destroying resources
   if (dev) vkDeviceWaitIdle(dev);
+
+  // Destroy Vulkan resources
   if (dev && win->renderFinishedSemaphore) vkDestroySemaphore(dev, win->renderFinishedSemaphore, NULL);
   if (dev && win->imageAvailableSemaphore) vkDestroySemaphore(dev, win->imageAvailableSemaphore, NULL);
   if (dev && win->inFlightFence) vkDestroyFence(dev, win->inFlightFence, NULL);
@@ -255,11 +273,14 @@ static void plat_cleanupWindow(CJPlatformWindow * win) {
   if (win->swapChainImages) { free(win->swapChainImages); win->swapChainImages = NULL; }
   if (dev && win->swapChain) { vkDestroySwapchainKHR(dev, win->swapChain, NULL); win->swapChain = VK_NULL_HANDLE; }
   if (inst && win->surface) { vkDestroySurfaceKHR(inst, win->surface, NULL); win->surface = VK_NULL_HANDLE; }
+
 #ifdef _WIN32
-  if (win->handle && IsWindow(win->handle)) DestroyWindow(win->handle);
+  // Note: On Windows, DestroyWindow is called in WM_CLOSE, not here
+  // Just clear the handle reference
   win->handle = NULL;
 #else
   if (display && win->handle) XDestroyWindow(display, win->handle);
+  win->handle = 0;
 #endif
 }
 /* C library and cjelly headers */
@@ -280,7 +301,7 @@ static void plat_cleanupWindow(CJPlatformWindow * win) {
 void cjelly_init_textured_pipeline_ctx(const CJellyVulkanContext* ctx);
 
 
-/* Internal helpers migrated from cjelly.c (static) */
+/* Internal helpers (static) */
 static void plat_createPlatformWindow(CJPlatformWindow * win, const char * title, int width, int height);
 static void plat_createSurfaceForWindow(CJPlatformWindow * win);
 static void plat_createSwapChainForWindow(CJPlatformWindow * win);
@@ -360,31 +381,63 @@ CJ_API cj_window_t* cj_window_create(cj_engine_t* engine, const cj_window_desc_t
     return NULL;
   }
 
+#ifdef _WIN32
+  // Store window pointer in window's user data so we can retrieve it in WM_DESTROY
+  // even after unregistering from the application
+  SetWindowLongPtr(win->plat->handle, GWLP_USERDATA, (LONG_PTR)win);
+#endif
+
   return win;
 }
 
+/*
+ * Destroy a window and free all associated resources.
+ *
+ * This is the single cleanup path for windows on all platforms.
+ * It handles: Vulkan resources, platform window, and the cj_window_t structure.
+ */
 CJ_API void cj_window_destroy(cj_window_t* win) {
-  if (!win || win->is_destroyed) return;  // Prevent double-destruction
+  // Guard against null or double-destruction
+  if (!win || win->is_destroyed) {
+    return;
+  }
 
   // Mark as destroyed immediately to prevent re-entry
   win->is_destroyed = true;
 
-  // Get handle BEFORE destroying platform window (handle becomes invalid after DestroyWindow)
-  void* handle = NULL;
-  if (win->plat) {
-    handle = (void*)win->plat->handle;
-  }
-
-  // Unregister from application BEFORE destroying platform window
-  // This ensures the handle is still valid for lookup and removal
+  // Unregister from application (need handle for lookup)
+  void* handle = win->plat ? (void*)win->plat->handle : NULL;
   cjelly_application_unregister_window(NULL, win, handle);
 
-  // Now safe to destroy platform window and free resources
+  // Clean up platform window and Vulkan resources
   if (win->plat) {
+    // Wait for GPU to finish before destroying resources
+    VkDevice dev = cj_engine_device(cj_engine_get_current());
+    if (dev) {
+      vkDeviceWaitIdle(dev);
+    }
+
+#ifdef _WIN32
+    // Save and clear Windows-specific data before destruction
+    HWND hwnd = win->plat->handle;
+    if (hwnd && IsWindow(hwnd)) {
+      SetWindowLongPtr(hwnd, GWLP_USERDATA, 0);
+    }
+#endif
+
+    // Clean up Vulkan resources (swapchain, surfaces, etc.)
     plat_cleanupWindow(win->plat);
+
+#ifdef _WIN32
+    // Destroy the Windows window
+    if (hwnd && IsWindow(hwnd)) {
+      DestroyWindow(hwnd);
+    }
+#endif
+
     free(win->plat);
-    win->plat = NULL;  // Prevent double-free
   }
+
   free(win);
 }
 
@@ -394,7 +447,7 @@ CJ_API cj_result_t cj_window_resize(cj_window_t* win, uint32_t width, uint32_t h
 }
 
 CJ_API cj_result_t cj_window_begin_frame(cj_window_t* win, cj_frame_info_t* out_frame_info) {
-  if (!win) return CJ_E_INVALID_ARGUMENT;
+  if (!win || win->is_destroyed) return CJ_E_INVALID_ARGUMENT;
   if (out_frame_info) {
     out_frame_info->frame_index = ++win->frame_index;
     out_frame_info->delta_seconds = 0.0; /* stub */
@@ -405,7 +458,14 @@ CJ_API cj_result_t cj_window_begin_frame(cj_window_t* win, cj_frame_info_t* out_
 }
 
 CJ_API cj_result_t cj_window_execute(cj_window_t* win) {
-  if (!win || !win->plat) return CJ_E_INVALID_ARGUMENT;
+  if (!win || win->is_destroyed || !win->plat) return CJ_E_INVALID_ARGUMENT;
+
+#ifdef _WIN32
+  /* Critical: Check if window handle is still valid before using Vulkan resources */
+  if (!win->plat->handle || !IsWindow(win->plat->handle)) {
+    return CJ_E_INVALID_ARGUMENT;
+  }
+#endif
 
   /* Use render graph if available, otherwise fall back to legacy drawing */
   if (win->render_graph) {
