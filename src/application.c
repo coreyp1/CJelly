@@ -1307,7 +1307,7 @@ CJ_API CJellyApplicationError cjelly_application_create_command_pools(
 
 #ifdef _WIN32
 // Windows console control handler
-static BOOL WINAPI console_ctrl_handler(DWORD dwCtrlType) {
+static BOOL WINAPI console_ctrl_handler(GCJ_MAYBE_UNUSED(DWORD dwCtrlType)) {
   CJellyApplication* app = cjelly_application_get_current();
   if (!app)
     return FALSE;
