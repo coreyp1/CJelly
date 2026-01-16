@@ -27,6 +27,7 @@ extern Display* display; /* provided by main on Linux */
 #include <cjelly/textured_internal.h>
 #include <cjelly/cj_rgraph.h>
 #include <cjelly/window_internal.h>
+#include <cjelly/cj_input.h>
 
 /* Forward declarations */
 typedef struct CJPlatformWindow CJPlatformWindow;
@@ -70,6 +71,12 @@ struct cj_window_t {
   void* frame_callback_user_data; /* User data for per-frame callback */
   cj_window_resize_callback_t resize_callback;  /* Resize callback (NULL if none) */
   void* resize_callback_user_data; /* User data for resize callback */
+  cj_key_callback_t key_callback;  /* Keyboard callback (NULL if none) */
+  void* key_callback_user_data; /* User data for keyboard callback */
+  /* Key state tracking for repeat detection (X11) and future key state queries (Phase 2) */
+  /* Simple bitfield: each bit represents a keycode. Size = (max_keycode + 7) / 8 bytes */
+  /* We track keys 0-255 (32 bytes), which covers all current keycodes */
+  uint8_t pressed_keys_bitfield[32];  /* Bitfield tracking which keys are currently pressed */
   cj_redraw_policy_t redraw_policy;  /* Redraw policy for this window */
   uint32_t max_fps;  /* Maximum FPS for this window (0 = unlimited) */
   uint64_t last_render_time_us;  /* Last render time in microseconds (for FPS limiting) */
@@ -84,6 +91,208 @@ static void plat_recreateSwapChainForWindow(CJPlatformWindow * win);
 static bool plat_createImageViewsForWindow(CJPlatformWindow * win);
 static bool plat_createFramebuffersForWindow(CJPlatformWindow * win);
 static bool createTexturedCommandBuffersForWindowCtx(CJPlatformWindow * win, const CJellyVulkanContext* ctx);
+
+/* Keycode mapping functions */
+#ifdef _WIN32
+/* Map Windows virtual key code (VK_*) to cj_keycode_t */
+static cj_keycode_t map_windows_keycode(WPARAM vk) {
+  /* Letters */
+  if (vk >= 'A' && vk <= 'Z') return (cj_keycode_t)(CJ_KEY_A + (vk - 'A'));
+  /* Numbers */
+  if (vk >= '0' && vk <= '9') return (cj_keycode_t)(CJ_KEY_0 + (vk - '0'));
+
+  switch (vk) {
+    case VK_F1: return CJ_KEY_F1;
+    case VK_F2: return CJ_KEY_F2;
+    case VK_F3: return CJ_KEY_F3;
+    case VK_F4: return CJ_KEY_F4;
+    case VK_F5: return CJ_KEY_F5;
+    case VK_F6: return CJ_KEY_F6;
+    case VK_F7: return CJ_KEY_F7;
+    case VK_F8: return CJ_KEY_F8;
+    case VK_F9: return CJ_KEY_F9;
+    case VK_F10: return CJ_KEY_F10;
+    case VK_F11: return CJ_KEY_F11;
+    case VK_F12: return CJ_KEY_F12;
+
+    case VK_UP: return CJ_KEY_UP;
+    case VK_DOWN: return CJ_KEY_DOWN;
+    case VK_LEFT: return CJ_KEY_LEFT;
+    case VK_RIGHT: return CJ_KEY_RIGHT;
+    case VK_HOME: return CJ_KEY_HOME;
+    case VK_END: return CJ_KEY_END;
+    case VK_PRIOR: return CJ_KEY_PAGE_UP;  /* Page Up */
+    case VK_NEXT: return CJ_KEY_PAGE_DOWN; /* Page Down */
+
+    case VK_BACK: return CJ_KEY_BACKSPACE;
+    case VK_DELETE: return CJ_KEY_DELETE;
+    case VK_INSERT: return CJ_KEY_INSERT;
+    case VK_RETURN: return CJ_KEY_ENTER;
+    case VK_TAB: return CJ_KEY_TAB;
+    case VK_ESCAPE: return CJ_KEY_ESCAPE;
+
+    case VK_LSHIFT: return CJ_KEY_LEFT_SHIFT;
+    case VK_RSHIFT: return CJ_KEY_RIGHT_SHIFT;
+    case VK_LCONTROL: return CJ_KEY_LEFT_CTRL;
+    case VK_RCONTROL: return CJ_KEY_RIGHT_CTRL;
+    case VK_LMENU: return CJ_KEY_LEFT_ALT;  /* Left Alt */
+    case VK_RMENU: return CJ_KEY_RIGHT_ALT; /* Right Alt */
+    case VK_LWIN: return CJ_KEY_LEFT_META;
+    case VK_RWIN: return CJ_KEY_RIGHT_META;
+
+    case VK_SPACE: return CJ_KEY_SPACE;
+    case VK_OEM_MINUS: return CJ_KEY_MINUS;  /* - on main keyboard */
+    case VK_OEM_PLUS: return CJ_KEY_EQUALS;  /* = on main keyboard */
+    case VK_OEM_4: return CJ_KEY_BRACKET_LEFT;  /* [ */
+    case VK_OEM_6: return CJ_KEY_BRACKET_RIGHT; /* ] */
+    case VK_OEM_5: return CJ_KEY_BACKSLASH;  /* \ */
+    case VK_OEM_1: return CJ_KEY_SEMICOLON; /* ; */
+    case VK_OEM_7: return CJ_KEY_APOSTROPHE; /* ' */
+    case VK_OEM_3: return CJ_KEY_GRAVE;  /* ` */
+    case VK_OEM_COMMA: return CJ_KEY_COMMA;
+    case VK_OEM_PERIOD: return CJ_KEY_PERIOD;
+    case VK_OEM_2: return CJ_KEY_SLASH;  /* / */
+
+    case VK_NUMPAD0: return CJ_KEY_NUMPAD_0;
+    case VK_NUMPAD1: return CJ_KEY_NUMPAD_1;
+    case VK_NUMPAD2: return CJ_KEY_NUMPAD_2;
+    case VK_NUMPAD3: return CJ_KEY_NUMPAD_3;
+    case VK_NUMPAD4: return CJ_KEY_NUMPAD_4;
+    case VK_NUMPAD5: return CJ_KEY_NUMPAD_5;
+    case VK_NUMPAD6: return CJ_KEY_NUMPAD_6;
+    case VK_NUMPAD7: return CJ_KEY_NUMPAD_7;
+    case VK_NUMPAD8: return CJ_KEY_NUMPAD_8;
+    case VK_NUMPAD9: return CJ_KEY_NUMPAD_9;
+    case VK_ADD: return CJ_KEY_NUMPAD_ADD;
+    case VK_SUBTRACT: return CJ_KEY_NUMPAD_SUBTRACT;
+    case VK_MULTIPLY: return CJ_KEY_NUMPAD_MULTIPLY;
+    case VK_DIVIDE: return CJ_KEY_NUMPAD_DIVIDE;
+    case VK_DECIMAL: return CJ_KEY_NUMPAD_DECIMAL;
+    case VK_SEPARATOR: return CJ_KEY_NUMPAD_ENTER;  /* Numpad Enter */
+
+    case VK_CAPITAL: return CJ_KEY_CAPS_LOCK;
+    case VK_NUMLOCK: return CJ_KEY_NUM_LOCK;
+    case VK_SCROLL: return CJ_KEY_SCROLL_LOCK;
+    case VK_SNAPSHOT: return CJ_KEY_PRINT_SCREEN;
+    case VK_PAUSE: return CJ_KEY_PAUSE;
+
+    default: return CJ_KEY_UNKNOWN;
+  }
+}
+
+/* Get modifier flags from Windows keyboard state */
+static cj_modifiers_t get_windows_modifiers(void) {
+  cj_modifiers_t mods = CJ_MOD_NONE;
+  if (GetKeyState(VK_SHIFT) & 0x8000) mods |= CJ_MOD_SHIFT;
+  if (GetKeyState(VK_CONTROL) & 0x8000) mods |= CJ_MOD_CTRL;
+  if (GetKeyState(VK_MENU) & 0x8000) mods |= CJ_MOD_ALT;  /* Alt */
+  if (GetKeyState(VK_LWIN) & 0x8000 || GetKeyState(VK_RWIN) & 0x8000) mods |= CJ_MOD_META;
+  if (GetKeyState(VK_CAPITAL) & 0x0001) mods |= CJ_MOD_CAPS;  /* Caps Lock (toggle state) */
+  if (GetKeyState(VK_NUMLOCK) & 0x0001) mods |= CJ_MOD_NUM;  /* Num Lock (toggle state) */
+  return mods;
+}
+#else
+/* Linux/X11 keycode mapping */
+#include <X11/keysym.h>
+
+/* Map X11 keysym to cj_keycode_t */
+static cj_keycode_t map_x11_keysym(KeySym keysym) {
+  /* Letters */
+  if (keysym >= XK_a && keysym <= XK_z) return (cj_keycode_t)(CJ_KEY_A + (keysym - XK_a));
+  if (keysym >= XK_A && keysym <= XK_Z) return (cj_keycode_t)(CJ_KEY_A + (keysym - XK_A));
+  /* Numbers */
+  if (keysym >= XK_0 && keysym <= XK_9) return (cj_keycode_t)(CJ_KEY_0 + (keysym - XK_0));
+
+  switch (keysym) {
+    case XK_F1: return CJ_KEY_F1;
+    case XK_F2: return CJ_KEY_F2;
+    case XK_F3: return CJ_KEY_F3;
+    case XK_F4: return CJ_KEY_F4;
+    case XK_F5: return CJ_KEY_F5;
+    case XK_F6: return CJ_KEY_F6;
+    case XK_F7: return CJ_KEY_F7;
+    case XK_F8: return CJ_KEY_F8;
+    case XK_F9: return CJ_KEY_F9;
+    case XK_F10: return CJ_KEY_F10;
+    case XK_F11: return CJ_KEY_F11;
+    case XK_F12: return CJ_KEY_F12;
+
+    case XK_Up: return CJ_KEY_UP;
+    case XK_Down: return CJ_KEY_DOWN;
+    case XK_Left: return CJ_KEY_LEFT;
+    case XK_Right: return CJ_KEY_RIGHT;
+    case XK_Home: return CJ_KEY_HOME;
+    case XK_End: return CJ_KEY_END;
+    case XK_Page_Up: return CJ_KEY_PAGE_UP;
+    case XK_Page_Down: return CJ_KEY_PAGE_DOWN;
+
+    case XK_BackSpace: return CJ_KEY_BACKSPACE;
+    case XK_Delete: return CJ_KEY_DELETE;
+    case XK_Insert: return CJ_KEY_INSERT;
+    case XK_Return: return CJ_KEY_ENTER;
+    case XK_Tab: return CJ_KEY_TAB;
+    case XK_Escape: return CJ_KEY_ESCAPE;
+
+    case XK_Shift_L: return CJ_KEY_LEFT_SHIFT;
+    case XK_Shift_R: return CJ_KEY_RIGHT_SHIFT;
+    case XK_Control_L: return CJ_KEY_LEFT_CTRL;
+    case XK_Control_R: return CJ_KEY_RIGHT_CTRL;
+    case XK_Alt_L: return CJ_KEY_LEFT_ALT;
+    case XK_Alt_R: return CJ_KEY_RIGHT_ALT;
+    case XK_Super_L: return CJ_KEY_LEFT_META;  /* Left Super/Meta */
+    case XK_Super_R: return CJ_KEY_RIGHT_META; /* Right Super/Meta */
+
+    case XK_space: return CJ_KEY_SPACE;
+    case XK_minus: return CJ_KEY_MINUS;
+    case XK_equal: return CJ_KEY_EQUALS;
+    case XK_bracketleft: return CJ_KEY_BRACKET_LEFT;
+    case XK_bracketright: return CJ_KEY_BRACKET_RIGHT;
+    case XK_backslash: return CJ_KEY_BACKSLASH;
+    case XK_semicolon: return CJ_KEY_SEMICOLON;
+    case XK_apostrophe: return CJ_KEY_APOSTROPHE;
+    case XK_grave: return CJ_KEY_GRAVE;
+    case XK_comma: return CJ_KEY_COMMA;
+    case XK_period: return CJ_KEY_PERIOD;
+    case XK_slash: return CJ_KEY_SLASH;
+
+    case XK_KP_0: return CJ_KEY_NUMPAD_0;
+    case XK_KP_1: return CJ_KEY_NUMPAD_1;
+    case XK_KP_2: return CJ_KEY_NUMPAD_2;
+    case XK_KP_3: return CJ_KEY_NUMPAD_3;
+    case XK_KP_4: return CJ_KEY_NUMPAD_4;
+    case XK_KP_5: return CJ_KEY_NUMPAD_5;
+    case XK_KP_6: return CJ_KEY_NUMPAD_6;
+    case XK_KP_7: return CJ_KEY_NUMPAD_7;
+    case XK_KP_8: return CJ_KEY_NUMPAD_8;
+    case XK_KP_9: return CJ_KEY_NUMPAD_9;
+    case XK_KP_Add: return CJ_KEY_NUMPAD_ADD;
+    case XK_KP_Subtract: return CJ_KEY_NUMPAD_SUBTRACT;
+    case XK_KP_Multiply: return CJ_KEY_NUMPAD_MULTIPLY;
+    case XK_KP_Divide: return CJ_KEY_NUMPAD_DIVIDE;
+    case XK_KP_Decimal: return CJ_KEY_NUMPAD_DECIMAL;
+    case XK_KP_Enter: return CJ_KEY_NUMPAD_ENTER;
+
+    case XK_Caps_Lock: return CJ_KEY_CAPS_LOCK;
+    case XK_Num_Lock: return CJ_KEY_NUM_LOCK;
+    case XK_Scroll_Lock: return CJ_KEY_SCROLL_LOCK;
+    case XK_Print: return CJ_KEY_PRINT_SCREEN;
+    case XK_Pause: return CJ_KEY_PAUSE;
+
+    default: return CJ_KEY_UNKNOWN;
+  }
+}
+
+/* Get modifier flags from X11 event state */
+static cj_modifiers_t get_x11_modifiers(unsigned int state) {
+  cj_modifiers_t mods = CJ_MOD_NONE;
+  if (state & ShiftMask) mods |= CJ_MOD_SHIFT;
+  if (state & ControlMask) mods |= CJ_MOD_CTRL;
+  if (state & Mod1Mask) mods |= CJ_MOD_ALT;  /* Alt is typically Mod1 */
+  if (state & Mod4Mask) mods |= CJ_MOD_META;  /* Super/Meta is typically Mod4 */
+  /* Note: Caps Lock and Num Lock state would need to be queried separately */
+  return mods;
+}
+#endif
 
 #ifdef _WIN32
 /* Timer ID for resize rendering */
@@ -195,6 +404,50 @@ static LRESULT CALLBACK CjWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
       return DefWindowProc(hwnd, uMsg, wParam, lParam);
     }
 
+    case WM_KEYDOWN:
+    case WM_SYSKEYDOWN: {
+      // Key pressed (including system keys like Alt combinations)
+      CJellyApplication* app = cjelly_application_get_current();
+      if (app) {
+        cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)hwnd);
+        if (window && !window->is_destroyed) {
+          cj_keycode_t keycode = map_windows_keycode(wParam);
+          cj_scancode_t scancode = (cj_scancode_t)((lParam >> 16) & 0xFF);  /* Extract scancode from lParam */
+          cj_modifiers_t modifiers = get_windows_modifiers();
+          bool is_repeat = (lParam & (1 << 30)) != 0;  /* Previous key state bit indicates repeat */
+
+          cj_window__dispatch_key_callback(window, keycode, scancode, CJ_KEY_ACTION_DOWN, modifiers, is_repeat);
+        }
+      }
+      // For system keys, we might want to call DefWindowProc to allow default handling
+      // For regular keys, we can return 0 to indicate we handled it
+      if (uMsg == WM_SYSKEYDOWN) {
+        return DefWindowProc(hwnd, uMsg, wParam, lParam);
+      }
+      return 0;  /* Handled */
+    }
+
+    case WM_KEYUP:
+    case WM_SYSKEYUP: {
+      // Key released
+      CJellyApplication* app = cjelly_application_get_current();
+      if (app) {
+        cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)hwnd);
+        if (window && !window->is_destroyed) {
+          cj_keycode_t keycode = map_windows_keycode(wParam);
+          cj_scancode_t scancode = (cj_scancode_t)((lParam >> 16) & 0xFF);  /* Extract scancode from lParam */
+          cj_modifiers_t modifiers = get_windows_modifiers();
+
+          cj_window__dispatch_key_callback(window, keycode, scancode, CJ_KEY_ACTION_UP, modifiers, false);
+        }
+      }
+      // For system keys, we might want to call DefWindowProc to allow default handling
+      if (uMsg == WM_SYSKEYUP) {
+        return DefWindowProc(hwnd, uMsg, wParam, lParam);
+      }
+      return 0;  /* Handled */
+    }
+
     case WM_DESTROY:
       // Window is being destroyed. Cleanup is already done by cj_window_destroy(),
       // so this is just a no-op. The user data should already be cleared.
@@ -225,7 +478,7 @@ static void plat_createPlatformWindow(CJPlatformWindow * win, const char * title
   int screen = DefaultScreen(display);
   /* Use black background to reduce flickering during resize */
   win->handle = XCreateSimpleWindow(display, RootWindow(display, screen), 0, 0, (unsigned)width, (unsigned)height, 0, BlackPixel(display, screen), BlackPixel(display, screen));
-  XSelectInput(display, win->handle, StructureNotifyMask | KeyPressMask | ExposureMask);
+  XSelectInput(display, win->handle, StructureNotifyMask | KeyPressMask | KeyReleaseMask | ExposureMask);
   Atom wmDelete = XInternAtom(display, "WM_DELETE_WINDOW", False);
   XStoreName(display, win->handle, title);
   XSetWMProtocols(display, win->handle, &wmDelete, 1);
@@ -565,6 +818,9 @@ CJ_API cj_window_t* cj_window_create(cj_engine_t* engine, const cj_window_desc_t
   win->frame_callback_user_data = NULL;
   win->resize_callback = NULL;
   win->resize_callback_user_data = NULL;
+  win->key_callback = NULL;
+  win->key_callback_user_data = NULL;
+  memset(win->pressed_keys_bitfield, 0, sizeof(win->pressed_keys_bitfield));  /* Initialize key state tracking */
   win->redraw_policy = CJ_REDRAW_ON_EVENTS;  /* Default: redraw on events */
   win->max_fps = 0;  /* Default: unlimited (use global FPS limit) */
   win->last_render_time_us = 0;  /* Initialize to 0 (will be set on first render) */
@@ -616,6 +872,9 @@ CJ_API void cj_window_destroy(cj_window_t* win) {
   cjelly_application_unregister_window(NULL, win, handle);
 
   // Clean up platform window and Vulkan resources
+  /* Clear key state tracking */
+  memset(win->pressed_keys_bitfield, 0, sizeof(win->pressed_keys_bitfield));
+
   if (win->plat) {
     // Wait for GPU to finish before destroying resources
     VkDevice dev = cj_engine_device(cj_engine_get_current());
@@ -869,6 +1128,14 @@ CJ_API void cj_window_on_resize(cj_window_t* window,
   window->resize_callback_user_data = user_data;
 }
 
+CJ_API void cj_window_on_key(cj_window_t* window,
+                             cj_key_callback_t callback,
+                             void* user_data) {
+  if (!window) return;
+  window->key_callback = callback;
+  window->key_callback_user_data = user_data;
+}
+
 /* Internal helper for the framework event loop. */
 cj_frame_result_t cj_window__dispatch_frame_callback(cj_window_t* window,
                                                     const cj_frame_info_t* frame_info) {
@@ -945,6 +1212,46 @@ void cj_window__dispatch_resize_callback(cj_window_t* window, uint32_t new_width
   /* Dispatch user callback */
   if (window->resize_callback) {
     window->resize_callback(window, new_width, new_height, window->resize_callback_user_data);
+  }
+}
+
+/* Internal helper functions for key state tracking (for repeat detection on X11) */
+bool cj_window__is_key_pressed(cj_window_t* window, cj_keycode_t keycode) {
+  if (!window || keycode < 0 || keycode >= 256) return false;
+  uint8_t byte_idx = (uint8_t)(keycode / 8);
+  uint8_t bit_idx = (uint8_t)(keycode % 8);
+  return (window->pressed_keys_bitfield[byte_idx] & (1 << bit_idx)) != 0;
+}
+
+void cj_window__set_key_pressed(cj_window_t* window, cj_keycode_t keycode, bool pressed) {
+  if (!window || keycode < 0 || keycode >= 256) return;
+  uint8_t byte_idx = (uint8_t)(keycode / 8);
+  uint8_t bit_idx = (uint8_t)(keycode % 8);
+  if (pressed) {
+    window->pressed_keys_bitfield[byte_idx] |= (1 << bit_idx);
+  } else {
+    window->pressed_keys_bitfield[byte_idx] &= ~(1 << bit_idx);
+  }
+}
+
+/* Internal helper to dispatch keyboard callback. */
+void cj_window__dispatch_key_callback(cj_window_t* window,
+                                     cj_keycode_t keycode,
+                                     cj_scancode_t scancode,
+                                     cj_key_action_t action,
+                                     cj_modifiers_t modifiers,
+                                     bool is_repeat) {
+  if (!window || window->is_destroyed) return;
+
+  if (window->key_callback) {
+    cj_key_event_t event = {0};
+    event.keycode = keycode;
+    event.scancode = scancode;
+    event.action = action;
+    event.modifiers = modifiers;
+    event.is_repeat = is_repeat;
+
+    window->key_callback(window, &event, window->key_callback_user_data);
   }
 }
 

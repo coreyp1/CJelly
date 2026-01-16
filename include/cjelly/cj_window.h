@@ -11,6 +11,7 @@
 #include "cj_macros.h"
 #include "cj_types.h"
 #include "cj_result.h"
+#include "cj_input.h"
 
 /** @file cj_window.h
  *  @brief Per-window lifecycle and frame submission.
@@ -187,6 +188,26 @@ CJ_API void cj_window_on_frame(cj_window_t* window,
 CJ_API void cj_window_on_resize(cj_window_t* window,
                                 cj_window_resize_callback_t callback,
                                 void* user_data);
+
+/** Keyboard callback function type.
+ *  Called when a keyboard event occurs (key press, release, or repeat).
+ *
+ *  @param window The window that received the keyboard event.
+ *  @param event The keyboard event information.
+ *  @param user_data User-provided data pointer.
+ */
+typedef void (*cj_key_callback_t)(cj_window_t* window,
+                                  const cj_key_event_t* event,
+                                  void* user_data);
+
+/** Register a keyboard callback for a window.
+ *  @param window The window to register the callback for.
+ *  @param callback Callback invoked when keyboard events occur. NULL to remove callback.
+ *  @param user_data User data pointer passed to callback.
+ */
+CJ_API void cj_window_on_key(cj_window_t* window,
+                             cj_key_callback_t callback,
+                             void* user_data);
 
 /** Mark a window as needing redraw.
  *  The window will be rendered on the next frame (subject to redraw policy and FPS limits).

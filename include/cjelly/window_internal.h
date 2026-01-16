@@ -112,6 +112,35 @@ bool cj_window__should_bypass_fps_limit(cj_render_reason_t reason);
  */
 void cj_window__update_last_render_time(cj_window_t* window, uint64_t render_time_us);
 
+/** Internal helper to check if a key is currently pressed (for repeat detection).
+ *  @param window The window to check.
+ *  @param keycode The keycode to check.
+ *  @return true if key is pressed, false otherwise.
+ */
+bool cj_window__is_key_pressed(cj_window_t* window, cj_keycode_t keycode);
+
+/** Internal helper to set key pressed state (for repeat detection).
+ *  @param window The window to update.
+ *  @param keycode The keycode to update.
+ *  @param pressed True to mark as pressed, false to mark as released.
+ */
+void cj_window__set_key_pressed(cj_window_t* window, cj_keycode_t keycode, bool pressed);
+
+/** Internal helper to dispatch keyboard event callback.
+ *  @param window The window that received the keyboard event.
+ *  @param keycode The platform-independent keycode.
+ *  @param scancode The physical key scancode.
+ *  @param action The key action (DOWN, UP, REPEAT).
+ *  @param modifiers The modifier keys held during the event.
+ *  @param is_repeat True if this is an auto-repeat event.
+ */
+void cj_window__dispatch_key_callback(cj_window_t* window,
+                                     cj_keycode_t keycode,
+                                     cj_scancode_t scancode,
+                                     cj_key_action_t action,
+                                     cj_modifiers_t modifiers,
+                                     bool is_repeat);
+
 #ifdef __cplusplus
 }
 #endif

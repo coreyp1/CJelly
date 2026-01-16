@@ -29,6 +29,7 @@
 #include <cjelly/cj_window.h>
 #include <cjelly/window_internal.h>
 #include <cjelly/engine_internal.h>
+#include <cjelly/cj_input.h>
 #include <cjelly/bindless_internal.h>
 #include <cjelly/textured_internal.h>
 #include <cjelly/bindless_state_internal.h>
@@ -984,16 +985,228 @@ CJ_API void processWindowEvents() {
       }
     }
     if (event.type == KeyPress) {
-      // Close on Escape for convenience (find window and close it)
-      KeySym sym = XLookupKeysym(&event.xkey, 0);
-      if (sym == XK_Escape) {
-        CJellyApplication* app = cjelly_application_get_current();
-        if (app) {
-          cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)event.xkey.window);
-          if (window) {
-            bool cancellable = true;
-            cj_window_close_with_callback(window, cancellable);
+      // Handle keyboard input
+      CJellyApplication* app = cjelly_application_get_current();
+      if (app) {
+        cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)event.xkey.window);
+        if (window) {
+          KeySym sym = XLookupKeysym(&event.xkey, 0);
+
+          // Map X11 keysym to cj_keycode_t
+          cj_keycode_t keycode = CJ_KEY_UNKNOWN;
+          if (sym >= XK_a && sym <= XK_z) keycode = (cj_keycode_t)(CJ_KEY_A + (sym - XK_a));
+          else if (sym >= XK_A && sym <= XK_Z) keycode = (cj_keycode_t)(CJ_KEY_A + (sym - XK_A));
+          else if (sym >= XK_0 && sym <= XK_9) keycode = (cj_keycode_t)(CJ_KEY_0 + (sym - XK_0));
+          else {
+            switch (sym) {
+              case XK_F1: keycode = CJ_KEY_F1; break;
+              case XK_F2: keycode = CJ_KEY_F2; break;
+              case XK_F3: keycode = CJ_KEY_F3; break;
+              case XK_F4: keycode = CJ_KEY_F4; break;
+              case XK_F5: keycode = CJ_KEY_F5; break;
+              case XK_F6: keycode = CJ_KEY_F6; break;
+              case XK_F7: keycode = CJ_KEY_F7; break;
+              case XK_F8: keycode = CJ_KEY_F8; break;
+              case XK_F9: keycode = CJ_KEY_F9; break;
+              case XK_F10: keycode = CJ_KEY_F10; break;
+              case XK_F11: keycode = CJ_KEY_F11; break;
+              case XK_F12: keycode = CJ_KEY_F12; break;
+              case XK_Up: keycode = CJ_KEY_UP; break;
+              case XK_Down: keycode = CJ_KEY_DOWN; break;
+              case XK_Left: keycode = CJ_KEY_LEFT; break;
+              case XK_Right: keycode = CJ_KEY_RIGHT; break;
+              case XK_Home: keycode = CJ_KEY_HOME; break;
+              case XK_End: keycode = CJ_KEY_END; break;
+              case XK_Page_Up: keycode = CJ_KEY_PAGE_UP; break;
+              case XK_Page_Down: keycode = CJ_KEY_PAGE_DOWN; break;
+              case XK_BackSpace: keycode = CJ_KEY_BACKSPACE; break;
+              case XK_Delete: keycode = CJ_KEY_DELETE; break;
+              case XK_Insert: keycode = CJ_KEY_INSERT; break;
+              case XK_Return: keycode = CJ_KEY_ENTER; break;
+              case XK_Tab: keycode = CJ_KEY_TAB; break;
+              case XK_Escape: keycode = CJ_KEY_ESCAPE; break;
+              case XK_Shift_L: keycode = CJ_KEY_LEFT_SHIFT; break;
+              case XK_Shift_R: keycode = CJ_KEY_RIGHT_SHIFT; break;
+              case XK_Control_L: keycode = CJ_KEY_LEFT_CTRL; break;
+              case XK_Control_R: keycode = CJ_KEY_RIGHT_CTRL; break;
+              case XK_Alt_L: keycode = CJ_KEY_LEFT_ALT; break;
+              case XK_Alt_R: keycode = CJ_KEY_RIGHT_ALT; break;
+              case XK_Super_L: keycode = CJ_KEY_LEFT_META; break;
+              case XK_Super_R: keycode = CJ_KEY_RIGHT_META; break;
+              case XK_space: keycode = CJ_KEY_SPACE; break;
+              case XK_minus: keycode = CJ_KEY_MINUS; break;
+              case XK_equal: keycode = CJ_KEY_EQUALS; break;
+              case XK_bracketleft: keycode = CJ_KEY_BRACKET_LEFT; break;
+              case XK_bracketright: keycode = CJ_KEY_BRACKET_RIGHT; break;
+              case XK_backslash: keycode = CJ_KEY_BACKSLASH; break;
+              case XK_semicolon: keycode = CJ_KEY_SEMICOLON; break;
+              case XK_apostrophe: keycode = CJ_KEY_APOSTROPHE; break;
+              case XK_grave: keycode = CJ_KEY_GRAVE; break;
+              case XK_comma: keycode = CJ_KEY_COMMA; break;
+              case XK_period: keycode = CJ_KEY_PERIOD; break;
+              case XK_slash: keycode = CJ_KEY_SLASH; break;
+              case XK_KP_0: keycode = CJ_KEY_NUMPAD_0; break;
+              case XK_KP_1: keycode = CJ_KEY_NUMPAD_1; break;
+              case XK_KP_2: keycode = CJ_KEY_NUMPAD_2; break;
+              case XK_KP_3: keycode = CJ_KEY_NUMPAD_3; break;
+              case XK_KP_4: keycode = CJ_KEY_NUMPAD_4; break;
+              case XK_KP_5: keycode = CJ_KEY_NUMPAD_5; break;
+              case XK_KP_6: keycode = CJ_KEY_NUMPAD_6; break;
+              case XK_KP_7: keycode = CJ_KEY_NUMPAD_7; break;
+              case XK_KP_8: keycode = CJ_KEY_NUMPAD_8; break;
+              case XK_KP_9: keycode = CJ_KEY_NUMPAD_9; break;
+              case XK_KP_Add: keycode = CJ_KEY_NUMPAD_ADD; break;
+              case XK_KP_Subtract: keycode = CJ_KEY_NUMPAD_SUBTRACT; break;
+              case XK_KP_Multiply: keycode = CJ_KEY_NUMPAD_MULTIPLY; break;
+              case XK_KP_Divide: keycode = CJ_KEY_NUMPAD_DIVIDE; break;
+              case XK_KP_Decimal: keycode = CJ_KEY_NUMPAD_DECIMAL; break;
+              case XK_KP_Enter: keycode = CJ_KEY_NUMPAD_ENTER; break;
+              case XK_Caps_Lock: keycode = CJ_KEY_CAPS_LOCK; break;
+              case XK_Num_Lock: keycode = CJ_KEY_NUM_LOCK; break;
+              case XK_Scroll_Lock: keycode = CJ_KEY_SCROLL_LOCK; break;
+              case XK_Print: keycode = CJ_KEY_PRINT_SCREEN; break;
+              case XK_Pause: keycode = CJ_KEY_PAUSE; break;
+              default: keycode = CJ_KEY_UNKNOWN; break;
+            }
           }
+
+          // Get modifiers
+          cj_modifiers_t modifiers = CJ_MOD_NONE;
+          if (event.xkey.state & ShiftMask) modifiers |= CJ_MOD_SHIFT;
+          if (event.xkey.state & ControlMask) modifiers |= CJ_MOD_CTRL;
+          if (event.xkey.state & Mod1Mask) modifiers |= CJ_MOD_ALT;
+          if (event.xkey.state & Mod4Mask) modifiers |= CJ_MOD_META;
+          // Lock keys: LockMask = Caps Lock, Mod2Mask = Num Lock (typical, may vary)
+          if (event.xkey.state & LockMask) modifiers |= CJ_MOD_CAPS;
+          if (event.xkey.state & Mod2Mask) modifiers |= CJ_MOD_NUM;
+
+          // Check for auto-repeat: if key is already marked as pressed, this is a repeat
+          bool is_repeat = cj_window__is_key_pressed(window, keycode);
+          // Mark key as pressed
+          cj_window__set_key_pressed(window, keycode, true);
+
+          // Dispatch keyboard callback
+          cj_window__dispatch_key_callback(window, keycode, (cj_scancode_t)event.xkey.keycode,
+                                           CJ_KEY_ACTION_DOWN, modifiers, is_repeat);
+        }
+      }
+    }
+    if (event.type == KeyRelease) {
+      // X11 auto-repeat detection: When a key is held, X11 generates KeyRelease immediately
+      // followed by KeyPress. We detect this by peeking at the next event. If it's a KeyPress
+      // for the same key with the same or very close timestamp, skip this KeyRelease (it's fake).
+      if (XPending(display) > 0) {
+        XEvent next_event;
+        XPeekEvent(display, &next_event);
+        if (next_event.type == KeyPress &&
+            next_event.xkey.keycode == event.xkey.keycode &&
+            next_event.xkey.time == event.xkey.time) {
+          // This is a fake KeyRelease from auto-repeat - skip it
+          // The next KeyPress will be handled and marked as repeat
+          continue;
+        }
+      }
+      // Handle key release
+      CJellyApplication* app = cjelly_application_get_current();
+      if (app) {
+        cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)event.xkey.window);
+        if (window) {
+          KeySym sym = XLookupKeysym(&event.xkey, 0);
+
+          // Map X11 keysym to cj_keycode_t (same mapping as KeyPress)
+          cj_keycode_t keycode = CJ_KEY_UNKNOWN;
+          if (sym >= XK_a && sym <= XK_z) keycode = (cj_keycode_t)(CJ_KEY_A + (sym - XK_a));
+          else if (sym >= XK_A && sym <= XK_Z) keycode = (cj_keycode_t)(CJ_KEY_A + (sym - XK_A));
+          else if (sym >= XK_0 && sym <= XK_9) keycode = (cj_keycode_t)(CJ_KEY_0 + (sym - XK_0));
+          else {
+            switch (sym) {
+              case XK_F1: keycode = CJ_KEY_F1; break;
+              case XK_F2: keycode = CJ_KEY_F2; break;
+              case XK_F3: keycode = CJ_KEY_F3; break;
+              case XK_F4: keycode = CJ_KEY_F4; break;
+              case XK_F5: keycode = CJ_KEY_F5; break;
+              case XK_F6: keycode = CJ_KEY_F6; break;
+              case XK_F7: keycode = CJ_KEY_F7; break;
+              case XK_F8: keycode = CJ_KEY_F8; break;
+              case XK_F9: keycode = CJ_KEY_F9; break;
+              case XK_F10: keycode = CJ_KEY_F10; break;
+              case XK_F11: keycode = CJ_KEY_F11; break;
+              case XK_F12: keycode = CJ_KEY_F12; break;
+              case XK_Up: keycode = CJ_KEY_UP; break;
+              case XK_Down: keycode = CJ_KEY_DOWN; break;
+              case XK_Left: keycode = CJ_KEY_LEFT; break;
+              case XK_Right: keycode = CJ_KEY_RIGHT; break;
+              case XK_Home: keycode = CJ_KEY_HOME; break;
+              case XK_End: keycode = CJ_KEY_END; break;
+              case XK_Page_Up: keycode = CJ_KEY_PAGE_UP; break;
+              case XK_Page_Down: keycode = CJ_KEY_PAGE_DOWN; break;
+              case XK_BackSpace: keycode = CJ_KEY_BACKSPACE; break;
+              case XK_Delete: keycode = CJ_KEY_DELETE; break;
+              case XK_Insert: keycode = CJ_KEY_INSERT; break;
+              case XK_Return: keycode = CJ_KEY_ENTER; break;
+              case XK_Tab: keycode = CJ_KEY_TAB; break;
+              case XK_Escape: keycode = CJ_KEY_ESCAPE; break;
+              case XK_Shift_L: keycode = CJ_KEY_LEFT_SHIFT; break;
+              case XK_Shift_R: keycode = CJ_KEY_RIGHT_SHIFT; break;
+              case XK_Control_L: keycode = CJ_KEY_LEFT_CTRL; break;
+              case XK_Control_R: keycode = CJ_KEY_RIGHT_CTRL; break;
+              case XK_Alt_L: keycode = CJ_KEY_LEFT_ALT; break;
+              case XK_Alt_R: keycode = CJ_KEY_RIGHT_ALT; break;
+              case XK_Super_L: keycode = CJ_KEY_LEFT_META; break;
+              case XK_Super_R: keycode = CJ_KEY_RIGHT_META; break;
+              case XK_space: keycode = CJ_KEY_SPACE; break;
+              case XK_minus: keycode = CJ_KEY_MINUS; break;
+              case XK_equal: keycode = CJ_KEY_EQUALS; break;
+              case XK_bracketleft: keycode = CJ_KEY_BRACKET_LEFT; break;
+              case XK_bracketright: keycode = CJ_KEY_BRACKET_RIGHT; break;
+              case XK_backslash: keycode = CJ_KEY_BACKSLASH; break;
+              case XK_semicolon: keycode = CJ_KEY_SEMICOLON; break;
+              case XK_apostrophe: keycode = CJ_KEY_APOSTROPHE; break;
+              case XK_grave: keycode = CJ_KEY_GRAVE; break;
+              case XK_comma: keycode = CJ_KEY_COMMA; break;
+              case XK_period: keycode = CJ_KEY_PERIOD; break;
+              case XK_slash: keycode = CJ_KEY_SLASH; break;
+              case XK_KP_0: keycode = CJ_KEY_NUMPAD_0; break;
+              case XK_KP_1: keycode = CJ_KEY_NUMPAD_1; break;
+              case XK_KP_2: keycode = CJ_KEY_NUMPAD_2; break;
+              case XK_KP_3: keycode = CJ_KEY_NUMPAD_3; break;
+              case XK_KP_4: keycode = CJ_KEY_NUMPAD_4; break;
+              case XK_KP_5: keycode = CJ_KEY_NUMPAD_5; break;
+              case XK_KP_6: keycode = CJ_KEY_NUMPAD_6; break;
+              case XK_KP_7: keycode = CJ_KEY_NUMPAD_7; break;
+              case XK_KP_8: keycode = CJ_KEY_NUMPAD_8; break;
+              case XK_KP_9: keycode = CJ_KEY_NUMPAD_9; break;
+              case XK_KP_Add: keycode = CJ_KEY_NUMPAD_ADD; break;
+              case XK_KP_Subtract: keycode = CJ_KEY_NUMPAD_SUBTRACT; break;
+              case XK_KP_Multiply: keycode = CJ_KEY_NUMPAD_MULTIPLY; break;
+              case XK_KP_Divide: keycode = CJ_KEY_NUMPAD_DIVIDE; break;
+              case XK_KP_Decimal: keycode = CJ_KEY_NUMPAD_DECIMAL; break;
+              case XK_KP_Enter: keycode = CJ_KEY_NUMPAD_ENTER; break;
+              case XK_Caps_Lock: keycode = CJ_KEY_CAPS_LOCK; break;
+              case XK_Num_Lock: keycode = CJ_KEY_NUM_LOCK; break;
+              case XK_Scroll_Lock: keycode = CJ_KEY_SCROLL_LOCK; break;
+              case XK_Print: keycode = CJ_KEY_PRINT_SCREEN; break;
+              case XK_Pause: keycode = CJ_KEY_PAUSE; break;
+              default: keycode = CJ_KEY_UNKNOWN; break;
+            }
+          }
+
+          // Get modifiers
+          cj_modifiers_t modifiers = CJ_MOD_NONE;
+          if (event.xkey.state & ShiftMask) modifiers |= CJ_MOD_SHIFT;
+          if (event.xkey.state & ControlMask) modifiers |= CJ_MOD_CTRL;
+          if (event.xkey.state & Mod1Mask) modifiers |= CJ_MOD_ALT;
+          if (event.xkey.state & Mod4Mask) modifiers |= CJ_MOD_META;
+          // Lock keys: LockMask = Caps Lock, Mod2Mask = Num Lock (typical, may vary)
+          if (event.xkey.state & LockMask) modifiers |= CJ_MOD_CAPS;
+          if (event.xkey.state & Mod2Mask) modifiers |= CJ_MOD_NUM;
+
+          // Clear key state (mark as not pressed)
+          cj_window__set_key_pressed(window, keycode, false);
+
+          // Dispatch keyboard callback
+          cj_window__dispatch_key_callback(window, keycode, (cj_scancode_t)event.xkey.keycode,
+                                           CJ_KEY_ACTION_UP, modifiers, false);
         }
       }
     }
