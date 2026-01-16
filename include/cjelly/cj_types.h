@@ -40,10 +40,20 @@ typedef struct cj_str_t {
   size_t      len;
 } cj_str_t;
 
+/** Reason why a frame is being rendered. */
+typedef enum cj_render_reason_t {
+  CJ_RENDER_REASON_TIMER = 0,              /**< Regular frame update (subject to FPS limit) */
+  CJ_RENDER_REASON_RESIZE = 1,             /**< Window was resized (bypasses FPS limit) */
+  CJ_RENDER_REASON_EXPOSE = 2,             /**< Window was exposed/shown (bypasses FPS limit) */
+  CJ_RENDER_REASON_FORCED = 3,             /**< Explicitly marked dirty by user (bypasses FPS limit) */
+  CJ_RENDER_REASON_SWAPCHAIN_RECREATE = 4, /**< Swapchain was recreated (bypasses FPS limit) */
+} cj_render_reason_t;
+
 /** Frame timing info passed to begin_frame. */
 typedef struct cj_frame_info_t {
   uint64_t frame_index;
   double   delta_seconds;
+  cj_render_reason_t render_reason;  /**< Why this frame is being rendered */
 } cj_frame_info_t;
 
 /** Bool tri-state for feature requests. */

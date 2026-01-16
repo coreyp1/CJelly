@@ -938,6 +938,8 @@ CJ_API void processWindowEvents() {
         cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)event.xmap.window);
         if (window) {
           cj_window__set_minimized(window, false);
+          /* Mark window dirty when restored from minimized (EXPOSE reason bypasses FPS limit) */
+          cj_window_mark_dirty_with_reason(window, CJ_RENDER_REASON_EXPOSE);
         }
       }
     }

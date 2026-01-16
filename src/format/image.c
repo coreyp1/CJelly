@@ -72,12 +72,12 @@ void cjelly_format_image_free(CJellyFormatImage * image) {
  *
  * This structure is a helper struct that is only used in the
  * cjelly_format_image_detect_type function.
- */ 
+ */
 typedef struct {
   CJellyFormatImageType type;      /**< The image type associated with the signature */
   const unsigned char * signature; /**< Pointer to the signature bytes */
   size_t length;                   /**< Number of bytes in the signature */
-} ImageSignature;  
+} ImageSignature;
 
 
 // Define known image signatures.

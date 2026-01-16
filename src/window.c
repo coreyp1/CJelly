@@ -70,6 +70,10 @@ struct cj_window_t {
   void* frame_callback_user_data; /* User data for per-frame callback */
   cj_window_resize_callback_t resize_callback;  /* Resize callback (NULL if none) */
   void* resize_callback_user_data; /* User data for resize callback */
+  cj_redraw_policy_t redraw_policy;  /* Redraw policy for this window */
+  uint32_t max_fps;  /* Maximum FPS for this window (0 = unlimited) */
+  uint64_t last_render_time_us;  /* Last render time in microseconds (for FPS limiting) */
+  cj_render_reason_t pending_render_reason;  /* Reason why window needs to render (if dirty) */
   bool is_destroyed;  /* Flag to prevent double-destruction */
 };
 
@@ -169,6 +173,9 @@ static LRESULT CALLBACK CjWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
             cj_window__set_minimized(window, true);
           } else if (wParam == SIZE_RESTORED || wParam == SIZE_MAXIMIZED) {
             cj_window__set_minimized(window, false);
+            /* Mark window dirty when restored from minimized */
+            window->plat->needsRedraw = 1;
+            window->pending_render_reason = CJ_RENDER_REASON_EXPOSE;
 
             // Extract new width and height from lParam
             uint32_t new_width = (uint32_t)(LOWORD(lParam));
@@ -558,8 +565,14 @@ CJ_API cj_window_t* cj_window_create(cj_engine_t* engine, const cj_window_desc_t
   win->frame_callback_user_data = NULL;
   win->resize_callback = NULL;
   win->resize_callback_user_data = NULL;
+  win->redraw_policy = CJ_REDRAW_ON_EVENTS;  /* Default: redraw on events */
+  win->max_fps = 0;  /* Default: unlimited (use global FPS limit) */
+  win->last_render_time_us = 0;  /* Initialize to 0 (will be set on first render) */
+  win->pending_render_reason = CJ_RENDER_REASON_FORCED;  /* Initial render is forced */
   win->is_destroyed = false;
   win->plat->needs_swapchain_recreate = false;
+  win->plat->needsRedraw = 1;  /* Window starts dirty (needs initial render) */
+  win->pending_render_reason = CJ_RENDER_REASON_FORCED;  /* Initial render is forced */
 
   // Automatically register window with current application (if one exists)
   // If registration fails (OOM), we must fail window creation to avoid zombie windows
@@ -644,6 +657,12 @@ CJ_API cj_result_t cj_window_begin_frame(cj_window_t* win, cj_frame_info_t* out_
   if (out_frame_info) {
     out_frame_info->frame_index = ++win->frame_index;
     out_frame_info->delta_seconds = 0.0; /* stub */
+    /* Set render reason from pending reason, or default to TIMER if not dirty */
+    out_frame_info->render_reason = cj_window__get_pending_render_reason(win);
+    /* Clear pending reason after reading it (will be set again if needed) */
+    if (win->plat && win->plat->needsRedraw == 0) {
+      win->pending_render_reason = CJ_RENDER_REASON_TIMER;
+    }
   } else {
     win->frame_index++;
   }
@@ -664,6 +683,9 @@ CJ_API cj_result_t cj_window_execute(cj_window_t* win) {
   if (win->plat->needs_swapchain_recreate) {
     plat_recreateSwapChainForWindow(win->plat);
     win->plat->needs_swapchain_recreate = false;
+    /* Mark dirty after swapchain recreation (content needs refresh) */
+    win->plat->needsRedraw = 1;
+    win->pending_render_reason = CJ_RENDER_REASON_SWAPCHAIN_RECREATE;
   }
 
   /* Use render graph if available, otherwise fall back to legacy drawing */
@@ -778,6 +800,35 @@ CJ_API cj_result_t cj_window_present(cj_window_t* win) {
   return CJ_SUCCESS;
 }
 
+CJ_API void cj_window_mark_dirty(cj_window_t* window) {
+  cj_window_mark_dirty_with_reason(window, CJ_RENDER_REASON_FORCED);
+}
+
+CJ_API void cj_window_mark_dirty_with_reason(cj_window_t* window, cj_render_reason_t reason) {
+  if (!window || !window->plat || window->is_destroyed) return;
+  window->plat->needsRedraw = 1;
+  window->pending_render_reason = reason;
+}
+
+CJ_API void cj_window_clear_dirty(cj_window_t* window) {
+  if (!window || !window->plat || window->is_destroyed) return;
+  window->plat->needsRedraw = 0;
+  /* Reset render reason to TIMER for next render */
+  window->pending_render_reason = CJ_RENDER_REASON_TIMER;
+}
+
+CJ_API void cj_window_set_redraw_policy(cj_window_t* window, cj_redraw_policy_t policy) {
+  if (!window || window->is_destroyed) return;
+  window->redraw_policy = policy;
+}
+
+CJ_API void cj_window_set_max_fps(cj_window_t* window, uint32_t max_fps) {
+  if (!window || window->is_destroyed) return;
+  window->max_fps = max_fps;
+  /* Reset last render time so window can render immediately if needed */
+  window->last_render_time_us = 0;
+}
+
 CJ_API void cj_window_set_render_graph(cj_window_t* win, cj_rgraph_t* graph) {
   if (!win) return;
   win->render_graph = graph;
@@ -848,10 +899,22 @@ bool cj_window__uses_vsync(cj_window_t* window) {
 /* Internal helper to check if a window needs redraw. */
 bool cj_window__needs_redraw(cj_window_t* window) {
   if (!window || !window->plat || window->is_destroyed) return false;
-  // For now, always return true. In the future, we could use the needsRedraw
-  // field or implement dirty tracking.
-  (void)window;  // Suppress unused warning
-  return true;  // Always redraw for now
+
+  /* Check redraw policy */
+  switch (window->redraw_policy) {
+    case CJ_REDRAW_ALWAYS:
+      /* Always redraw */
+      return true;
+
+    case CJ_REDRAW_ON_DIRTY:
+    case CJ_REDRAW_ON_EVENTS:
+      /* Only redraw if dirty flag is set */
+      return (window->plat->needsRedraw != 0);
+
+    default:
+      /* Unknown policy: default to always redraw for safety */
+      return true;
+  }
 }
 
 /* Internal helper to set minimized state (called from window messages/events). */
@@ -866,6 +929,9 @@ void cj_window__update_size_and_mark_recreate(cj_window_t* window, uint32_t new_
   window->plat->width = (int)new_width;
   window->plat->height = (int)new_height;
   window->plat->needs_swapchain_recreate = true;
+  /* Mark window dirty for redraw after resize */
+  window->plat->needsRedraw = 1;
+  window->pending_render_reason = CJ_RENDER_REASON_RESIZE;
 }
 
 /* Internal helper to dispatch resize callback. */
@@ -879,6 +945,92 @@ void cj_window__dispatch_resize_callback(cj_window_t* window, uint32_t new_width
   /* Dispatch user callback */
   if (window->resize_callback) {
     window->resize_callback(window, new_width, new_height, window->resize_callback_user_data);
+  }
+}
+
+/* Internal helper to check if dirty flag should be cleared after frame render. */
+bool cj_window__should_clear_dirty_after_render(cj_window_t* window) {
+  if (!window || window->is_destroyed) return false;
+  return (window->redraw_policy == CJ_REDRAW_ON_DIRTY || window->redraw_policy == CJ_REDRAW_ON_EVENTS);
+}
+
+/* Internal helper to check if frame callback should be called (even if not dirty).
+ * For CJ_REDRAW_ON_EVENTS, callbacks are always called so they can check time and mark dirty.
+ */
+bool cj_window__should_call_callback(cj_window_t* window) {
+  if (!window || window->is_destroyed) return false;
+
+  switch (window->redraw_policy) {
+    case CJ_REDRAW_ALWAYS:
+    case CJ_REDRAW_ON_EVENTS:
+      /* Always call callback - it can check time and mark dirty if needed */
+      return true;
+
+    case CJ_REDRAW_ON_DIRTY:
+      /* Only call callback if dirty (to avoid unnecessary work for static content) */
+      return (window->plat && window->plat->needsRedraw != 0);
+
+    default:
+      /* Unknown policy: default to calling callback for safety */
+      return true;
+  }
+}
+
+/* Internal helper to check if enough time has passed since last render for per-window FPS limiting. */
+bool cj_window__can_render_at_fps(cj_window_t* window, uint64_t current_time_us) {
+  if (!window || window->is_destroyed) return false;
+
+  /* If FPS limit is disabled (0), always allow render */
+  if (window->max_fps == 0) {
+    return true;
+  }
+
+  /* If never rendered before, allow render */
+  if (window->last_render_time_us == 0) {
+    return true;
+  }
+
+  /* Calculate minimum time between frames */
+  uint64_t min_frame_time_us = (1000000ULL / (uint64_t)window->max_fps);
+  uint64_t time_since_last_render = current_time_us - window->last_render_time_us;
+
+  /* Allow render if enough time has passed */
+  return (time_since_last_render >= min_frame_time_us);
+}
+
+/* Internal helper to update the last render time for a window (used for FPS limiting). */
+void cj_window__update_last_render_time(cj_window_t* window, uint64_t render_time_us) {
+  if (!window || window->is_destroyed) return;
+  window->last_render_time_us = render_time_us;
+}
+
+/* Internal helper to get the pending render reason for a window. */
+cj_render_reason_t cj_window__get_pending_render_reason(cj_window_t* window) {
+  if (!window || window->is_destroyed) return CJ_RENDER_REASON_TIMER;
+  if (!window->plat || window->plat->needsRedraw == 0) {
+    return CJ_RENDER_REASON_TIMER;  /* Not dirty, so it's a timer-based render */
+  }
+  return window->pending_render_reason;
+}
+
+/* Internal helper to set the pending render reason for a window. */
+void cj_window__set_pending_render_reason(cj_window_t* window, cj_render_reason_t reason) {
+  if (!window || window->is_destroyed) return;
+  window->pending_render_reason = reason;
+}
+
+/* Internal helper to check if a render reason should bypass FPS limiting. */
+bool cj_window__should_bypass_fps_limit(cj_render_reason_t reason) {
+  switch (reason) {
+    case CJ_RENDER_REASON_TIMER:
+      return false;  /* Timer-based renders respect FPS limit */
+    case CJ_RENDER_REASON_RESIZE:
+    case CJ_RENDER_REASON_EXPOSE:
+    case CJ_RENDER_REASON_FORCED:
+    case CJ_RENDER_REASON_SWAPCHAIN_RECREATE:
+      return true;  /* All other reasons bypass FPS limit */
+    default:
+      return true;  /* Unknown reasons: bypass for safety */
   }
 }
 

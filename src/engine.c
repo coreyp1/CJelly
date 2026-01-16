@@ -232,7 +232,7 @@ CJ_API void cj_engine_wait_idle(cj_engine_t* engine) {
 static uint32_t eng_find_memory_type(cj_engine_t* e, uint32_t typeFilter, VkMemoryPropertyFlags properties) {
   VkPhysicalDeviceMemoryProperties memProperties;
   vkGetPhysicalDeviceMemoryProperties(e->physical_device, &memProperties);
-  
+
   for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
     if ((typeFilter & (1 << i)) && (memProperties.memoryTypes[i].propertyFlags & properties) == properties) {
       return i;
@@ -244,7 +244,7 @@ static uint32_t eng_find_memory_type(cj_engine_t* e, uint32_t typeFilter, VkMemo
 static int eng_create_color_pipeline(cj_engine_t* e) {
   if (!e) return 0;
   CJellyBindlessResources* cp = &e->color_pipeline;
-  
+
   // Create vertex buffer for color-only quad
   typedef struct { float pos[2]; float color[3]; uint32_t textureID; } VertexBindless;
   VertexBindless vertices[] = {
@@ -256,7 +256,7 @@ static int eng_create_color_pipeline(cj_engine_t* e) {
     {{-0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, 0},
   };
   VkDeviceSize vbSize = sizeof(vertices);
-  
+
   VkBufferCreateInfo bufferInfo = {0};
   bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
   bufferInfo.size = vbSize;
@@ -266,7 +266,7 @@ static int eng_create_color_pipeline(cj_engine_t* e) {
     fprintf(stderr, "Failed to create color pipeline vertex buffer\n");
     return 0;
   }
-  
+
   VkMemoryRequirements memRequirements;
   vkGetBufferMemoryRequirements(e->device, cp->vertexBuffer, &memRequirements);
   VkMemoryAllocateInfo allocInfo = {0};
@@ -278,18 +278,18 @@ static int eng_create_color_pipeline(cj_engine_t* e) {
     return 0;
   }
   vkBindBufferMemory(e->device, cp->vertexBuffer, cp->vertexBufferMemory, 0);
-  
+
   void* vdata = NULL;
   vkMapMemory(e->device, cp->vertexBufferMemory, 0, vbSize, 0, &vdata);
   memcpy(vdata, vertices, (size_t)vbSize);
   vkUnmapMemory(e->device, cp->vertexBufferMemory);
-  
+
   // Create pipeline layout with push constants only
   VkPushConstantRange pushRange = {0};
   pushRange.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
   pushRange.offset = 0;
   pushRange.size = sizeof(float) * 8; // uv vec4 + colorMul vec4
-  
+
   VkPipelineLayoutCreateInfo pli = {0};
   pli.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
   pli.setLayoutCount = 0;
@@ -300,9 +300,9 @@ static int eng_create_color_pipeline(cj_engine_t* e) {
     fprintf(stderr, "Failed to create color pipeline layout\n");
     return 0;
   }
-  
+
   // Create shader modules (using generated headers)
-  
+
   VkShaderModuleCreateInfo vertInfo = {0};
   vertInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
   vertInfo.codeSize = color_vert_spv_len;
@@ -312,7 +312,7 @@ static int eng_create_color_pipeline(cj_engine_t* e) {
     fprintf(stderr, "Failed to create color vertex shader module\n");
     return 0;
   }
-  
+
   VkShaderModuleCreateInfo fragInfo = {0};
   fragInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
   fragInfo.codeSize = color_frag_spv_len;
@@ -323,7 +323,7 @@ static int eng_create_color_pipeline(cj_engine_t* e) {
     vkDestroyShaderModule(e->device, vert, NULL);
     return 0;
   }
-  
+
   // Create pipeline
   VkPipelineShaderStageCreateInfo stages[2] = {0};
   stages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
@@ -334,7 +334,7 @@ static int eng_create_color_pipeline(cj_engine_t* e) {
   stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
   stages[1].module = frag;
   stages[1].pName = "main";
-  
+
   VkVertexInputBindingDescription binding = {0};
   binding.binding = 0;
   binding.stride = sizeof(VertexBindless);
@@ -343,63 +343,63 @@ static int eng_create_color_pipeline(cj_engine_t* e) {
   attrs[0].binding = 0; attrs[0].location = 0; attrs[0].format = VK_FORMAT_R32G32_SFLOAT; attrs[0].offset = offsetof(VertexBindless, pos);
   attrs[1].binding = 0; attrs[1].location = 1; attrs[1].format = VK_FORMAT_R32G32B32_SFLOAT; attrs[1].offset = offsetof(VertexBindless, color);
   attrs[2].binding = 0; attrs[2].location = 2; attrs[2].format = VK_FORMAT_R32_UINT; attrs[2].offset = offsetof(VertexBindless, textureID);
-  
+
   VkPipelineVertexInputStateCreateInfo vi = {0};
   vi.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
   vi.vertexBindingDescriptionCount = 1; vi.pVertexBindingDescriptions = &binding;
   vi.vertexAttributeDescriptionCount = 3; vi.pVertexAttributeDescriptions = attrs;
-  
+
   VkPipelineInputAssemblyStateCreateInfo ia = {0};
   ia.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
   ia.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-  
+
   VkViewport vp = {0}; vp.x=0; vp.y=0; vp.width=1.0f; vp.height=1.0f; vp.minDepth=0; vp.maxDepth=1;
   VkRect2D sc = {0}; sc.extent.width = 1; sc.extent.height = 1;
   VkPipelineViewportStateCreateInfo vps = {0};
   vps.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
   vps.viewportCount = 1; vps.pViewports = &vp; vps.scissorCount = 1; vps.pScissors = &sc;
-  
+
   // Enable dynamic viewport and scissor
   VkDynamicState dynamicStates[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
   VkPipelineDynamicStateCreateInfo dynamicState = {0};
   dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
   dynamicState.dynamicStateCount = 2;
   dynamicState.pDynamicStates = dynamicStates;
-  
+
   VkPipelineRasterizationStateCreateInfo rs = {0};
   rs.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
   rs.polygonMode = VK_POLYGON_MODE_FILL;
   rs.lineWidth = 1.0f;
   rs.cullMode = VK_CULL_MODE_BACK_BIT;
   rs.frontFace = VK_FRONT_FACE_CLOCKWISE;
-  
+
   VkPipelineMultisampleStateCreateInfo ms = {0};
   ms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
   ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-  
+
   VkPipelineColorBlendAttachmentState cba = {0};
   cba.colorWriteMask = VK_COLOR_COMPONENT_R_BIT|VK_COLOR_COMPONENT_G_BIT|VK_COLOR_COMPONENT_B_BIT|VK_COLOR_COMPONENT_A_BIT;
   VkPipelineColorBlendStateCreateInfo cb = {0};
   cb.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
   cb.attachmentCount = 1;
   cb.pAttachments = &cba;
-  
+
   VkGraphicsPipelineCreateInfo gp = {0};
   gp.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
   gp.stageCount = 2; gp.pStages = stages;
   gp.pVertexInputState = &vi; gp.pInputAssemblyState = &ia; gp.pViewportState = &vps; gp.pRasterizationState = &rs; gp.pMultisampleState = &ms; gp.pColorBlendState = &cb; gp.pDynamicState = &dynamicState;
   gp.layout = cp->pipelineLayout; gp.renderPass = e->render_pass; gp.subpass = 0;
-  
+
   if (vkCreateGraphicsPipelines(e->device, VK_NULL_HANDLE, 1, &gp, NULL, &cp->pipeline) != VK_SUCCESS) {
     fprintf(stderr, "Failed to create color graphics pipeline\n");
     vkDestroyShaderModule(e->device, vert, NULL);
     vkDestroyShaderModule(e->device, frag, NULL);
     return 0;
   }
-  
+
   vkDestroyShaderModule(e->device, vert, NULL);
   vkDestroyShaderModule(e->device, frag, NULL);
-  
+
   cp->uv[0]=1.0f; cp->uv[1]=1.0f; cp->uv[2]=0.0f; cp->uv[3]=0.0f;
   cp->colorMul[0]=1.0f; cp->colorMul[1]=1.0f; cp->colorMul[2]=1.0f; cp->colorMul[3]=1.0f;
   return 1;
@@ -486,7 +486,7 @@ CJ_API void cj_engine_shutdown_vulkan(cj_engine_t* engine) {
         cj_engine_destroy_sampler(engine, i);
       }
     }
-    
+
     if (engine->command_pool) { vkDestroyCommandPool(dev, engine->command_pool, NULL); engine->command_pool = VK_NULL_HANDLE; }
     if (engine->bindless_pool) { vkDestroyDescriptorPool(dev, engine->bindless_pool, NULL); engine->bindless_pool = VK_NULL_HANDLE; }
     if (engine->bindless_layout) { vkDestroyDescriptorSetLayout(dev, engine->bindless_layout, NULL); engine->bindless_layout = VK_NULL_HANDLE; }
@@ -667,10 +667,10 @@ CJ_API int cj_engine_create_texture(cj_engine_t* e, uint32_t slot, const cj_text
   if (!e || !desc || slot >= CJ_ENGINE_MAX_TEXTURES) return 0;
   cj_res_entry_t* entry = &e->textures[slot];
   if (!entry->in_use) return 0;
-  
+
   VkDevice dev = e->device;
   if (dev == VK_NULL_HANDLE) return 0;
-  
+
   // Convert CJelly format to Vulkan format
   VkFormat vk_format = VK_FORMAT_R8G8B8A8_UNORM; // Default
   switch (desc->format) {
@@ -679,14 +679,14 @@ CJ_API int cj_engine_create_texture(cj_engine_t* e, uint32_t slot, const cj_text
     case CJ_FORMAT_RGBA32_FLOAT: vk_format = VK_FORMAT_R32G32B32A32_SFLOAT; break;
     default: vk_format = VK_FORMAT_R8G8B8A8_UNORM; break;
   }
-  
+
   // Convert usage flags
   VkImageUsageFlags usage = 0;
   if (desc->usage & CJ_IMAGE_SAMPLED) usage |= VK_IMAGE_USAGE_SAMPLED_BIT;
   if (desc->usage & CJ_IMAGE_STORAGE) usage |= VK_IMAGE_USAGE_STORAGE_BIT;
   if (desc->usage & CJ_IMAGE_COLOR_RT) usage |= VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
   if (desc->usage & CJ_IMAGE_DEPTH_RT) usage |= VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
-  
+
   // Create image
   VkImageCreateInfo imageInfo = {0};
   imageInfo.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
@@ -702,27 +702,27 @@ CJ_API int cj_engine_create_texture(cj_engine_t* e, uint32_t slot, const cj_text
   imageInfo.usage = usage;
   imageInfo.samples = VK_SAMPLE_COUNT_1_BIT;
   imageInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-  
+
   if (vkCreateImage(dev, &imageInfo, NULL, &entry->vulkan.texture.image) != VK_SUCCESS) {
     return 0;
   }
-  
+
   // Allocate memory
   VkMemoryRequirements memRequirements;
   vkGetImageMemoryRequirements(dev, entry->vulkan.texture.image, &memRequirements);
-  
+
   VkMemoryAllocateInfo allocInfo = {0};
   allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
   allocInfo.allocationSize = memRequirements.size;
   allocInfo.memoryTypeIndex = eng_find_memory_type(e, memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-  
+
   if (vkAllocateMemory(dev, &allocInfo, NULL, &entry->vulkan.texture.memory) != VK_SUCCESS) {
     vkDestroyImage(dev, entry->vulkan.texture.image, NULL);
     return 0;
   }
-  
+
   vkBindImageMemory(dev, entry->vulkan.texture.image, entry->vulkan.texture.memory, 0);
-  
+
   // Create image view
   VkImageViewCreateInfo viewInfo = {0};
   viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -738,13 +738,13 @@ CJ_API int cj_engine_create_texture(cj_engine_t* e, uint32_t slot, const cj_text
   viewInfo.subresourceRange.levelCount = desc->mips ? desc->mips : 1;
   viewInfo.subresourceRange.baseArrayLayer = 0;
   viewInfo.subresourceRange.layerCount = desc->layers ? desc->layers : 1;
-  
+
   if (vkCreateImageView(dev, &viewInfo, NULL, &entry->vulkan.texture.imageView) != VK_SUCCESS) {
     vkFreeMemory(dev, entry->vulkan.texture.memory, NULL);
     vkDestroyImage(dev, entry->vulkan.texture.image, NULL);
     return 0;
   }
-  
+
   // Create sampler
   VkSamplerCreateInfo samplerInfo = {0};
   samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
@@ -763,14 +763,14 @@ CJ_API int cj_engine_create_texture(cj_engine_t* e, uint32_t slot, const cj_text
   samplerInfo.mipLodBias = 0.0f;
   samplerInfo.minLod = 0.0f;
   samplerInfo.maxLod = 0.0f;
-  
+
   if (vkCreateSampler(dev, &samplerInfo, NULL, &entry->vulkan.texture.sampler) != VK_SUCCESS) {
     vkDestroyImageView(dev, entry->vulkan.texture.imageView, NULL);
     vkFreeMemory(dev, entry->vulkan.texture.memory, NULL);
     vkDestroyImage(dev, entry->vulkan.texture.image, NULL);
     return 0;
   }
-  
+
   return 1;
 }
 
@@ -778,10 +778,10 @@ CJ_API int cj_engine_create_buffer(cj_engine_t* e, uint32_t slot, const cj_buffe
   if (!e || !desc || slot >= CJ_ENGINE_MAX_BUFFERS) return 0;
   cj_res_entry_t* entry = &e->buffers[slot];
   if (!entry->in_use) return 0;
-  
+
   VkDevice dev = e->device;
   if (dev == VK_NULL_HANDLE) return 0;
-  
+
   // Convert usage flags
   VkBufferUsageFlags usage = 0;
   if (desc->usage & CJ_BUFFER_VERTEX) usage |= VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
@@ -790,39 +790,39 @@ CJ_API int cj_engine_create_buffer(cj_engine_t* e, uint32_t slot, const cj_buffe
   if (desc->usage & CJ_BUFFER_STORAGE) usage |= VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
   if (desc->usage & CJ_BUFFER_TRANSFER_SRC) usage |= VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
   if (desc->usage & CJ_BUFFER_TRANSFER_DST) usage |= VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-  
+
   // Create buffer
   VkBufferCreateInfo bufferInfo = {0};
   bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
   bufferInfo.size = desc->size;
   bufferInfo.usage = usage;
   bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-  
+
   if (vkCreateBuffer(dev, &bufferInfo, NULL, &entry->vulkan.buffer.buffer) != VK_SUCCESS) {
     return 0;
   }
-  
+
   // Allocate memory
   VkMemoryRequirements memRequirements;
   vkGetBufferMemoryRequirements(dev, entry->vulkan.buffer.buffer, &memRequirements);
-  
+
   VkMemoryAllocateInfo allocInfo = {0};
   allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
   allocInfo.allocationSize = memRequirements.size;
-  
+
   VkMemoryPropertyFlags memProps = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
   if (desc->host_visible) {
     memProps = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
   }
   allocInfo.memoryTypeIndex = eng_find_memory_type(e, memRequirements.memoryTypeBits, memProps);
-  
+
   if (vkAllocateMemory(dev, &allocInfo, NULL, &entry->vulkan.buffer.memory) != VK_SUCCESS) {
     vkDestroyBuffer(dev, entry->vulkan.buffer.buffer, NULL);
     return 0;
   }
-  
+
   vkBindBufferMemory(dev, entry->vulkan.buffer.buffer, entry->vulkan.buffer.memory, 0);
-  
+
   return 1;
 }
 
@@ -830,14 +830,14 @@ CJ_API int cj_engine_create_sampler(cj_engine_t* e, uint32_t slot, const cj_samp
   if (!e || !desc || slot >= CJ_ENGINE_MAX_SAMPLERS) return 0;
   cj_res_entry_t* entry = &e->samplers[slot];
   if (!entry->in_use) return 0;
-  
+
   VkDevice dev = e->device;
   if (dev == VK_NULL_HANDLE) return 0;
-  
+
   // Convert filter modes
   VkFilter min_filter = (desc->min_filter == CJ_FILTER_LINEAR) ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
   VkFilter mag_filter = (desc->mag_filter == CJ_FILTER_LINEAR) ? VK_FILTER_LINEAR : VK_FILTER_NEAREST;
-  
+
   // Convert address modes
   VkSamplerAddressMode address_u = VK_SAMPLER_ADDRESS_MODE_REPEAT;
   switch (desc->address_u) {
@@ -846,7 +846,7 @@ CJ_API int cj_engine_create_sampler(cj_engine_t* e, uint32_t slot, const cj_samp
     case CJ_ADDRESS_MIRROR: address_u = VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT; break;
     case CJ_ADDRESS_BORDER: address_u = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER; break;
   }
-  
+
   VkSamplerAddressMode address_v = VK_SAMPLER_ADDRESS_MODE_REPEAT;
   switch (desc->address_v) {
     case CJ_ADDRESS_CLAMP: address_v = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE; break;
@@ -854,7 +854,7 @@ CJ_API int cj_engine_create_sampler(cj_engine_t* e, uint32_t slot, const cj_samp
     case CJ_ADDRESS_MIRROR: address_v = VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT; break;
     case CJ_ADDRESS_BORDER: address_v = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER; break;
   }
-  
+
   VkSamplerAddressMode address_w = VK_SAMPLER_ADDRESS_MODE_REPEAT;
   switch (desc->address_w) {
     case CJ_ADDRESS_CLAMP: address_w = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE; break;
@@ -862,7 +862,7 @@ CJ_API int cj_engine_create_sampler(cj_engine_t* e, uint32_t slot, const cj_samp
     case CJ_ADDRESS_MIRROR: address_w = VK_SAMPLER_ADDRESS_MODE_MIRRORED_REPEAT; break;
     case CJ_ADDRESS_BORDER: address_w = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_BORDER; break;
   }
-  
+
   // Create sampler
   VkSamplerCreateInfo samplerInfo = {0};
   samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
@@ -881,11 +881,11 @@ CJ_API int cj_engine_create_sampler(cj_engine_t* e, uint32_t slot, const cj_samp
   samplerInfo.mipLodBias = desc->mip_lod_bias;
   samplerInfo.minLod = 0.0f;
   samplerInfo.maxLod = 0.0f;
-  
+
   if (vkCreateSampler(dev, &samplerInfo, NULL, &entry->vulkan.sampler.sampler) != VK_SUCCESS) {
     return 0;
   }
-  
+
   return 1;
 }
 
@@ -893,10 +893,10 @@ CJ_API void cj_engine_destroy_texture(cj_engine_t* e, uint32_t slot) {
   if (!e || slot >= CJ_ENGINE_MAX_TEXTURES) return;
   cj_res_entry_t* entry = &e->textures[slot];
   if (!entry->in_use) return;
-  
+
   VkDevice dev = e->device;
   if (dev == VK_NULL_HANDLE) return;
-  
+
   if (entry->vulkan.texture.sampler != VK_NULL_HANDLE) {
     vkDestroySampler(dev, entry->vulkan.texture.sampler, NULL);
     entry->vulkan.texture.sampler = VK_NULL_HANDLE;
@@ -919,10 +919,10 @@ CJ_API void cj_engine_destroy_buffer(cj_engine_t* e, uint32_t slot) {
   if (!e || slot >= CJ_ENGINE_MAX_BUFFERS) return;
   cj_res_entry_t* entry = &e->buffers[slot];
   if (!entry->in_use) return;
-  
+
   VkDevice dev = e->device;
   if (dev == VK_NULL_HANDLE) return;
-  
+
   if (entry->vulkan.buffer.buffer != VK_NULL_HANDLE) {
     vkDestroyBuffer(dev, entry->vulkan.buffer.buffer, NULL);
     entry->vulkan.buffer.buffer = VK_NULL_HANDLE;
@@ -937,10 +937,10 @@ CJ_API void cj_engine_destroy_sampler(cj_engine_t* e, uint32_t slot) {
   if (!e || slot >= CJ_ENGINE_MAX_SAMPLERS) return;
   cj_res_entry_t* entry = &e->samplers[slot];
   if (!entry->in_use) return;
-  
+
   VkDevice dev = e->device;
   if (dev == VK_NULL_HANDLE) return;
-  
+
   if (entry->vulkan.sampler.sampler != VK_NULL_HANDLE) {
     vkDestroySampler(dev, entry->vulkan.sampler.sampler, NULL);
     entry->vulkan.sampler.sampler = VK_NULL_HANDLE;

@@ -13,11 +13,11 @@ layout(location = 2) out flat uint fragTextureID;
 void main() {
     // Convert the 2D position to a 4D clip-space coordinate
     gl_Position = vec4(inPosition, 0.0, 1.0);
-    
+
     // Pass through the color and texture ID
     fragColor = inColor;
     fragTextureID = inTextureID;
-    
+
     // Generate texture coordinates based on position
     // This creates a simple UV mapping for the quad
     fragTexCoord = (inPosition + vec2(0.5, 0.5));

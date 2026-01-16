@@ -49,7 +49,7 @@ typedef struct cj_res_entry_t {
   uint32_t refcount;
   uint32_t slot;      /* descriptor slot when applicable */
   uint8_t  in_use;
-  
+
   /* Actual Vulkan objects (union based on resource type) */
   union {
     struct {

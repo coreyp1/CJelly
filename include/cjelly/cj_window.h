@@ -85,6 +85,13 @@ typedef enum cj_frame_result_t {
   CJ_FRAME_STOP_LOOP = 3      /**< Request cj_run() to exit. */
 } cj_frame_result_t;
 
+/** Window redraw policy. Controls when a window is redrawn. */
+typedef enum cj_redraw_policy_t {
+  CJ_REDRAW_ALWAYS = 0,       /**< Always redraw every frame (for games/animations). */
+  CJ_REDRAW_ON_DIRTY = 1,    /**< Only redraw when explicitly marked dirty (for static content). */
+  CJ_REDRAW_ON_EVENTS = 2    /**< Redraw on resize/visibility changes + manual marking (default). */
+} cj_redraw_policy_t;
+
 /** Window close callback function type.
  *  @param window The window requesting to close.
  *  @param cancellable True if the close can be prevented, false if close is mandatory (e.g., application shutdown).
@@ -146,6 +153,38 @@ CJ_API void cj_window_on_frame(cj_window_t* window,
 CJ_API void cj_window_on_resize(cj_window_t* window,
                                 cj_window_resize_callback_t callback,
                                 void* user_data);
+
+/** Mark a window as needing redraw.
+ *  @param window The window to mark as dirty.
+ *  @param reason The reason for the redraw (defaults to CJ_RENDER_REASON_FORCED if not specified).
+ */
+CJ_API void cj_window_mark_dirty(cj_window_t* window);
+
+/** Mark a window as needing redraw with a specific reason.
+ *  @param window The window to mark as dirty.
+ *  @param reason The reason for the redraw (affects FPS limiting behavior).
+ */
+CJ_API void cj_window_mark_dirty_with_reason(cj_window_t* window, cj_render_reason_t reason);
+
+/** Clear the dirty flag for a window.
+ *  @param window The window to clear the dirty flag for.
+ */
+CJ_API void cj_window_clear_dirty(cj_window_t* window);
+
+/** Set the redraw policy for a window.
+ *  @param window The window to set the policy for.
+ *  @param policy The redraw policy to use.
+ */
+CJ_API void cj_window_set_redraw_policy(cj_window_t* window, cj_redraw_policy_t policy);
+
+/** Set the maximum FPS for a window.
+ *  When set to a value > 0, the window will only redraw if enough time has passed
+ *  since the last render (1/fps seconds). Set to 0 to disable per-window FPS limiting
+ *  (window will respect global FPS limit and redraw policy).
+ *  @param window The window to set the FPS limit for.
+ *  @param max_fps Maximum frames per second (0 = unlimited, use global FPS limit).
+ */
+CJ_API void cj_window_set_max_fps(cj_window_t* window, uint32_t max_fps);
 
 /* Temporary helper during migration: re-record a color-only bindless command
  * buffer set for a window using provided resources/context. We intentionally

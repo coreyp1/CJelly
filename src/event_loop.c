@@ -142,26 +142,60 @@ static bool cj_run_once_with_flags(cj_engine_t* engine, bool run_when_minimized,
       continue;
     }
 
-    /* Skip windows that don't need redraw (future optimization). */
-    if (!cj_window__needs_redraw(win)) {
+    /* Check if we should call the frame callback.
+     * For CJ_REDRAW_ON_EVENTS, we always call the callback so it can check time
+     * and mark dirty if needed, even if the window isn't currently dirty.
+     */
+    bool should_call_callback = cj_window__should_call_callback(win);
+
+    /* Check if we actually need to render (begin_frame/execute/present).
+     * For CJ_REDRAW_ON_EVENTS, we call the callback but only render if dirty.
+     * For windows without callbacks, we still need to render if dirty.
+     */
+    bool needs_render = cj_window__needs_redraw(win);
+
+    /* If window needs to render but isn't dirty, it's a timer-based render (CJ_REDRAW_ALWAYS).
+     * For CJ_REDRAW_ALWAYS, needs_render is always true, but if not dirty, it's a timer render. */
+    if (needs_render && !cj_window__needs_redraw(win)) {
+      /* This shouldn't happen - needs_render should only be true if needs_redraw is true.
+       * But if it does, it means it's a CJ_REDRAW_ALWAYS window that's not dirty, so set TIMER. */
+      cj_window__set_pending_render_reason(win, CJ_RENDER_REASON_TIMER);
+    } else if (needs_render) {
+      /* Window is dirty - check if reason is still TIMER (shouldn't be, but handle it) */
+      cj_render_reason_t reason = cj_window__get_pending_render_reason(win);
+      if (reason == CJ_RENDER_REASON_TIMER) {
+        /* Window is dirty but reason is TIMER - this shouldn't happen normally,
+         * but if it does, keep it as TIMER (will respect FPS limit) */
+      }
+    }
+
+    /* Check per-window FPS limit if window wants to render.
+     * Bypass FPS limit for forced renders (resize, expose, etc.) */
+    uint64_t current_time_us = cj_get_time_us();
+    if (needs_render) {
+      cj_render_reason_t reason = cj_window__get_pending_render_reason(win);
+      bool should_bypass_fps = cj_window__should_bypass_fps_limit(reason);
+
+      if (!should_bypass_fps && !cj_window__can_render_at_fps(win, current_time_us)) {
+        /* Window wants to render but FPS limit hasn't been reached yet (timer-based render) */
+        needs_render = false;
+      }
+    }
+
+    /* If window has no callback and doesn't need render, skip it */
+    if (!should_call_callback && !needs_render) {
       continue;
     }
 
-    t0 = cj_get_time_us();
-    cj_frame_info_t frame = (cj_frame_info_t){0};
-    if (cj_window_begin_frame(win, &frame) != CJ_SUCCESS) {
-      continue;
-    }
-    t1 = cj_get_time_us();
-    total_begin_frame += (t1 - t0);
+    /* If window has no callback but needs render, render it */
+    if (!should_call_callback && needs_render) {
+      /* No callback to call, just render directly */
+      t0 = cj_get_time_us();
+      cj_frame_info_t frame = {0};
+      if (cj_window_begin_frame(win, &frame) == CJ_SUCCESS) {
+        t1 = cj_get_time_us();
+        total_begin_frame += (t1 - t0);
 
-    t0 = cj_get_time_us();
-    cj_frame_result_t result = cj_window__dispatch_frame_callback(win, &frame);
-    t1 = cj_get_time_us();
-    total_callback += (t1 - t0);
-
-    switch (result) {
-      case CJ_FRAME_CONTINUE:
         t0 = cj_get_time_us();
         cj_window_execute(win);
         t1 = cj_get_time_us();
@@ -171,8 +205,94 @@ static bool cj_run_once_with_flags(cj_engine_t* engine, bool run_when_minimized,
         cj_window_present(win);
         t1 = cj_get_time_us();
         total_present += (t1 - t0);
+
+        /* Update last render time for FPS limiting */
+        cj_window__update_last_render_time(win, cj_get_time_us());
+
+        /* Clear dirty flag after successful render */
+        if (cj_window__should_clear_dirty_after_render(win)) {
+          cj_window_clear_dirty(win);
+        }
+      }
+      continue;
+    }
+
+    t0 = cj_get_time_us();
+    cj_frame_info_t frame = (cj_frame_info_t){0};
+    cj_result_t begin_result = CJ_SUCCESS;
+    if (needs_render) {
+      begin_result = cj_window_begin_frame(win, &frame);
+      if (begin_result != CJ_SUCCESS) {
+        /* If begin_frame fails, still call callback but skip rendering */
+        needs_render = false;  /* Don't render if begin_frame failed */
+      }
+    }
+    t1 = cj_get_time_us();
+    if (needs_render) {
+      total_begin_frame += (t1 - t0);
+    }
+
+    t0 = cj_get_time_us();
+    cj_frame_result_t result = cj_window__dispatch_frame_callback(win, &frame);
+    t1 = cj_get_time_us();
+    total_callback += (t1 - t0);
+
+    /* Check again if we need to render - callback may have marked window dirty */
+    bool needs_render_after_callback = cj_window__needs_redraw(win);
+
+    /* Check per-window FPS limit again (callback may have marked dirty) */
+    if (needs_render_after_callback && !cj_window__can_render_at_fps(win, current_time_us)) {
+      needs_render_after_callback = false;
+    }
+
+    /* If callback marked window dirty and we haven't begun frame yet, do it now */
+    if (needs_render_after_callback && !needs_render) {
+      t0 = cj_get_time_us();
+      begin_result = cj_window_begin_frame(win, &frame);
+      t1 = cj_get_time_us();
+      if (begin_result == CJ_SUCCESS) {
+        total_begin_frame += (t1 - t0);
+        needs_render = true;
+      } else {
+        needs_render = false;
+      }
+    }
+
+    /* Update needs_render to reflect current state */
+    needs_render = needs_render_after_callback && (begin_result == CJ_SUCCESS);
+
+    switch (result) {
+      case CJ_FRAME_CONTINUE:
+        if (needs_render) {
+          t0 = cj_get_time_us();
+          cj_window_execute(win);
+          t1 = cj_get_time_us();
+          total_execute += (t1 - t0);
+
+          t0 = cj_get_time_us();
+          cj_window_present(win);
+          t1 = cj_get_time_us();
+          total_present += (t1 - t0);
+
+          /* Update last render time for FPS limiting */
+          cj_window__update_last_render_time(win, cj_get_time_us());
+
+          /* Clear dirty flag after successful frame render (if policy requires it) */
+          if (cj_window__should_clear_dirty_after_render(win)) {
+            cj_window_clear_dirty(win);
+          }
+        } else {
+          /* Callback was called but window wasn't dirty - clear dirty flag if callback didn't mark it */
+          if (cj_window__should_clear_dirty_after_render(win) && !cj_window__needs_redraw(win)) {
+            /* Window is clean, nothing to do */
+          }
+        }
         break;
       case CJ_FRAME_SKIP:
+        /* Clear dirty flag when frame is skipped (optional optimization) */
+        if (cj_window__should_clear_dirty_after_render(win)) {
+          cj_window_clear_dirty(win);
+        }
         break;
       case CJ_FRAME_CLOSE_WINDOW:
         cj_window_destroy(win);
@@ -182,15 +302,25 @@ static bool cj_run_once_with_flags(cj_engine_t* engine, bool run_when_minimized,
         break;
       default:
         /* Unknown: default to continue */
-        t0 = cj_get_time_us();
-        cj_window_execute(win);
-        t1 = cj_get_time_us();
-        total_execute += (t1 - t0);
+        if (needs_render) {
+          t0 = cj_get_time_us();
+          cj_window_execute(win);
+          t1 = cj_get_time_us();
+          total_execute += (t1 - t0);
 
-        t0 = cj_get_time_us();
-        cj_window_present(win);
-        t1 = cj_get_time_us();
-        total_present += (t1 - t0);
+          t0 = cj_get_time_us();
+          cj_window_present(win);
+          t1 = cj_get_time_us();
+          total_present += (t1 - t0);
+
+          /* Update last render time for FPS limiting */
+          cj_window__update_last_render_time(win, cj_get_time_us());
+
+          /* Clear dirty flag after successful frame render (if policy requires it) */
+          if (cj_window__should_clear_dirty_after_render(win)) {
+            cj_window_clear_dirty(win);
+          }
+        }
         break;
     }
 

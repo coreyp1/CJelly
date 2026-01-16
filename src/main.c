@@ -69,8 +69,9 @@ static cj_frame_result_t window1_on_frame(GCJ_MAYBE_UNUSED(cj_window_t* window),
                                           GCJ_MAYBE_UNUSED(const cj_frame_info_t* frame),
                                           void* user_data) {
   Window1Context* ctx = (Window1Context*)user_data;
-  if (!ctx || !ctx->colorOnly) return CJ_FRAME_CONTINUE;
+  if (!ctx || !ctx->colorOnly) return CJ_FRAME_SKIP;
 
+  // Update color based on time (window always redraws, so we can update every frame or throttle)
   uint64_t now = getCurrentTimeInMilliseconds();
   if (now - ctx->last_tick_ms >= 50) {
     int colorIndex = (int)((now / 1000) % 2);
@@ -80,6 +81,9 @@ static cj_frame_result_t window1_on_frame(GCJ_MAYBE_UNUSED(cj_window_t* window),
     cj_bindless_update_split_from_colorMul(ctx->colorOnly);
     ctx->last_tick_ms = now;
   }
+
+  // Window is set to CJ_REDRAW_ALWAYS, so it will always render
+  // No need to mark dirty - framework handles rendering every frame
   return CJ_FRAME_CONTINUE;
 }
 
@@ -87,8 +91,9 @@ static cj_frame_result_t window3_on_frame(GCJ_MAYBE_UNUSED(cj_window_t* window),
                                           GCJ_MAYBE_UNUSED(const cj_frame_info_t* frame),
                                           void* user_data) {
   Window3Context* ctx = (Window3Context*)user_data;
-  if (!ctx || !ctx->graph3) return CJ_FRAME_CONTINUE;
+  if (!ctx || !ctx->graph3) return CJ_FRAME_SKIP;
 
+  // Update blur parameters based on time (window always redraws, so we can update every frame or throttle)
   uint64_t now = getCurrentTimeInMilliseconds();
   if (now - ctx->last_tick_ms >= 50) {
     cj_str_t param_time = {"time_ms", 7};
@@ -100,6 +105,9 @@ static cj_frame_result_t window3_on_frame(GCJ_MAYBE_UNUSED(cj_window_t* window),
                       (int32_t)(blur_intensity * 1000.0f));
     ctx->last_tick_ms = now;
   }
+
+  // Window is set to CJ_REDRAW_ALWAYS, so it will always render
+  // No need to mark dirty - framework handles rendering every frame
   return CJ_FRAME_CONTINUE;
 }
 
@@ -257,6 +265,18 @@ int main(void) {
   uint64_t start_ms = getCurrentTimeInMilliseconds();
   Window1Context w1ctx = { colorOnly, start_ms };
   Window3Context w3ctx = { graph3, start_ms };
+
+  // Set redraw policies for each window
+  // Window 1: Always redraw with low FPS limit (color graph doesn't need high FPS)
+  cj_window_set_redraw_policy(win1, CJ_REDRAW_ALWAYS);
+  cj_window_set_max_fps(win1, 10);  // Low FPS for color graph
+
+  // Window 2: Static content - use ON_DIRTY to avoid unnecessary redraws
+  cj_window_set_redraw_policy(win2, CJ_REDRAW_ON_DIRTY);
+
+  // Window 3: Always redraw with high FPS limit (blur effect needs smooth animation)
+  cj_window_set_redraw_policy(win3, CJ_REDRAW_ALWAYS);
+  cj_window_set_max_fps(win3, 60);  // High FPS for blur effect
 
   cj_window_on_frame(win1, window1_on_frame, &w1ctx);
   cj_window_on_frame(win3, window3_on_frame, &w3ctx);

@@ -12,7 +12,7 @@ layout(push_constant) uniform PC {
 void main() {
     // Map vPos from [-0.5, 0.5] to [0, 1] for UV coordinates
     vec2 uv = (vPos + 0.5);
-    
+
     // Choose gradient based on colorMul
     if (pc.colorMul.r > pc.colorMul.g) {
         // Red horizontal gradient

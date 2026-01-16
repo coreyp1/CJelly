@@ -29,7 +29,7 @@ void main() {
         // Map the quad UV into the atlas sub-rectangle
         vec2 uvCoord = pc.uv.xy * fragTexCoord + pc.uv.zw;
         vec4 texColor = texture(textures, uvCoord);
-        
+
         // Blend texture with vertex color and color multiplier
         outColor = vec4(fragColor * texColor.rgb * pc.colorMul.rgb, texColor.a * pc.colorMul.a);
     }
