@@ -94,6 +94,12 @@ cj_render_reason_t cj_window__get_pending_render_reason(cj_window_t* window);
  */
 void cj_window__set_pending_render_reason(cj_window_t* window, cj_render_reason_t reason);
 
+/** Internal helper to check if a window uses CJ_REDRAW_ALWAYS policy.
+ *  @param window The window to check.
+ *  @return true if window uses CJ_REDRAW_ALWAYS, false otherwise.
+ */
+bool cj_window__uses_always_redraw(cj_window_t* window);
+
 /** Internal helper to check if a render reason should bypass FPS limiting.
  *  @param reason The render reason to check.
  *  @return true if this reason should bypass FPS limit, false otherwise.

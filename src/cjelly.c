@@ -166,14 +166,20 @@ CJ_API void cj_bindless_set_color(CJellyBindlessResources* resources, float r, f
  * If red>green -> left red, right green; else left green, right red. */
 CJ_API void cj_bindless_update_split_from_colorMul(CJellyBindlessResources* resources) {
   if (!resources || resources->vertexBufferMemory == VK_NULL_HANDLE) return;
+
+  /* Use the actual color from colorMul */
+  float r = resources->colorMul[0];
+  float g = resources->colorMul[1];
+  float b = resources->colorMul[2];
+
   VertexBindless vertices[] = {
     // Single quad matching textured size: [-0.5,0.5]
-    {{-0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, 0},
-    {{ 0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, 0},
-    {{ 0.5f,  0.5f}, {1.0f, 1.0f, 1.0f}, 0},
-    {{ 0.5f,  0.5f}, {1.0f, 1.0f, 1.0f}, 0},
-    {{-0.5f,  0.5f}, {1.0f, 1.0f, 1.0f}, 0},
-    {{-0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, 0},
+    {{-0.5f, -0.5f}, {r, g, b}, 0},
+    {{ 0.5f, -0.5f}, {r, g, b}, 0},
+    {{ 0.5f,  0.5f}, {r, g, b}, 0},
+    {{ 0.5f,  0.5f}, {r, g, b}, 0},
+    {{-0.5f,  0.5f}, {r, g, b}, 0},
+    {{-0.5f, -0.5f}, {r, g, b}, 0},
   };
   void* data = NULL;
   VkDevice dev = cur_device();

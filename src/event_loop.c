@@ -142,44 +142,35 @@ static bool cj_run_once_with_flags(cj_engine_t* engine, bool run_when_minimized,
       continue;
     }
 
-    /* Check if we should call the frame callback.
-     * For CJ_REDRAW_ON_EVENTS, we always call the callback so it can check time
-     * and mark dirty if needed, even if the window isn't currently dirty.
-     */
-    bool should_call_callback = cj_window__should_call_callback(win);
-
-    /* Check if we actually need to render (begin_frame/execute/present).
-     * For CJ_REDRAW_ON_EVENTS, we call the callback but only render if dirty.
-     * For windows without callbacks, we still need to render if dirty.
-     */
+    /* Check if we actually need to render (begin_frame/execute/present). */
     bool needs_render = cj_window__needs_redraw(win);
 
-    /* If window needs to render but isn't dirty, it's a timer-based render (CJ_REDRAW_ALWAYS).
-     * For CJ_REDRAW_ALWAYS, needs_render is always true, but if not dirty, it's a timer render. */
-    if (needs_render && !cj_window__needs_redraw(win)) {
-      /* This shouldn't happen - needs_render should only be true if needs_redraw is true.
-       * But if it does, it means it's a CJ_REDRAW_ALWAYS window that's not dirty, so set TIMER. */
-      cj_window__set_pending_render_reason(win, CJ_RENDER_REASON_TIMER);
-    } else if (needs_render) {
-      /* Window is dirty - check if reason is still TIMER (shouldn't be, but handle it) */
-      cj_render_reason_t reason = cj_window__get_pending_render_reason(win);
-      if (reason == CJ_RENDER_REASON_TIMER) {
-        /* Window is dirty but reason is TIMER - this shouldn't happen normally,
-         * but if it does, keep it as TIMER (will respect FPS limit) */
-      }
-    }
+    /* Get render reason - TIMER for regular updates, or RESIZE/EXPOSE/FORCED for events */
+    cj_render_reason_t reason = cj_window__get_pending_render_reason(win);
+    bool should_bypass_fps = cj_window__should_bypass_fps_limit(reason);
 
     /* Check per-window FPS limit if window wants to render.
      * Bypass FPS limit for forced renders (resize, expose, etc.) */
     uint64_t current_time_us = cj_get_time_us();
-    if (needs_render) {
-      cj_render_reason_t reason = cj_window__get_pending_render_reason(win);
-      bool should_bypass_fps = cj_window__should_bypass_fps_limit(reason);
-
-      if (!should_bypass_fps && !cj_window__can_render_at_fps(win, current_time_us)) {
-        /* Window wants to render but FPS limit hasn't been reached yet (timer-based render) */
+    if (needs_render && !should_bypass_fps) {
+      if (!cj_window__can_render_at_fps(win, current_time_us)) {
+        /* Window wants to render but FPS limit hasn't been reached yet */
         needs_render = false;
       }
+    }
+
+    /* Determine if we should call the frame callback.
+     * - CJ_REDRAW_ALWAYS: callback runs at per-window FPS rate (same as render rate)
+     * - CJ_REDRAW_ON_EVENTS: callback runs at global FPS rate (to check for updates)
+     * - CJ_REDRAW_ON_DIRTY: callback runs only when dirty
+     */
+    bool should_call_callback = cj_window__should_call_callback(win);
+
+    /* For CJ_REDRAW_ALWAYS, callback should only run when we're going to render.
+     * This respects the per-window FPS limit for both callback and rendering.
+     * Exception: if there's a forced reason (resize, etc.), always call callback. */
+    if (cj_window__uses_always_redraw(win) && !should_bypass_fps) {
+      should_call_callback = needs_render;
     }
 
     /* If window has no callback and doesn't need render, skip it */

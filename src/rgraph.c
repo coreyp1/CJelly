@@ -1197,16 +1197,17 @@ static int execute_color_node(cj_rgraph_t* graph, cj_rgraph_node_t* node, VkComm
     VkDeviceSize offsets[] = {0};
     vkCmdBindVertexBuffers(cmd, 0, 1, &color->vertex_buffer, offsets);
 
-    // Animate colors using push constants - change every second
-    static float time_counter = 0.0f;
-    time_counter += 0.016f; // 60 FPS timing
+    // Get colorMul from the engine's color pipeline resources (updated by cj_bindless_set_color)
+    float red_intensity = 1.0f;
+    float green_intensity = 0.0f;
 
-    // Animate between red and green - change every second (period = 2 seconds)
-    // sin(π * time) gives us a period of 2 seconds, going from -1 to +1 in 1 second
-    float red_intensity = (sinf(time_counter * 3.14159f) + 1.0f) * 0.5f;  // 0.0 to 1.0
-    float green_intensity = (sinf(time_counter * 3.14159f + 3.14159f) + 1.0f) * 0.5f;  // 0.0 to 1.0
+    CJellyBindlessResources* color_resources = cj_engine_color_pipeline(graph->engine);
+    if (color_resources) {
+        red_intensity = color_resources->colorMul[0];
+        green_intensity = color_resources->colorMul[1];
+    }
 
-    // Push constants for color animation
+    // Push constants for color
     struct {
         float uv[4];        // vec4 uv
         float colorMul[4];  // vec4 colorMul
