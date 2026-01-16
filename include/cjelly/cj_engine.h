@@ -59,16 +59,27 @@ typedef struct cj_engine_desc_t {
   const cj_allocator_t* allocator;             /**< Optional custom allocator. */
 } cj_engine_desc_t;
 
-/** Create the engine. Returns NULL on failure. */
+/** Create the engine.
+ *  @param desc Engine creation descriptor. Can be NULL for defaults.
+ *  @return Pointer to the created engine, or NULL on failure.
+ */
 CJ_API cj_engine_t* cj_engine_create(const cj_engine_desc_t* desc);
 
-/** Shut down the engine. Requires that all windows were destroyed. */
+/** Shut down the engine. Requires that all windows were destroyed.
+ *  @param engine The engine to shut down.
+ */
 CJ_API void cj_engine_shutdown(cj_engine_t* engine);
 
-/** Block until the device is idle. */
+/** Block until the device is idle.
+ *  This waits for all pending GPU operations to complete.
+ *  @param engine The engine to wait for.
+ */
 CJ_API void cj_engine_wait_idle(cj_engine_t* engine);
 
-/** Return the selected device index. */
+/** Return the selected device index.
+ *  @param engine The engine to query.
+ *  @return The index of the selected GPU device.
+ */
 CJ_API uint32_t cj_engine_device_index(const cj_engine_t* engine);
 
 /** Global descriptor slot counts (bindless). */
@@ -78,18 +89,38 @@ typedef struct cj_bindless_info_t {
   uint32_t samplers_capacity;
 } cj_bindless_info_t;
 
-/** Query bindless capacities. */
+/** Query bindless resource capacities.
+ *  @param engine The engine to query.
+ *  @param out_info Pointer to receive bindless capacity information.
+ */
 CJ_API void cj_engine_get_bindless_info(const cj_engine_t* engine, cj_bindless_info_t* out_info);
 
-/** Initialize GPU device and core Vulkan objects. */
+/** Initialize GPU device and core Vulkan objects.
+ *  @param engine The engine to initialize.
+ *  @param use_validation Whether to enable Vulkan validation layers.
+ *  @return 0 on success, non-zero on failure.
+ */
 CJ_API int  cj_engine_init(cj_engine_t* engine, int use_validation);
-/** Destroy GPU device and core Vulkan objects. */
+
+/** Destroy GPU device and core Vulkan objects.
+ *  @param engine The engine whose device should be shut down.
+ */
 CJ_API void cj_engine_shutdown_device(cj_engine_t* engine);
-/** Export a minimal Vulkan context snapshot for public helpers. */
+
+/** Export a minimal Vulkan context snapshot for public helpers.
+ *  @param engine The engine to export context from.
+ *  @param out_ctx Pointer to receive the Vulkan context.
+ */
 CJ_API void cj_engine_export_context(cj_engine_t* engine, CJellyVulkanContext* out_ctx);
 
-/** Set/get the process-wide current engine during migration. */
+/** Set the process-wide current engine (for migration compatibility).
+ *  @param engine The engine to set as current.
+ */
 CJ_API void        cj_engine_set_current(cj_engine_t* engine);
+
+/** Get the process-wide current engine (for migration compatibility).
+ *  @return Pointer to the current engine, or NULL if none is set.
+ */
 CJ_API cj_engine_t* cj_engine_get_current(void);
 
 #ifdef __cplusplus

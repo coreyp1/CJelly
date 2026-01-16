@@ -44,31 +44,65 @@ typedef struct cj_window_desc_t {
   const void* native_surface_desc;
 } cj_window_desc_t;
 
-/** Create a window bound to an engine. */
+/** Create a window bound to an engine.
+ *  @param engine The engine to bind the window to.
+ *  @param desc Window creation descriptor.
+ *  @return Pointer to the created window, or NULL on failure.
+ */
 CJ_API cj_window_t* cj_window_create(cj_engine_t* engine, const cj_window_desc_t* desc);
 
-/** Destroy a window. Safe to call with NULL. */
+/** Destroy a window. Safe to call with NULL.
+ *  @param win The window to destroy. NULL is safe and will be ignored.
+ */
 CJ_API void cj_window_destroy(cj_window_t* win);
 
-/** Resize (or defer to swapchain recreation). */
+/** Resize a window (or defer to swapchain recreation).
+ *  @param win The window to resize.
+ *  @param width New width in pixels.
+ *  @param height New height in pixels.
+ *  @return CJ_SUCCESS on success, or an error code.
+ */
 CJ_API cj_result_t cj_window_resize(cj_window_t* win, uint32_t width, uint32_t height);
 
-/** Begin a frame. Returns CJ_SUCCESS, CJ_E_OUT_OF_DATE (needs resize), or error. */
+/** Begin a frame for rendering.
+ *  @param win The window to begin a frame for.
+ *  @param out_frame_info Optional pointer to receive frame timing information. Can be NULL.
+ *  @return CJ_SUCCESS on success, CJ_E_OUT_OF_DATE if swapchain needs recreation, or an error code.
+ */
 CJ_API cj_result_t cj_window_begin_frame(cj_window_t* win, cj_frame_info_t* out_frame_info);
 
-/** Record & submit the window's render-graph. */
+/** Record and submit the window's render graph.
+ *  This executes the render graph associated with the window, recording commands
+ *  into the command buffer for the current frame.
+ *  @param win The window whose render graph should be executed.
+ *  @return CJ_SUCCESS on success, or an error code.
+ */
 CJ_API cj_result_t cj_window_execute(cj_window_t* win);
 
-/** Present the frame. */
+/** Present the frame to the display.
+ *  @param win The window to present the frame for.
+ *  @return CJ_SUCCESS on success, or an error code.
+ */
 CJ_API cj_result_t cj_window_present(cj_window_t* win);
 
-/** Attach/replace the render graph used by this window. (win does not own `graph`.) */
+/** Attach or replace the render graph used by this window.
+ *  The window does not take ownership of the graph; it is merely referenced.
+ *  @param win The window to set the render graph for.
+ *  @param graph The render graph to use. Can be NULL to remove the graph.
+ */
 CJ_API void cj_window_set_render_graph(cj_window_t* win, cj_rgraph_t* graph);
 
-/** Query current client area size. */
+/** Query the current client area size of a window.
+ *  @param win The window to query.
+ *  @param out_w Pointer to receive the width in pixels. Can be NULL.
+ *  @param out_h Pointer to receive the height in pixels. Can be NULL.
+ */
 CJ_API void cj_window_get_size(const cj_window_t* win, uint32_t* out_w, uint32_t* out_h);
 
-/** Per-window frame index (monotonic). */
+/** Get the per-window frame index (monotonically increasing).
+ *  @param win The window to query.
+ *  @return The current frame index for this window.
+ */
 CJ_API uint64_t cj_window_frame_index(const cj_window_t* win);
 
 /** Window close callback response. */
@@ -155,8 +189,9 @@ CJ_API void cj_window_on_resize(cj_window_t* window,
                                 void* user_data);
 
 /** Mark a window as needing redraw.
+ *  The window will be rendered on the next frame (subject to redraw policy and FPS limits).
+ *  The render reason is set to CJ_RENDER_REASON_FORCED, which bypasses per-window FPS limits.
  *  @param window The window to mark as dirty.
- *  @param reason The reason for the redraw (defaults to CJ_RENDER_REASON_FORCED if not specified).
  */
 CJ_API void cj_window_mark_dirty(cj_window_t* window);
 
@@ -179,17 +214,21 @@ CJ_API void cj_window_set_redraw_policy(cj_window_t* window, cj_redraw_policy_t 
 
 /** Set the maximum FPS for a window.
  *  When set to a value > 0, the window will only redraw if enough time has passed
- *  since the last render (1/fps seconds). Set to 0 to disable per-window FPS limiting
- *  (window will respect global FPS limit and redraw policy).
+ *  since the last render (1/fps seconds). This limit applies to timer-based renders
+ *  but is bypassed for forced events (resize, expose, etc.).
+ *  Set to 0 to disable per-window FPS limiting (window will respect global FPS limit and redraw policy).
  *  @param window The window to set the FPS limit for.
  *  @param max_fps Maximum frames per second (0 = unlimited, use global FPS limit).
  */
 CJ_API void cj_window_set_max_fps(cj_window_t* window, uint32_t max_fps);
 
-/* Temporary helper during migration: re-record a color-only bindless command
- * buffer set for a window using provided resources/context. We intentionally
- * use an opaque pointer for resources here to avoid coupling public headers
- * to legacy implementation types. */
+/** Re-record a color-only bindless command buffer set for a window.
+ *  This is a temporary helper function during migration. It uses opaque pointers
+ *  to avoid coupling public headers to legacy implementation types.
+ *  @param win The window to re-record command buffers for.
+ *  @param resources Opaque pointer to bindless resources.
+ *  @param ctx Vulkan context for command buffer recording.
+ */
 struct CJellyVulkanContext; /* forward */
 CJ_API void cj_window_rerecord_bindless_color(cj_window_t* win,
                                              const void* resources,
