@@ -174,6 +174,13 @@ typedef struct cj_key_event {
   bool is_repeat;           /**< True if this is an auto-repeat event. */
 } cj_key_event_t;
 
+/** Convert a keycode to a human-readable string.
+ *  @param keycode The keycode to convert.
+ *  @return A null-terminated string describing the keycode, or "UNKNOWN" for invalid keycodes.
+ *          The returned string is statically allocated and should not be freed.
+ */
+CJ_API const char* cj_keycode_to_string(cj_keycode_t keycode);
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

@@ -135,28 +135,7 @@ static void window3_on_resize(cj_window_t* window, uint32_t new_width, uint32_t 
 static void window1_on_key(cj_window_t* window, const cj_key_event_t* event, GCJ_MAYBE_UNUSED(void* user_data)) {
   const char* action_str = (event->action == CJ_KEY_ACTION_DOWN) ? "DOWN" :
                            (event->action == CJ_KEY_ACTION_UP) ? "UP" : "REPEAT";
-  const char* key_str = "UNKNOWN";
-
-  // Simple key name mapping for common keys
-  if (event->keycode >= CJ_KEY_A && event->keycode <= CJ_KEY_Z) {
-    static char key_buf[2] = {0};
-    key_buf[0] = 'A' + (event->keycode - CJ_KEY_A);
-    key_str = key_buf;
-  } else if (event->keycode >= CJ_KEY_0 && event->keycode <= CJ_KEY_9) {
-    static char key_buf[2] = {0};
-    key_buf[0] = '0' + (event->keycode - CJ_KEY_0);
-    key_str = key_buf;
-  } else {
-    switch (event->keycode) {
-      case CJ_KEY_ESCAPE: key_str = "ESCAPE"; break;
-      case CJ_KEY_ENTER: key_str = "ENTER"; break;
-      case CJ_KEY_SPACE: key_str = "SPACE"; break;
-      case CJ_KEY_TAB: key_str = "TAB"; break;
-      case CJ_KEY_BACKSPACE: key_str = "BACKSPACE"; break;
-      case CJ_KEY_DELETE: key_str = "DELETE"; break;
-      default: key_str = "OTHER"; break;
-    }
-  }
+  const char* key_str = cj_keycode_to_string(event->keycode);
 
   printf("Window 1: Key %s - %s (scancode: %d, repeat: %s, modifiers: 0x%x)\n",
          action_str, key_str, (int)event->scancode,
