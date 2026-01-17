@@ -147,6 +147,133 @@ static void window1_on_key(cj_window_t* window, const cj_key_event_t* event, GCJ
   }
 }
 
+static const char* mouse_event_type_to_string(cj_mouse_event_type_t type) {
+  switch (type) {
+    case CJ_MOUSE_BUTTON_DOWN: return "BUTTON_DOWN";
+    case CJ_MOUSE_BUTTON_UP: return "BUTTON_UP";
+    case CJ_MOUSE_MOVE: return "MOVE";
+    case CJ_MOUSE_SCROLL: return "SCROLL";
+    case CJ_MOUSE_ENTER: return "ENTER";
+    case CJ_MOUSE_LEAVE: return "LEAVE";
+    default: return "UNKNOWN";
+  }
+}
+
+static const char* mouse_button_to_string(cj_mouse_button_t button) {
+  switch (button) {
+    case CJ_MOUSE_BUTTON_LEFT: return "LEFT";
+    case CJ_MOUSE_BUTTON_MIDDLE: return "MIDDLE";
+    case CJ_MOUSE_BUTTON_RIGHT: return "RIGHT";
+    case CJ_MOUSE_BUTTON_4: return "BUTTON_4";
+    case CJ_MOUSE_BUTTON_5: return "BUTTON_5";
+    default: return "UNKNOWN";
+  }
+}
+
+static void print_modifiers(cj_modifiers_t modifiers) {
+  if (modifiers == CJ_MOD_NONE) {
+    printf("none");
+    return;
+  }
+  bool first = true;
+  if (modifiers & CJ_MOD_SHIFT) { printf("%sSHIFT", first ? "" : "+"); first = false; }
+  if (modifiers & CJ_MOD_CTRL) { printf("%sCTRL", first ? "" : "+"); first = false; }
+  if (modifiers & CJ_MOD_ALT) { printf("%sALT", first ? "" : "+"); first = false; }
+  if (modifiers & CJ_MOD_META) { printf("%sMETA", first ? "" : "+"); first = false; }
+  if (modifiers & CJ_MOD_CAPS) { printf("%sCAPS", first ? "" : "+"); first = false; }
+  if (modifiers & CJ_MOD_NUM) { printf("%sNUM", first ? "" : "+"); first = false; }
+}
+
+static void window1_on_mouse(cj_window_t* window, const cj_mouse_event_t* event, GCJ_MAYBE_UNUSED(void* user_data)) {
+  (void)window;  /* Suppress unused warning */
+  const char* type_str = mouse_event_type_to_string(event->type);
+
+  if (event->type == CJ_MOUSE_MOVE) {
+    printf("Window 1: Mouse %s - pos: (%d, %d), delta: (%d, %d), modifiers: [", type_str, event->x, event->y, event->dx, event->dy);
+    print_modifiers(event->modifiers);
+    printf("] (0x%x)\n", (unsigned)event->modifiers);
+  } else if (event->type == CJ_MOUSE_SCROLL) {
+    printf("Window 1: Mouse %s - pos: (%d, %d), scroll: (%.2f, %.2f), modifiers: [", type_str, event->x, event->y, event->scroll_x, event->scroll_y);
+    print_modifiers(event->modifiers);
+    printf("] (0x%x)\n", (unsigned)event->modifiers);
+  } else if (event->type == CJ_MOUSE_BUTTON_DOWN || event->type == CJ_MOUSE_BUTTON_UP) {
+    const char* button_str = mouse_button_to_string(event->button);
+    printf("Window 1: Mouse %s - button: %s, pos: (%d, %d), modifiers: [", type_str, button_str, event->x, event->y);
+    print_modifiers(event->modifiers);
+    printf("] (0x%x)\n", (unsigned)event->modifiers);
+  } else {
+    printf("Window 1: Mouse %s - pos: (%d, %d), modifiers: [", type_str, event->x, event->y);
+    print_modifiers(event->modifiers);
+    printf("] (0x%x)\n", (unsigned)event->modifiers);
+  }
+}
+
+static void window2_on_mouse(cj_window_t* window, const cj_mouse_event_t* event, GCJ_MAYBE_UNUSED(void* user_data)) {
+  (void)window;  /* Suppress unused warning */
+  const char* type_str = mouse_event_type_to_string(event->type);
+
+  if (event->type == CJ_MOUSE_MOVE) {
+    printf("Window 2: Mouse %s - pos: (%d, %d), delta: (%d, %d), modifiers: [", type_str, event->x, event->y, event->dx, event->dy);
+    print_modifiers(event->modifiers);
+    printf("] (0x%x)\n", (unsigned)event->modifiers);
+  } else if (event->type == CJ_MOUSE_SCROLL) {
+    printf("Window 2: Mouse %s - pos: (%d, %d), scroll: (%.2f, %.2f), modifiers: [", type_str, event->x, event->y, event->scroll_x, event->scroll_y);
+    print_modifiers(event->modifiers);
+    printf("] (0x%x)\n", (unsigned)event->modifiers);
+  } else if (event->type == CJ_MOUSE_BUTTON_DOWN || event->type == CJ_MOUSE_BUTTON_UP) {
+    const char* button_str = mouse_button_to_string(event->button);
+    printf("Window 2: Mouse %s - button: %s, pos: (%d, %d), modifiers: [", type_str, button_str, event->x, event->y);
+    print_modifiers(event->modifiers);
+    printf("] (0x%x)\n", (unsigned)event->modifiers);
+  } else {
+    printf("Window 2: Mouse %s - pos: (%d, %d), modifiers: [", type_str, event->x, event->y);
+    print_modifiers(event->modifiers);
+    printf("] (0x%x)\n", (unsigned)event->modifiers);
+  }
+}
+
+static void window3_on_mouse(cj_window_t* window, const cj_mouse_event_t* event, GCJ_MAYBE_UNUSED(void* user_data)) {
+  (void)window;  /* Suppress unused warning */
+  const char* type_str = mouse_event_type_to_string(event->type);
+
+  if (event->type == CJ_MOUSE_MOVE) {
+    printf("Window 3: Mouse %s - pos: (%d, %d), delta: (%d, %d), modifiers: [", type_str, event->x, event->y, event->dx, event->dy);
+    print_modifiers(event->modifiers);
+    printf("] (0x%x)\n", (unsigned)event->modifiers);
+  } else if (event->type == CJ_MOUSE_SCROLL) {
+    printf("Window 3: Mouse %s - pos: (%d, %d), scroll: (%.2f, %.2f), modifiers: [", type_str, event->x, event->y, event->scroll_x, event->scroll_y);
+    print_modifiers(event->modifiers);
+    printf("] (0x%x)\n", (unsigned)event->modifiers);
+  } else if (event->type == CJ_MOUSE_BUTTON_DOWN || event->type == CJ_MOUSE_BUTTON_UP) {
+    const char* button_str = mouse_button_to_string(event->button);
+    printf("Window 3: Mouse %s - button: %s, pos: (%d, %d), modifiers: [", type_str, button_str, event->x, event->y);
+    print_modifiers(event->modifiers);
+    printf("] (0x%x)\n", (unsigned)event->modifiers);
+  } else {
+    printf("Window 3: Mouse %s - pos: (%d, %d), modifiers: [", type_str, event->x, event->y);
+    print_modifiers(event->modifiers);
+    printf("] (0x%x)\n", (unsigned)event->modifiers);
+  }
+}
+
+static void window1_on_focus(cj_window_t* window, const cj_focus_event_t* event, GCJ_MAYBE_UNUSED(void* user_data)) {
+  (void)window;  /* Suppress unused warning */
+  const char* action_str = (event->action == CJ_FOCUS_GAINED) ? "GAINED" : "LOST";
+  printf("Window 1: Focus %s\n", action_str);
+}
+
+static void window2_on_focus(cj_window_t* window, const cj_focus_event_t* event, GCJ_MAYBE_UNUSED(void* user_data)) {
+  (void)window;  /* Suppress unused warning */
+  const char* action_str = (event->action == CJ_FOCUS_GAINED) ? "GAINED" : "LOST";
+  printf("Window 2: Focus %s\n", action_str);
+}
+
+static void window3_on_focus(cj_window_t* window, const cj_focus_event_t* event, GCJ_MAYBE_UNUSED(void* user_data)) {
+  (void)window;  /* Suppress unused warning */
+  const char* action_str = (event->action == CJ_FOCUS_GAINED) ? "GAINED" : "LOST";
+  printf("Window 3: Focus %s\n", action_str);
+}
+
 int main(void) {
 #ifndef _WIN32
   fprintf(stderr, "Starting CJelly demo...\n");
@@ -304,6 +431,15 @@ int main(void) {
 
   // Register keyboard callback for window 1 (test input handling)
   cj_window_on_key(win1, window1_on_key, NULL);
+  cj_window_on_mouse(win1, window1_on_mouse, NULL);
+  cj_window_on_focus(win1, window1_on_focus, NULL);
+
+  // Register mouse and focus callbacks for windows 2 and 3
+  cj_window_on_mouse(win2, window2_on_mouse, NULL);
+  cj_window_on_focus(win2, window2_on_focus, NULL);
+
+  cj_window_on_mouse(win3, window3_on_mouse, NULL);
+  cj_window_on_focus(win3, window3_on_focus, NULL);
 
   // Register signal handlers automatically (handlers only set shutdown flag)
   cjelly_application_register_signal_handlers(app);

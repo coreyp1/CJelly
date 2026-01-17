@@ -181,6 +181,49 @@ typedef struct cj_key_event {
  */
 CJ_API const char* cj_keycode_to_string(cj_keycode_t keycode);
 
+/** @brief Mouse button identifiers. */
+typedef enum cj_mouse_button {
+  CJ_MOUSE_BUTTON_LEFT = 0,   /**< Left mouse button. */
+  CJ_MOUSE_BUTTON_MIDDLE,     /**< Middle mouse button (wheel click). */
+  CJ_MOUSE_BUTTON_RIGHT,      /**< Right mouse button. */
+  CJ_MOUSE_BUTTON_4,          /**< Extra button 4 (typically back). */
+  CJ_MOUSE_BUTTON_5,          /**< Extra button 5 (typically forward). */
+} cj_mouse_button_t;
+
+/** @brief Mouse event type. */
+typedef enum cj_mouse_event_type {
+  CJ_MOUSE_BUTTON_DOWN = 0,   /**< Mouse button pressed. */
+  CJ_MOUSE_BUTTON_UP,         /**< Mouse button released. */
+  CJ_MOUSE_MOVE,              /**< Cursor moved. */
+  CJ_MOUSE_SCROLL,            /**< Scroll wheel moved (vertical/horizontal). */
+  CJ_MOUSE_ENTER,             /**< Cursor entered window. */
+  CJ_MOUSE_LEAVE,             /**< Cursor left window. */
+} cj_mouse_event_type_t;
+
+/** @brief Mouse event structure. */
+typedef struct cj_mouse_event {
+  cj_mouse_event_type_t type; /**< Type of mouse event. */
+  int32_t x;                  /**< X position in window coordinates (0 = left edge). */
+  int32_t y;                  /**< Y position in window coordinates (0 = top edge). */
+  int32_t dx;                 /**< Delta X since last move (for MOVE events). */
+  int32_t dy;                 /**< Delta Y since last move (for MOVE events). */
+  float scroll_x;             /**< Horizontal scroll delta (for SCROLL events, positive = right). */
+  float scroll_y;             /**< Vertical scroll delta (for SCROLL events, positive = down). */
+  cj_mouse_button_t button;   /**< Button involved (for BUTTON_DOWN/UP events). */
+  cj_modifiers_t modifiers;   /**< Modifier keys held during event. */
+} cj_mouse_event_t;
+
+/** @brief Focus action type. */
+typedef enum cj_focus_action {
+  CJ_FOCUS_GAINED = 0,        /**< Window received input focus. */
+  CJ_FOCUS_LOST,              /**< Window lost input focus. */
+} cj_focus_action_t;
+
+/** @brief Focus event structure. */
+typedef struct cj_focus_event {
+  cj_focus_action_t action;   /**< Focus action (GAINED or LOST). */
+} cj_focus_event_t;
+
 #ifdef __cplusplus
 } /* extern "C" */
 #endif

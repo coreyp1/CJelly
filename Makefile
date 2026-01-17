@@ -97,6 +97,10 @@ APP_DIR := $(BUILD_DIR)/apps
 ifeq ($(UNAME_S), Linux)
 	CFLAGS += `PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --cflags x11`
 	LDFLAGS += `PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --libs x11`
+	# XInput2 (libXi) is optional - if not available, we fall back to traditional events
+	# For now, we'll skip linking libXi and make XInput2 optional at runtime
+	# This avoids linker issues - XInput2 functions will be called only if available
+	# TODO: Add proper libXi linking when needed for full XInput2 support
 	LIB_CFLAGS += -fPIC
 
 else ifeq ($(UNAME_S), Darwin)

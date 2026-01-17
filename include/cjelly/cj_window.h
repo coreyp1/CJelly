@@ -209,6 +209,78 @@ CJ_API void cj_window_on_key(cj_window_t* window,
                              cj_key_callback_t callback,
                              void* user_data);
 
+/** Mouse callback function type.
+ *  Called when a mouse event occurs (button press/release, movement, scroll, enter/leave).
+ *
+ *  @param window The window that received the mouse event.
+ *  @param event The mouse event information.
+ *  @param user_data User-provided data pointer.
+ */
+typedef void (*cj_mouse_callback_t)(cj_window_t* window,
+                                    const cj_mouse_event_t* event,
+                                    void* user_data);
+
+/** Register a mouse callback for a window.
+ *  @param window The window to register the callback for.
+ *  @param callback Callback invoked when mouse events occur. NULL to remove callback.
+ *  @param user_data User data pointer passed to callback.
+ */
+CJ_API void cj_window_on_mouse(cj_window_t* window,
+                               cj_mouse_callback_t callback,
+                               void* user_data);
+
+/** Focus callback function type.
+ *  Called when a window gains or loses input focus.
+ *
+ *  @param window The window that gained or lost focus.
+ *  @param event The focus event information.
+ *  @param user_data User-provided data pointer.
+ */
+typedef void (*cj_focus_callback_t)(cj_window_t* window,
+                                     const cj_focus_event_t* event,
+                                     void* user_data);
+
+/** Register a focus callback for a window.
+ *  @param window The window to register the callback for.
+ *  @param callback Callback invoked when focus events occur. NULL to remove callback.
+ *  @param user_data User data pointer passed to callback.
+ */
+CJ_API void cj_window_on_focus(cj_window_t* window,
+                               cj_focus_callback_t callback,
+                               void* user_data);
+
+/** Get the current mouse position in window coordinates.
+ *  @param window The window to query mouse position for.
+ *  @param out_x Pointer to receive X coordinate (0 = left edge). Can be NULL.
+ *  @param out_y Pointer to receive Y coordinate (0 = top edge). Can be NULL.
+ */
+CJ_API void cj_mouse_get_position(cj_window_t* window, int32_t* out_x, int32_t* out_y);
+
+/** Query if a mouse button is currently pressed.
+ *  @param window The window to query button state for.
+ *  @param button The mouse button to check.
+ *  @return True if the button is currently pressed, false otherwise.
+ */
+CJ_API bool cj_mouse_button_is_pressed(cj_window_t* window, cj_mouse_button_t button);
+
+/** Capture mouse input to a window.
+ *  When captured, the window receives mouse events even when the cursor is outside
+ *  the window bounds. This is useful for drag operations and first-person camera controls.
+ *  @param window The window to capture the mouse for.
+ */
+CJ_API void cj_window_capture_mouse(cj_window_t* window);
+
+/** Release mouse capture for a window.
+ *  @param window The window to release mouse capture for.
+ */
+CJ_API void cj_window_release_mouse(cj_window_t* window);
+
+/** Query if a window has mouse capture.
+ *  @param window The window to query.
+ *  @return True if the window has mouse capture, false otherwise.
+ */
+CJ_API bool cj_window_has_mouse_capture(cj_window_t* window);
+
 /** Mark a window as needing redraw.
  *  The window will be rendered on the next frame (subject to redraw policy and FPS limits).
  *  The render reason is set to CJ_RENDER_REASON_FORCED, which bypasses per-window FPS limits.

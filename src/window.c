@@ -77,6 +77,14 @@ struct cj_window_t {
   /* Simple bitfield: each bit represents a keycode. Size = (max_keycode + 7) / 8 bytes */
   /* We track keys 0-255 (32 bytes), which covers all current keycodes */
   uint8_t pressed_keys_bitfield[32];  /* Bitfield tracking which keys are currently pressed */
+  cj_mouse_callback_t mouse_callback;  /* Mouse callback (NULL if none) */
+  void* mouse_callback_user_data; /* User data for mouse callback */
+  cj_focus_callback_t focus_callback;  /* Focus callback (NULL if none) */
+  void* focus_callback_user_data; /* User data for focus callback */
+  /* Mouse state tracking */
+  int32_t mouse_x, mouse_y;  /* Current mouse position in window coordinates */
+  uint8_t pressed_mouse_buttons;  /* Bitfield: bit 0 = left, bit 1 = middle, bit 2 = right, bit 3 = button 4, bit 4 = button 5 */
+  bool has_mouse_capture;  /* True if window has captured mouse input */
   cj_redraw_policy_t redraw_policy;  /* Redraw policy for this window */
   uint32_t max_fps;  /* Maximum FPS for this window (0 = unlimited) */
   uint64_t last_render_time_us;  /* Last render time in microseconds (for FPS limiting) */
@@ -448,6 +456,186 @@ static LRESULT CALLBACK CjWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
       return 0;  /* Handled */
     }
 
+    case WM_SETFOCUS: {
+      // Window gained focus
+      CJellyApplication* app = cjelly_application_get_current();
+      if (app) {
+        cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)hwnd);
+        if (window && !window->is_destroyed) {
+          cj_window__dispatch_focus_callback(window, CJ_FOCUS_GAINED);
+        }
+      }
+      return 0;
+    }
+
+    case WM_KILLFOCUS: {
+      // Window lost focus
+      CJellyApplication* app = cjelly_application_get_current();
+      if (app) {
+        cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)hwnd);
+        if (window && !window->is_destroyed) {
+          cj_window__dispatch_focus_callback(window, CJ_FOCUS_LOST);
+        }
+      }
+      return 0;
+    }
+
+    case WM_MOUSEMOVE: {
+      // Mouse moved
+      CJellyApplication* app = cjelly_application_get_current();
+      if (app) {
+        cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)hwnd);
+        if (window && !window->is_destroyed) {
+          int32_t x = (int32_t)(short)LOWORD(lParam);
+          int32_t y = (int32_t)(short)HIWORD(lParam);
+          int32_t dx = x - window->mouse_x;
+          int32_t dy = y - window->mouse_y;
+          cj_modifiers_t modifiers = get_windows_modifiers();
+
+          cj_mouse_event_t event = {0};
+          event.type = CJ_MOUSE_MOVE;
+          event.x = x;
+          event.y = y;
+          event.dx = dx;
+          event.dy = dy;
+          event.modifiers = modifiers;
+          cj_window__dispatch_mouse_callback(window, &event);
+        }
+      }
+      return 0;
+    }
+
+    case WM_LBUTTONDOWN:
+    case WM_MBUTTONDOWN:
+    case WM_RBUTTONDOWN:
+    case WM_XBUTTONDOWN: {
+      // Mouse button pressed
+      CJellyApplication* app = cjelly_application_get_current();
+      if (app) {
+        cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)hwnd);
+        if (window && !window->is_destroyed) {
+          cj_mouse_button_t button = CJ_MOUSE_BUTTON_LEFT;
+          if (uMsg == WM_MBUTTONDOWN) button = CJ_MOUSE_BUTTON_MIDDLE;
+          else if (uMsg == WM_RBUTTONDOWN) button = CJ_MOUSE_BUTTON_RIGHT;
+          else if (uMsg == WM_XBUTTONDOWN) {
+            if (HIWORD(wParam) == XBUTTON1) button = CJ_MOUSE_BUTTON_4;
+            else if (HIWORD(wParam) == XBUTTON2) button = CJ_MOUSE_BUTTON_5;
+          }
+
+          int32_t x = (int32_t)(short)LOWORD(lParam);
+          int32_t y = (int32_t)(short)HIWORD(lParam);
+          cj_modifiers_t modifiers = get_windows_modifiers();
+
+          cj_mouse_event_t event = {0};
+          event.type = CJ_MOUSE_BUTTON_DOWN;
+          event.x = x;
+          event.y = y;
+          event.button = button;
+          event.modifiers = modifiers;
+          cj_window__dispatch_mouse_callback(window, &event);
+        }
+      }
+      return 0;
+    }
+
+    case WM_LBUTTONUP:
+    case WM_MBUTTONUP:
+    case WM_RBUTTONUP:
+    case WM_XBUTTONUP: {
+      // Mouse button released
+      CJellyApplication* app = cjelly_application_get_current();
+      if (app) {
+        cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)hwnd);
+        if (window && !window->is_destroyed) {
+          cj_mouse_button_t button = CJ_MOUSE_BUTTON_LEFT;
+          if (uMsg == WM_MBUTTONUP) button = CJ_MOUSE_BUTTON_MIDDLE;
+          else if (uMsg == WM_RBUTTONUP) button = CJ_MOUSE_BUTTON_RIGHT;
+          else if (uMsg == WM_XBUTTONUP) {
+            if (HIWORD(wParam) == XBUTTON1) button = CJ_MOUSE_BUTTON_4;
+            else if (HIWORD(wParam) == XBUTTON2) button = CJ_MOUSE_BUTTON_5;
+          }
+
+          int32_t x = (int32_t)(short)LOWORD(lParam);
+          int32_t y = (int32_t)(short)HIWORD(lParam);
+          cj_modifiers_t modifiers = get_windows_modifiers();
+
+          cj_mouse_event_t event = {0};
+          event.type = CJ_MOUSE_BUTTON_UP;
+          event.x = x;
+          event.y = y;
+          event.button = button;
+          event.modifiers = modifiers;
+          cj_window__dispatch_mouse_callback(window, &event);
+        }
+      }
+      return 0;
+    }
+
+    case WM_MOUSEWHEEL: {
+      // Mouse wheel scroll (vertical)
+      CJellyApplication* app = cjelly_application_get_current();
+      if (app) {
+        cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)hwnd);
+        if (window && !window->is_destroyed) {
+          POINT pt = {LOWORD(lParam), HIWORD(lParam)};
+          ScreenToClient(hwnd, &pt);
+          float delta = (float)(short)HIWORD(wParam) / (float)WHEEL_DELTA;
+          cj_modifiers_t modifiers = get_windows_modifiers();
+
+          cj_mouse_event_t event = {0};
+          event.type = CJ_MOUSE_SCROLL;
+          event.x = pt.x;
+          event.y = pt.y;
+          event.scroll_y = delta;
+          event.modifiers = modifiers;
+          cj_window__dispatch_mouse_callback(window, &event);
+        }
+      }
+      return 0;
+    }
+
+    case WM_MOUSEHWHEEL: {
+      // Mouse wheel scroll (horizontal)
+      CJellyApplication* app = cjelly_application_get_current();
+      if (app) {
+        cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)hwnd);
+        if (window && !window->is_destroyed) {
+          POINT pt = {LOWORD(lParam), HIWORD(lParam)};
+          ScreenToClient(hwnd, &pt);
+          float delta = (float)(short)HIWORD(wParam) / (float)WHEEL_DELTA;
+          cj_modifiers_t modifiers = get_windows_modifiers();
+
+          cj_mouse_event_t event = {0};
+          event.type = CJ_MOUSE_SCROLL;
+          event.x = pt.x;
+          event.y = pt.y;
+          event.scroll_x = delta;
+          event.modifiers = modifiers;
+          cj_window__dispatch_mouse_callback(window, &event);
+        }
+      }
+      return 0;
+    }
+
+    case WM_MOUSELEAVE: {
+      // Mouse left window
+      CJellyApplication* app = cjelly_application_get_current();
+      if (app) {
+        cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)hwnd);
+        if (window && !window->is_destroyed) {
+          cj_modifiers_t modifiers = get_windows_modifiers();
+
+          cj_mouse_event_t event = {0};
+          event.type = CJ_MOUSE_LEAVE;
+          event.x = window->mouse_x;
+          event.y = window->mouse_y;
+          event.modifiers = modifiers;
+          cj_window__dispatch_mouse_callback(window, &event);
+        }
+      }
+      return 0;
+    }
+
     case WM_DESTROY:
       // Window is being destroyed. Cleanup is already done by cj_window_destroy(),
       // so this is just a no-op. The user data should already be cleared.
@@ -478,7 +666,13 @@ static void plat_createPlatformWindow(CJPlatformWindow * win, const char * title
   int screen = DefaultScreen(display);
   /* Use black background to reduce flickering during resize */
   win->handle = XCreateSimpleWindow(display, RootWindow(display, screen), 0, 0, (unsigned)width, (unsigned)height, 0, BlackPixel(display, screen), BlackPixel(display, screen));
-  XSelectInput(display, win->handle, StructureNotifyMask | KeyPressMask | KeyReleaseMask | ExposureMask);
+  XSelectInput(display, win->handle, StructureNotifyMask | KeyPressMask | KeyReleaseMask | ExposureMask |
+               ButtonPressMask | ButtonReleaseMask | PointerMotionMask | EnterWindowMask | LeaveWindowMask | FocusChangeMask);
+
+  /* Try to select XInput2 events for smooth scrolling (falls back to traditional events if unavailable) */
+  extern bool select_xinput2_events(Window window);
+  select_xinput2_events(win->handle);
+
   Atom wmDelete = XInternAtom(display, "WM_DELETE_WINDOW", False);
   XStoreName(display, win->handle, title);
   XSetWMProtocols(display, win->handle, &wmDelete, 1);
@@ -821,6 +1015,10 @@ CJ_API cj_window_t* cj_window_create(cj_engine_t* engine, const cj_window_desc_t
   win->key_callback = NULL;
   win->key_callback_user_data = NULL;
   memset(win->pressed_keys_bitfield, 0, sizeof(win->pressed_keys_bitfield));  /* Initialize key state tracking */
+  win->mouse_x = 0;
+  win->mouse_y = 0;
+  win->pressed_mouse_buttons = 0;
+  win->has_mouse_capture = false;
   win->redraw_policy = CJ_REDRAW_ON_EVENTS;  /* Default: redraw on events */
   win->max_fps = 0;  /* Default: unlimited (use global FPS limit) */
   win->last_render_time_us = 0;  /* Initialize to 0 (will be set on first render) */
@@ -874,6 +1072,8 @@ CJ_API void cj_window_destroy(cj_window_t* win) {
   // Clean up platform window and Vulkan resources
   /* Clear key state tracking */
   memset(win->pressed_keys_bitfield, 0, sizeof(win->pressed_keys_bitfield));
+  win->pressed_mouse_buttons = 0;
+  win->has_mouse_capture = false;
 
   if (win->plat) {
     // Wait for GPU to finish before destroying resources
@@ -1253,6 +1453,150 @@ void cj_window__dispatch_key_callback(cj_window_t* window,
 
     window->key_callback(window, &event, window->key_callback_user_data);
   }
+}
+
+/* Mouse callback registration */
+CJ_API void cj_window_on_mouse(cj_window_t* window, cj_mouse_callback_t callback, void* user_data) {
+  if (!window) return;
+  window->mouse_callback = callback;
+  window->mouse_callback_user_data = user_data;
+}
+
+/* Focus callback registration */
+CJ_API void cj_window_on_focus(cj_window_t* window, cj_focus_callback_t callback, void* user_data) {
+  if (!window) return;
+  window->focus_callback = callback;
+  window->focus_callback_user_data = user_data;
+}
+
+/* Internal helper functions for mouse button state tracking */
+bool cj_window__is_mouse_button_pressed(cj_window_t* window, cj_mouse_button_t button) {
+  if (!window || button > CJ_MOUSE_BUTTON_5) return false;
+  return (window->pressed_mouse_buttons & (1 << button)) != 0;
+}
+
+void cj_window__set_mouse_button_pressed(cj_window_t* window, cj_mouse_button_t button, bool pressed) {
+  if (!window || button > CJ_MOUSE_BUTTON_5) return;
+  if (pressed) {
+    window->pressed_mouse_buttons |= (1 << button);
+  } else {
+    window->pressed_mouse_buttons &= ~(1 << button);
+  }
+}
+
+/* Internal helper to dispatch mouse callback. */
+void cj_window__dispatch_mouse_callback(cj_window_t* window, const cj_mouse_event_t* event) {
+  if (!window || window->is_destroyed || !event) return;
+
+  /* Update mouse position for MOVE events */
+  if (event->type == CJ_MOUSE_MOVE || event->type == CJ_MOUSE_BUTTON_DOWN || event->type == CJ_MOUSE_BUTTON_UP) {
+    window->mouse_x = event->x;
+    window->mouse_y = event->y;
+  }
+
+  /* Update button state */
+  if (event->type == CJ_MOUSE_BUTTON_DOWN) {
+    cj_window__set_mouse_button_pressed(window, event->button, true);
+  } else if (event->type == CJ_MOUSE_BUTTON_UP) {
+    cj_window__set_mouse_button_pressed(window, event->button, false);
+  }
+
+  if (window->mouse_callback) {
+    window->mouse_callback(window, event, window->mouse_callback_user_data);
+  }
+}
+
+/* Internal helper to dispatch focus callback. */
+void cj_window__dispatch_focus_callback(cj_window_t* window, cj_focus_action_t action) {
+  if (!window || window->is_destroyed) return;
+
+  if (action == CJ_FOCUS_LOST) {
+    /* Clear all input state on focus loss */
+    cj_window__clear_input_state(window);
+  }
+
+  if (window->focus_callback) {
+    cj_focus_event_t event = {0};
+    event.action = action;
+    window->focus_callback(window, &event, window->focus_callback_user_data);
+  }
+}
+
+/* Internal helper to clear all input state (keys and mouse buttons) on focus loss. */
+void cj_window__clear_input_state(cj_window_t* window) {
+  if (!window) return;
+  memset(window->pressed_keys_bitfield, 0, sizeof(window->pressed_keys_bitfield));
+  window->pressed_mouse_buttons = 0;
+}
+
+/* Internal helper to get current mouse position (for calculating deltas). */
+void cj_window__get_mouse_position(cj_window_t* window, int32_t* out_x, int32_t* out_y) {
+  if (!window) {
+    if (out_x) *out_x = 0;
+    if (out_y) *out_y = 0;
+    return;
+  }
+  if (out_x) *out_x = window->mouse_x;
+  if (out_y) *out_y = window->mouse_y;
+}
+
+/* Mouse state polling functions */
+CJ_API void cj_mouse_get_position(cj_window_t* window, int32_t* out_x, int32_t* out_y) {
+  if (!window) {
+    if (out_x) *out_x = 0;
+    if (out_y) *out_y = 0;
+    return;
+  }
+  if (out_x) *out_x = window->mouse_x;
+  if (out_y) *out_y = window->mouse_y;
+}
+
+CJ_API bool cj_mouse_button_is_pressed(cj_window_t* window, cj_mouse_button_t button) {
+  if (!window) return false;
+  return cj_window__is_mouse_button_pressed(window, button);
+}
+
+/* Mouse capture functions */
+CJ_API void cj_window_capture_mouse(cj_window_t* window) {
+  if (!window || !window->plat || window->is_destroyed) return;
+#ifdef _WIN32
+  HWND hwnd = window->plat->handle;
+  if (hwnd && IsWindow(hwnd)) {
+    SetCapture(hwnd);
+    window->has_mouse_capture = true;
+  }
+#else
+  /* X11: Use XGrabPointer */
+  if (display && window->plat->handle) {
+    Window xwindow = (Window)window->plat->handle;
+    XGrabPointer(display, xwindow, False,
+                 ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
+                 GrabModeAsync, GrabModeAsync,
+                 None, None, CurrentTime);
+    window->has_mouse_capture = true;
+  }
+#endif
+}
+
+CJ_API void cj_window_release_mouse(cj_window_t* window) {
+  if (!window || !window->plat || window->is_destroyed) return;
+#ifdef _WIN32
+  if (window->has_mouse_capture) {
+    ReleaseCapture();
+    window->has_mouse_capture = false;
+  }
+#else
+  /* X11: Use XUngrabPointer */
+  if (window->has_mouse_capture && display) {
+    XUngrabPointer(display, CurrentTime);
+    window->has_mouse_capture = false;
+  }
+#endif
+}
+
+CJ_API bool cj_window_has_mouse_capture(cj_window_t* window) {
+  if (!window) return false;
+  return window->has_mouse_capture;
 }
 
 /* Internal helper to check if dirty flag should be cleared after frame render.

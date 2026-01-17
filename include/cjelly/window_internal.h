@@ -141,6 +141,44 @@ void cj_window__dispatch_key_callback(cj_window_t* window,
                                      cj_modifiers_t modifiers,
                                      bool is_repeat);
 
+/** Internal helper to check if a mouse button is currently pressed.
+ *  @param window The window to check.
+ *  @param button The mouse button to check.
+ *  @return true if button is pressed, false otherwise.
+ */
+bool cj_window__is_mouse_button_pressed(cj_window_t* window, cj_mouse_button_t button);
+
+/** Internal helper to set mouse button pressed state.
+ *  @param window The window to update.
+ *  @param button The mouse button to update.
+ *  @param pressed True to mark as pressed, false to mark as released.
+ */
+void cj_window__set_mouse_button_pressed(cj_window_t* window, cj_mouse_button_t button, bool pressed);
+
+/** Internal helper to dispatch mouse event callback.
+ *  @param window The window that received the mouse event.
+ *  @param event The mouse event to dispatch.
+ */
+void cj_window__dispatch_mouse_callback(cj_window_t* window, const cj_mouse_event_t* event);
+
+/** Internal helper to dispatch focus event callback.
+ *  @param window The window that received the focus event.
+ *  @param action The focus action (GAINED or LOST).
+ */
+void cj_window__dispatch_focus_callback(cj_window_t* window, cj_focus_action_t action);
+
+/** Internal helper to clear all input state (keys and mouse buttons) on focus loss.
+ *  @param window The window to clear state for.
+ */
+void cj_window__clear_input_state(cj_window_t* window);
+
+/** Internal helper to get current mouse position (for calculating deltas).
+ *  @param window The window to query.
+ *  @param out_x Pointer to receive X coordinate. Can be NULL.
+ *  @param out_y Pointer to receive Y coordinate. Can be NULL.
+ */
+void cj_window__get_mouse_position(cj_window_t* window, int32_t* out_x, int32_t* out_y);
+
 #ifdef __cplusplus
 }
 #endif

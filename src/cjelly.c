@@ -22,6 +22,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef _WIN32
+#include <dlfcn.h>  /* For dlsym to optionally load XInput2 functions */
+#ifndef RTLD_DEFAULT
+#define RTLD_DEFAULT ((void*)0)
+#endif
+#endif
 
 #include <cjelly/cjelly.h>
 #include <cjelly/runtime.h>
@@ -42,6 +48,9 @@
 #else
 #include <X11/Xlib.h>
 #include <X11/keysym.h>
+#include <X11/extensions/XI.h>
+#include <X11/extensions/XI2.h>
+#include <X11/extensions/XI2proto.h>
 #endif
 #include <shaders/basic.vert.h>
 #include <shaders/color.vert.h>
@@ -53,6 +62,11 @@
 // Global Vulkan objects shared among all windows.
 #ifndef _WIN32
 Display * display; /* provided by main.c */
+static int xinput2_available = -1; /* -1 = not checked, 0 = unavailable, 1 = available */
+static int xinput2_major = 2;
+static int xinput2_minor = 0;
+static int xinput2_opcode = -1; /* XInput extension opcode */
+static void* xinput2_lib_handle = NULL; /* Handle to libXi.so for dlopen */
 #endif
 
 
@@ -917,10 +931,149 @@ CJ_API void processWindowEvents() {
 
 #else
 
+/* Initialize XInput2 if available. Returns true if XInput2 is available and initialized.
+ * Note: XInput2 is kept available for future touch support, but scroll events
+ * are handled via traditional X11 ButtonPress events (Button4/Button5).
+ */
+static bool init_xinput2(void) {
+  if (xinput2_available != -1) {
+    return xinput2_available == 1;
+  }
+
+  xinput2_available = 0; /* Assume unavailable until proven otherwise */
+
+  if (!display) return false;
+
+  int event, error;
+  if (!XQueryExtension(display, "XInputExtension", &xinput2_opcode, &event, &error)) {
+    /* XInput extension not available */
+    return false;
+  }
+
+  /* Query XInput2 version - try to load libXi dynamically */
+  typedef int (*XIQueryVersionFunc)(Display*, int*, int*);
+  XIQueryVersionFunc xi_query_version = NULL;
+
+  /* Try to open libXi if not already opened */
+  if (!xinput2_lib_handle) {
+    /* Try common library names */
+    const char* lib_names[] = {
+      "libXi.so.6",
+      "libXi.so",
+      "libXi.so.6.1.0",
+      NULL
+    };
+
+    for (int i = 0; lib_names[i] != NULL; i++) {
+      xinput2_lib_handle = dlopen(lib_names[i], RTLD_LAZY | RTLD_LOCAL);
+      if (xinput2_lib_handle) {
+        break;
+      }
+    }
+  }
+
+  if (xinput2_lib_handle) {
+    void* sym = dlsym(xinput2_lib_handle, "XIQueryVersion");
+    if (sym) {
+      /* Use union to avoid pedantic warning about function pointer conversion */
+      union { void* p; XIQueryVersionFunc f; } u = {.p = sym};
+      xi_query_version = u.f;
+    }
+  }
+
+  if (!xi_query_version) {
+    /* libXi not available - skip XInput2 */
+    return false;
+  }
+
+  int major = 2, minor = 0;
+  Status result = xi_query_version(display, &major, &minor);
+  if (result == BadRequest || result != Success) {
+    /* XInput2 not available */
+    return false;
+  }
+
+  xinput2_major = major;
+  xinput2_minor = minor;
+
+  xinput2_available = 1;
+  return true;
+}
+
+/* Select XInput2 events for a window. Returns true if XInput2 events were selected. */
+bool select_xinput2_events(Window window) {
+  if (!init_xinput2() || !display) {
+    return false;
+  }
+
+  /* Define XIEventMask structure locally since header may not expose it properly */
+  typedef struct {
+    int deviceid;
+    int mask_len;
+    unsigned char* mask;
+  } LocalXIEventMask;
+
+  /* Load XInput2 function dynamically */
+  typedef Status (*XISelectEventsFunc)(Display*, Window, void*, int);
+  XISelectEventsFunc xi_select_events = NULL;
+
+  if (xinput2_lib_handle) {
+    void* sym = dlsym(xinput2_lib_handle, "XISelectEvents");
+    if (sym) {
+      union { void* p; XISelectEventsFunc f; } u = {.p = sym};
+      xi_select_events = u.f;
+    }
+  }
+
+  if (!xi_select_events) {
+    /* Function not available */
+    return false;
+  }
+
+  LocalXIEventMask event_mask;
+  unsigned char mask[32] = {0}; /* Allocate enough space for XI_LASTEVENT */
+
+  event_mask.deviceid = XIAllMasterDevices;
+  event_mask.mask_len = sizeof(mask);
+  event_mask.mask = mask;
+
+  /* Select touch events for future touch support (XI_TouchBegin, XI_TouchUpdate, XI_TouchEnd) */
+  /* Note: Scroll events are handled via traditional X11 ButtonPress (Button4/Button5) */
+  /* We don't select XI_ButtonPress/XI_ButtonRelease here to avoid consuming scroll events */
+
+  Status result = xi_select_events(display, window, &event_mask, 1);
+  if (result != Success) {
+    return false;
+  }
+
+  XFlush(display);
+  return true;
+}
+
 CJ_API void processWindowEvents() {
+  /* Initialize XInput2 on first call */
+  if (xinput2_available == -1) {
+    init_xinput2();
+  }
+
   while (XPending(display)) {
     XEvent event;
     XNextEvent(display, &event);
+
+    /* Check for XInput2 events (reserved for future touch support) */
+    if (xinput2_available == 1 && event.type == GenericEvent) {
+      XGenericEventCookie* cookie = &event.xcookie;
+      if (XGetEventData(display, cookie)) {
+        if (cookie->extension == xinput2_opcode) {
+          /* TODO: Handle XI_TouchBegin, XI_TouchUpdate, XI_TouchEnd for touch support */
+          /* For now, just free the event data and let traditional X11 handle everything */
+          XFreeEventData(display, cookie);
+        } else {
+          XFreeEventData(display, cookie);
+        }
+      }
+    }
+
     if (event.type == ClientMessage) {
       Atom wmDelete = XInternAtom(display, "WM_DELETE_WINDOW", False);
       if ((Atom)event.xclient.data.l[0] == wmDelete) {
@@ -986,10 +1139,10 @@ CJ_API void processWindowEvents() {
     }
     if (event.type == KeyPress) {
       // Handle keyboard input
-      CJellyApplication* app = cjelly_application_get_current();
-      if (app) {
-        cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)event.xkey.window);
-        if (window) {
+        CJellyApplication* app = cjelly_application_get_current();
+        if (app) {
+          cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)event.xkey.window);
+          if (window) {
           KeySym sym = XLookupKeysym(&event.xkey, 0);
 
           // Map X11 keysym to cj_keycode_t
@@ -1207,6 +1360,219 @@ CJ_API void processWindowEvents() {
           // Dispatch keyboard callback
           cj_window__dispatch_key_callback(window, keycode, (cj_scancode_t)event.xkey.keycode,
                                            CJ_KEY_ACTION_UP, modifiers, false);
+        }
+      }
+    }
+    if (event.type == FocusIn) {
+      // Window gained focus
+      CJellyApplication* app = cjelly_application_get_current();
+      if (app) {
+        cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)event.xfocus.window);
+        if (window) {
+          cj_window__dispatch_focus_callback(window, CJ_FOCUS_GAINED);
+        }
+      }
+    }
+    if (event.type == FocusOut) {
+      // Window lost focus
+      CJellyApplication* app = cjelly_application_get_current();
+      if (app) {
+        cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)event.xfocus.window);
+        if (window) {
+          cj_window__dispatch_focus_callback(window, CJ_FOCUS_LOST);
+        }
+      }
+    }
+    if (event.type == MotionNotify) {
+      // Mouse moved
+      CJellyApplication* app = cjelly_application_get_current();
+      if (app) {
+        cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)event.xmotion.window);
+        if (window) {
+          int32_t x = (int32_t)event.xmotion.x;
+          int32_t y = (int32_t)event.xmotion.y;
+          int32_t old_x = 0, old_y = 0;
+          cj_window__get_mouse_position(window, &old_x, &old_y);
+          int32_t dx = x - old_x;
+          int32_t dy = y - old_y;
+
+          // Extract modifiers from event state
+          cj_modifiers_t modifiers = CJ_MOD_NONE;
+          if (event.xmotion.state & ShiftMask) modifiers |= CJ_MOD_SHIFT;
+          if (event.xmotion.state & ControlMask) modifiers |= CJ_MOD_CTRL;
+          if (event.xmotion.state & Mod1Mask) modifiers |= CJ_MOD_ALT;
+          if (event.xmotion.state & Mod4Mask) modifiers |= CJ_MOD_META;
+          if (event.xmotion.state & LockMask) modifiers |= CJ_MOD_CAPS;
+          if (event.xmotion.state & Mod2Mask) modifiers |= CJ_MOD_NUM;
+
+          cj_mouse_event_t mouse_event = {0};
+          mouse_event.type = CJ_MOUSE_MOVE;
+          mouse_event.x = x;
+          mouse_event.y = y;
+          mouse_event.dx = dx;
+          mouse_event.dy = dy;
+          mouse_event.modifiers = modifiers;
+          cj_window__dispatch_mouse_callback(window, &mouse_event);
+        }
+      }
+    }
+    if (event.type == ButtonPress) {
+      // Check for scroll buttons first (Button4 = scroll up, Button5 = scroll down)
+      if (event.xbutton.button == Button4 || event.xbutton.button == Button5) {
+        // Mouse wheel scroll via traditional X11 button events
+        CJellyApplication* app = cjelly_application_get_current();
+        if (app) {
+          cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)event.xbutton.window);
+          if (window) {
+            int32_t x = (int32_t)event.xbutton.x;
+            int32_t y = (int32_t)event.xbutton.y;
+            float scroll_delta = (event.xbutton.button == Button4) ? 1.0f : -1.0f;
+
+            // Extract modifiers
+            cj_modifiers_t modifiers = CJ_MOD_NONE;
+            if (event.xbutton.state & ShiftMask) modifiers |= CJ_MOD_SHIFT;
+            if (event.xbutton.state & ControlMask) modifiers |= CJ_MOD_CTRL;
+            if (event.xbutton.state & Mod1Mask) modifiers |= CJ_MOD_ALT;
+            if (event.xbutton.state & Mod4Mask) modifiers |= CJ_MOD_META;
+            if (event.xbutton.state & LockMask) modifiers |= CJ_MOD_CAPS;
+            if (event.xbutton.state & Mod2Mask) modifiers |= CJ_MOD_NUM;
+
+            cj_mouse_event_t mouse_event = {0};
+            mouse_event.type = CJ_MOUSE_SCROLL;
+            mouse_event.x = x;
+            mouse_event.y = y;
+            mouse_event.scroll_y = scroll_delta;
+            mouse_event.modifiers = modifiers;
+            cj_window__dispatch_mouse_callback(window, &mouse_event);
+          }
+        }
+        // Important: continue to next event after handling scroll, don't process as regular button
+        continue;
+      } else {
+        // Regular mouse button pressed
+        CJellyApplication* app = cjelly_application_get_current();
+        if (app) {
+          cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)event.xbutton.window);
+          if (window) {
+            cj_mouse_button_t button = CJ_MOUSE_BUTTON_LEFT;
+            if (event.xbutton.button == Button2) button = CJ_MOUSE_BUTTON_MIDDLE;
+            else if (event.xbutton.button == Button3) button = CJ_MOUSE_BUTTON_RIGHT;
+            else if (event.xbutton.button == 8) button = CJ_MOUSE_BUTTON_4;
+            else if (event.xbutton.button == 9) button = CJ_MOUSE_BUTTON_5;
+
+            int32_t x = (int32_t)event.xbutton.x;
+            int32_t y = (int32_t)event.xbutton.y;
+
+            // Extract modifiers
+            cj_modifiers_t modifiers = CJ_MOD_NONE;
+            if (event.xbutton.state & ShiftMask) modifiers |= CJ_MOD_SHIFT;
+            if (event.xbutton.state & ControlMask) modifiers |= CJ_MOD_CTRL;
+            if (event.xbutton.state & Mod1Mask) modifiers |= CJ_MOD_ALT;
+            if (event.xbutton.state & Mod4Mask) modifiers |= CJ_MOD_META;
+            if (event.xbutton.state & LockMask) modifiers |= CJ_MOD_CAPS;
+            if (event.xbutton.state & Mod2Mask) modifiers |= CJ_MOD_NUM;
+
+            cj_mouse_event_t mouse_event = {0};
+            mouse_event.type = CJ_MOUSE_BUTTON_DOWN;
+            mouse_event.x = x;
+            mouse_event.y = y;
+            mouse_event.button = button;
+            mouse_event.modifiers = modifiers;
+            cj_window__dispatch_mouse_callback(window, &mouse_event);
+          }
+        }
+      }
+    }
+    if (event.type == ButtonRelease) {
+      // Skip ButtonRelease for scroll buttons (Button4/Button5) - scroll events only use ButtonPress
+      if (event.xbutton.button == Button4 || event.xbutton.button == Button5) {
+        // Scroll buttons don't generate BUTTON_UP events, only SCROLL events via ButtonPress
+        continue;
+      }
+      // Mouse button released
+      CJellyApplication* app = cjelly_application_get_current();
+      if (app) {
+        cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)event.xbutton.window);
+        if (window) {
+          cj_mouse_button_t button = CJ_MOUSE_BUTTON_LEFT;
+          if (event.xbutton.button == Button2) button = CJ_MOUSE_BUTTON_MIDDLE;
+          else if (event.xbutton.button == Button3) button = CJ_MOUSE_BUTTON_RIGHT;
+          else if (event.xbutton.button == 8) button = CJ_MOUSE_BUTTON_4;
+          else if (event.xbutton.button == 9) button = CJ_MOUSE_BUTTON_5;
+
+          int32_t x = (int32_t)event.xbutton.x;
+          int32_t y = (int32_t)event.xbutton.y;
+
+          // Extract modifiers
+          cj_modifiers_t modifiers = CJ_MOD_NONE;
+          if (event.xbutton.state & ShiftMask) modifiers |= CJ_MOD_SHIFT;
+          if (event.xbutton.state & ControlMask) modifiers |= CJ_MOD_CTRL;
+          if (event.xbutton.state & Mod1Mask) modifiers |= CJ_MOD_ALT;
+          if (event.xbutton.state & Mod4Mask) modifiers |= CJ_MOD_META;
+          if (event.xbutton.state & LockMask) modifiers |= CJ_MOD_CAPS;
+          if (event.xbutton.state & Mod2Mask) modifiers |= CJ_MOD_NUM;
+
+          cj_mouse_event_t mouse_event = {0};
+          mouse_event.type = CJ_MOUSE_BUTTON_UP;
+          mouse_event.x = x;
+          mouse_event.y = y;
+          mouse_event.button = button;
+          mouse_event.modifiers = modifiers;
+          cj_window__dispatch_mouse_callback(window, &mouse_event);
+        }
+      }
+    }
+    if (event.type == EnterNotify) {
+      // Mouse entered window
+      CJellyApplication* app = cjelly_application_get_current();
+      if (app) {
+        cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)event.xcrossing.window);
+        if (window) {
+          int32_t x = (int32_t)event.xcrossing.x;
+          int32_t y = (int32_t)event.xcrossing.y;
+
+          // Extract modifiers
+          cj_modifiers_t modifiers = CJ_MOD_NONE;
+          if (event.xcrossing.state & ShiftMask) modifiers |= CJ_MOD_SHIFT;
+          if (event.xcrossing.state & ControlMask) modifiers |= CJ_MOD_CTRL;
+          if (event.xcrossing.state & Mod1Mask) modifiers |= CJ_MOD_ALT;
+          if (event.xcrossing.state & Mod4Mask) modifiers |= CJ_MOD_META;
+          if (event.xcrossing.state & LockMask) modifiers |= CJ_MOD_CAPS;
+          if (event.xcrossing.state & Mod2Mask) modifiers |= CJ_MOD_NUM;
+
+          cj_mouse_event_t mouse_event = {0};
+          mouse_event.type = CJ_MOUSE_ENTER;
+          mouse_event.x = x;
+          mouse_event.y = y;
+          mouse_event.modifiers = modifiers;
+          cj_window__dispatch_mouse_callback(window, &mouse_event);
+        }
+      }
+    }
+    if (event.type == LeaveNotify) {
+      // Mouse left window
+      CJellyApplication* app = cjelly_application_get_current();
+      if (app) {
+        cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)event.xcrossing.window);
+        if (window) {
+          int32_t x = (int32_t)event.xcrossing.x;
+          int32_t y = (int32_t)event.xcrossing.y;
+
+          // Extract modifiers
+          cj_modifiers_t modifiers = CJ_MOD_NONE;
+          if (event.xcrossing.state & ShiftMask) modifiers |= CJ_MOD_SHIFT;
+          if (event.xcrossing.state & ControlMask) modifiers |= CJ_MOD_CTRL;
+          if (event.xcrossing.state & Mod1Mask) modifiers |= CJ_MOD_ALT;
+          if (event.xcrossing.state & Mod4Mask) modifiers |= CJ_MOD_META;
+          if (event.xcrossing.state & LockMask) modifiers |= CJ_MOD_CAPS;
+          if (event.xcrossing.state & Mod2Mask) modifiers |= CJ_MOD_NUM;
+
+          cj_mouse_event_t mouse_event = {0};
+          mouse_event.type = CJ_MOUSE_LEAVE;
+          mouse_event.x = x;
+          mouse_event.y = y;
+          mouse_event.modifiers = modifiers;
+          cj_window__dispatch_mouse_callback(window, &mouse_event);
         }
       }
     }
