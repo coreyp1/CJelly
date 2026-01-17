@@ -968,6 +968,57 @@ static int32_t physical_to_logical(int32_t physical, float dpi_scale) {
 
 #include <math.h>
 
+/**
+ * @brief Query window frame extents (decoration sizes) from window manager.
+ * @param display X11 display.
+ * @param window Window to query.
+ * @param out_left Pointer to receive left border width. Can be NULL.
+ * @param out_right Pointer to receive right border width. Can be NULL.
+ * @param out_top Pointer to receive top border (title bar) height. Can be NULL.
+ * @param out_bottom Pointer to receive bottom border height. Can be NULL.
+ * @return true if frame extents were successfully queried, false otherwise.
+ *
+ * Uses _NET_FRAME_EXTENTS property (EWMH specification).
+ * If the property is not available (e.g., window not yet mapped or WM doesn't support it),
+ * returns false and sets all outputs to 0.
+ */
+static bool get_frame_extents(Display* display, Window window,
+                              int32_t* out_left, int32_t* out_right,
+                              int32_t* out_top, int32_t* out_bottom) {
+  if (out_left) *out_left = 0;
+  if (out_right) *out_right = 0;
+  if (out_top) *out_top = 0;
+  if (out_bottom) *out_bottom = 0;
+
+  Atom frame_extents = XInternAtom(display, "_NET_FRAME_EXTENTS", True);
+  if (frame_extents == None) {
+    return false;  /* Property not supported by WM */
+  }
+
+  Atom actual_type;
+  int actual_format;
+  unsigned long nitems, bytes_after;
+  unsigned char* data = NULL;
+
+  int result = XGetWindowProperty(display, window, frame_extents,
+                                  0, 4, False, XA_CARDINAL,
+                                  &actual_type, &actual_format,
+                                  &nitems, &bytes_after, &data);
+
+  if (result == Success && actual_type == XA_CARDINAL && actual_format == 32 && nitems == 4) {
+    long* extents = (long*)data;
+    if (out_left) *out_left = (int32_t)extents[0];
+    if (out_right) *out_right = (int32_t)extents[1];
+    if (out_top) *out_top = (int32_t)extents[2];
+    if (out_bottom) *out_bottom = (int32_t)extents[3];
+    XFree(data);
+    return true;
+  }
+
+  if (data) XFree(data);
+  return false;
+}
+
 /* XRandR support - try to include, but handle gracefully if not available */
 #if __has_include(<X11/extensions/Xrandr.h>)
 #include <X11/extensions/Xrandr.h>
@@ -1227,13 +1278,14 @@ static void plat_createPlatformWindow(CJPlatformWindow * win, const char * title
     XIconifyWindow(display, win->handle, screen);
   }
 
-  /* Update cached position from actual window position */
+  /* Update cached position to CLIENT coordinates.
+   * XMoveWindow expects client coordinates, so we use client coords throughout. */
   Window child;
-  int actual_x, actual_y;
+  int client_x, client_y;
   if (XTranslateCoordinates(display, win->handle, RootWindow(display, screen),
-                            0, 0, &actual_x, &actual_y, &child)) {
-    win->x = actual_x;
-    win->y = actual_y;
+                            0, 0, &client_x, &client_y, &child)) {
+    win->x = client_x;
+    win->y = client_y;
   }
 
   /* Get DPI for this window based on position */
@@ -1920,7 +1972,8 @@ CJ_API void cj_window_get_position(const cj_window_t* window, int32_t* out_x, in
     if (out_y) *out_y = window->plat->y;
   }
 #else
-  // Linux: return cached position (will be updated via ConfigureNotify)
+  // Linux: return cached CLIENT position.
+  // XMoveWindow expects client coordinates, so we use client coords throughout.
   if (out_x) *out_x = window->plat->x;
   if (out_y) *out_y = window->plat->y;
 #endif
@@ -2008,17 +2061,34 @@ CJ_API cj_result_t cj_window_set_position(cj_window_t* window, int32_t x, int32_
   window->plat->y = y;
 #else
   extern Display* display;
+
+  // Skip if position hasn't changed (reduces lag from duplicate moves)
+  if (x == window->plat->x && y == window->plat->y) {
+    return CJ_SUCCESS;
+  }
+
+  // Get decoration offset
+  int32_t decor_left = 0, decor_top = 0;
+  get_frame_extents(display, window->plat->handle, &decor_left, NULL, &decor_top, NULL);
+
+  // Empirically determined: WM adds (decor - 32) to our coordinates.
+  // To compensate, subtract this offset.
+  // This seems to be specific to WSLg/XWayland behavior.
+  int32_t offset_x = decor_left - 32;
+  int32_t offset_y = decor_top - 32;
+  int32_t move_x = x - offset_x;
+  int32_t move_y = y - offset_y;
+
   // Set flag to suppress ConfigureNotify feedback during programmatic moves
   cj_window__set_programmatic_move(window, true);
-  XMoveWindow(display, window->plat->handle, x, y);
+
+  // x,y are CLIENT coordinates. Subtract offset to compensate for WM behavior.
+  XMoveWindow(display, window->plat->handle, move_x, move_y);
   XFlush(display);
-  // Update cached position (will be confirmed by ConfigureNotify)
+
+  // Update cached position immediately (in client coordinates)
   window->plat->x = x;
   window->plat->y = y;
-  // Flag will be cleared in ConfigureNotify handler
-  // Note: We don't update root coordinates here because the mouse cursor hasn't moved
-  // in screen space - only the window has moved. Root coordinates will be updated
-  // by the next MotionNotify event, which will have the correct root coordinates.
 #endif
   return CJ_SUCCESS;
 }

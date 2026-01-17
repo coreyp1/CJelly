@@ -337,7 +337,6 @@ static void test_mouse_callback(cj_window_t* window, const cj_mouse_event_t* eve
   }
   else if (event->type == CJ_MOUSE_MOVE && state->is_dragging) {
     /* Use screen coordinates directly to calculate new window position */
-    /* This avoids all the delta calculation complexity */
     int32_t mouse_delta_x = event->screen_x - state->drag_start_mouse_screen_x;
     int32_t mouse_delta_y = event->screen_y - state->drag_start_mouse_screen_y;
 

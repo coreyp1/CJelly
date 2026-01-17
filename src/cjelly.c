@@ -1120,40 +1120,35 @@ CJ_API void processWindowEvents() {
       if (app) {
         cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)event.xconfigure.window);
         if (window) {
-          // Skip position updates if we're programmatically moving (avoid feedback loops)
-          if (cj_window__is_programmatic_move(window)) {
-            // Just update cache silently, don't dispatch callback
-            Window child;
-            int root_x, root_y;
-            if (XTranslateCoordinates(display, event.xconfigure.window, RootWindow(display, DefaultScreen(display)),
-                                       0, 0, &root_x, &root_y, &child)) {
-              cj_window__set_position(window, root_x, root_y);
+          // Get CLIENT position for consistency with get_position/set_position.
+          Window child;
+          int client_x, client_y;
+          if (XTranslateCoordinates(display, event.xconfigure.window, RootWindow(display, DefaultScreen(display)),
+                                     0, 0, &client_x, &client_y, &child)) {
+            // Skip position updates if we're programmatically moving (avoid feedback loops)
+            if (cj_window__is_programmatic_move(window)) {
+              // Just update cache silently, don't dispatch callback
+              cj_window__set_position(window, client_x, client_y);
               // Clear the flag after we've processed this ConfigureNotify
               cj_window__set_programmatic_move(window, false);
-            }
-          } else {
-            // Update position (xconfigure.x/y are relative to parent, need root coordinates)
-            Window child;
-            int root_x, root_y;
-            if (XTranslateCoordinates(display, event.xconfigure.window, RootWindow(display, DefaultScreen(display)),
-                                       0, 0, &root_x, &root_y, &child)) {
+            } else {
               int32_t current_x, current_y;
               cj_window__get_position(window, &current_x, &current_y);
               // Only update if position changed significantly (avoid feedback loops during drag)
-              int32_t dx = (root_x > current_x) ? (root_x - current_x) : (current_x - root_x);
-              int32_t dy = (root_y > current_y) ? (root_y - current_y) : (current_y - root_y);
+              int32_t dx = (client_x > current_x) ? (client_x - current_x) : (current_x - client_x);
+              int32_t dy = (client_y > current_y) ? (client_y - current_y) : (current_y - client_y);
               if (dx > 1 || dy > 1) {
-                cj_window__set_position(window, root_x, root_y);
-                cj_window__dispatch_move_callback(window, root_x, root_y);
-              } else if (root_x != current_x || root_y != current_y) {
+                cj_window__set_position(window, client_x, client_y);
+                cj_window__dispatch_move_callback(window, client_x, client_y);
+              } else if (client_x != current_x || client_y != current_y) {
                 // Small change (< 2 pixels) - just update cache without dispatching callback
-                cj_window__set_position(window, root_x, root_y);
+                cj_window__set_position(window, client_x, client_y);
               }
 
               // Check if DPI changed (window moved to different monitor)
               float old_scale = cj_window__get_dpi_scale(window);
               Window root = RootWindow(display, DefaultScreen(display));
-              float new_scale = cj_window__get_dpi_scale_linux(display, root, root_x, root_y);
+              float new_scale = cj_window__get_dpi_scale_linux(display, root, client_x, client_y);
               if (fabsf(new_scale - old_scale) > 0.01f) {  // DPI changed (with small threshold for floating point)
                 cj_window__set_dpi_scale(window, new_scale);
                 // Mark swapchain for recreation (physical size may have changed)
@@ -1205,7 +1200,7 @@ CJ_API void processWindowEvents() {
       if (app) {
         cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)event.xkey.window);
         if (window) {
-          KeySym sym = XLookupKeysym(&event.xkey, 0);
+      KeySym sym = XLookupKeysym(&event.xkey, 0);
 
           // Map X11 keysym to cj_keycode_t
           cj_keycode_t keycode = CJ_KEY_UNKNOWN;
