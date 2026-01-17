@@ -200,15 +200,47 @@ typedef enum cj_mouse_event_type {
   CJ_MOUSE_LEAVE,             /**< Cursor left window. */
 } cj_mouse_event_type_t;
 
-/** @brief Mouse event structure. */
+/** @brief Mouse event structure.
+ *
+ *  Coordinate Space Notes:
+ *  - On Windows (DPI-aware): x, y, screen_x, screen_y are in LOGICAL pixels (matches window position API).
+ *  - On Linux: x, y, screen_x, screen_y are in PHYSICAL pixels (X11 always uses physical pixels).
+ *  - The _physical fields are ALWAYS in physical pixels on all platforms, for rendering/hit-testing use.
+ *
+ *  Usage Guidelines:
+ *  - Use x, y, screen_x, screen_y for UI logic (matches window position/size API coordinate space).
+ *  - Use x_physical, y_physical, screen_x_physical, screen_y_physical when you need actual pixel positions
+ *    (e.g., for rendering, pixel-perfect hit testing, or when working with physical pixel buffers).
+ */
 typedef struct cj_mouse_event {
   cj_mouse_event_type_t type; /**< Type of mouse event. */
+
+  /** Window-relative coordinates (logical pixels on Windows, physical pixels on Linux).
+   *  These match the coordinate space used by cj_window_get_position() and cj_window_get_size().
+   *  Use these for UI logic that needs to match window position/size API. */
   int32_t x;                  /**< X position in window coordinates (0 = left edge). */
   int32_t y;                  /**< Y position in window coordinates (0 = top edge). */
+
+  /** Screen coordinates (logical pixels on Windows, physical pixels on Linux).
+   *  These match the coordinate space used by cj_window_get_position() and cj_window_set_position().
+   *  Use these for dragging and other screen-space operations. */
   int32_t screen_x;           /**< X position in screen coordinates (for dragging). */
   int32_t screen_y;           /**< Y position in screen coordinates (for dragging). */
+
+  /** Window-relative coordinates in PHYSICAL pixels (always physical, all platforms).
+   *  Use these when you need actual pixel positions for rendering or pixel-perfect hit testing. */
+  int32_t x_physical;          /**< X position in window coordinates, physical pixels. */
+  int32_t y_physical;          /**< Y position in window coordinates, physical pixels. */
+
+  /** Screen coordinates in PHYSICAL pixels (always physical, all platforms).
+   *  Use these when you need actual pixel positions for screen-space operations. */
+  int32_t screen_x_physical;  /**< X position in screen coordinates, physical pixels. */
+  int32_t screen_y_physical;  /**< Y position in screen coordinates, physical pixels. */
+
+  /** Deltas in window-relative coordinates (same coordinate space as x, y). */
   int32_t dx;                 /**< Delta X since last move (for MOVE events). */
   int32_t dy;                 /**< Delta Y since last move (for MOVE events). */
+
   float scroll_x;             /**< Horizontal scroll delta (for SCROLL events, positive = right). */
   float scroll_y;             /**< Vertical scroll delta (for SCROLL events, positive = down). */
   cj_mouse_button_t button;   /**< Button involved (for BUTTON_DOWN/UP events). */

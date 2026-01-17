@@ -1496,10 +1496,15 @@ CJ_API void processWindowEvents() {
 
           cj_mouse_event_t mouse_event = {0};
           mouse_event.type = CJ_MOUSE_MOVE;
-          mouse_event.x = x;
-          mouse_event.y = y;
-          mouse_event.screen_x = (int32_t)event.xmotion.x_root;
-          mouse_event.screen_y = (int32_t)event.xmotion.y_root;
+          mouse_event.x = x;  // Physical pixels (Linux/X11)
+          mouse_event.y = y;  // Physical pixels (Linux/X11)
+          mouse_event.screen_x = (int32_t)event.xmotion.x_root;  // Physical pixels (Linux/X11)
+          mouse_event.screen_y = (int32_t)event.xmotion.y_root;  // Physical pixels (Linux/X11)
+          // On Linux, coordinates are already physical, so copy to _physical fields
+          mouse_event.x_physical = x;
+          mouse_event.y_physical = y;
+          mouse_event.screen_x_physical = (int32_t)event.xmotion.x_root;
+          mouse_event.screen_y_physical = (int32_t)event.xmotion.y_root;
           // Use screen-space deltas (calculated above)
           mouse_event.dx = screen_dx;
           mouse_event.dy = screen_dy;
@@ -1531,8 +1536,15 @@ CJ_API void processWindowEvents() {
 
             cj_mouse_event_t mouse_event = {0};
             mouse_event.type = CJ_MOUSE_SCROLL;
-            mouse_event.x = x;
-            mouse_event.y = y;
+            mouse_event.x = x;  // Physical pixels (Linux/X11)
+            mouse_event.y = y;  // Physical pixels (Linux/X11)
+            mouse_event.screen_x = (int32_t)event.xbutton.x_root;  // Physical pixels (Linux/X11)
+            mouse_event.screen_y = (int32_t)event.xbutton.y_root;  // Physical pixels (Linux/X11)
+            // On Linux, coordinates are already physical, so copy to _physical fields
+            mouse_event.x_physical = x;
+            mouse_event.y_physical = y;
+            mouse_event.screen_x_physical = (int32_t)event.xbutton.x_root;
+            mouse_event.screen_y_physical = (int32_t)event.xbutton.y_root;
             mouse_event.scroll_y = scroll_delta;
             mouse_event.modifiers = modifiers;
             cj_window__dispatch_mouse_callback(window, &mouse_event);
@@ -1570,10 +1582,15 @@ CJ_API void processWindowEvents() {
 
             cj_mouse_event_t mouse_event = {0};
             mouse_event.type = CJ_MOUSE_BUTTON_DOWN;
-            mouse_event.x = x;
-            mouse_event.y = y;
-            mouse_event.screen_x = (int32_t)event.xbutton.x_root;
-            mouse_event.screen_y = (int32_t)event.xbutton.y_root;
+            mouse_event.x = x;  // Physical pixels (Linux/X11)
+            mouse_event.y = y;  // Physical pixels (Linux/X11)
+            mouse_event.screen_x = (int32_t)event.xbutton.x_root;  // Physical pixels (Linux/X11)
+            mouse_event.screen_y = (int32_t)event.xbutton.y_root;  // Physical pixels (Linux/X11)
+            // On Linux, coordinates are already physical, so copy to _physical fields
+            mouse_event.x_physical = x;
+            mouse_event.y_physical = y;
+            mouse_event.screen_x_physical = (int32_t)event.xbutton.x_root;
+            mouse_event.screen_y_physical = (int32_t)event.xbutton.y_root;
             mouse_event.button = button;
             mouse_event.modifiers = modifiers;
             cj_window__dispatch_mouse_callback(window, &mouse_event);
@@ -1612,8 +1629,15 @@ CJ_API void processWindowEvents() {
 
           cj_mouse_event_t mouse_event = {0};
           mouse_event.type = CJ_MOUSE_BUTTON_UP;
-          mouse_event.x = x;
-          mouse_event.y = y;
+          mouse_event.x = x;  // Physical pixels (Linux/X11)
+          mouse_event.y = y;  // Physical pixels (Linux/X11)
+          mouse_event.screen_x = (int32_t)event.xbutton.x_root;  // Physical pixels (Linux/X11)
+          mouse_event.screen_y = (int32_t)event.xbutton.y_root;  // Physical pixels (Linux/X11)
+          // On Linux, coordinates are already physical, so copy to _physical fields
+          mouse_event.x_physical = x;
+          mouse_event.y_physical = y;
+          mouse_event.screen_x_physical = (int32_t)event.xbutton.x_root;
+          mouse_event.screen_y_physical = (int32_t)event.xbutton.y_root;
           mouse_event.button = button;
           mouse_event.modifiers = modifiers;
           cj_window__dispatch_mouse_callback(window, &mouse_event);
@@ -1640,8 +1664,15 @@ CJ_API void processWindowEvents() {
 
           cj_mouse_event_t mouse_event = {0};
           mouse_event.type = CJ_MOUSE_ENTER;
-          mouse_event.x = x;
-          mouse_event.y = y;
+          mouse_event.x = x;  // Physical pixels (Linux/X11)
+          mouse_event.y = y;  // Physical pixels (Linux/X11)
+          mouse_event.screen_x = (int32_t)event.xcrossing.x_root;  // Physical pixels (Linux/X11)
+          mouse_event.screen_y = (int32_t)event.xcrossing.y_root;  // Physical pixels (Linux/X11)
+          // On Linux, coordinates are already physical, so copy to _physical fields
+          mouse_event.x_physical = x;
+          mouse_event.y_physical = y;
+          mouse_event.screen_x_physical = (int32_t)event.xcrossing.x_root;
+          mouse_event.screen_y_physical = (int32_t)event.xcrossing.y_root;
           mouse_event.modifiers = modifiers;
           cj_window__dispatch_mouse_callback(window, &mouse_event);
         }
@@ -1667,8 +1698,15 @@ CJ_API void processWindowEvents() {
 
           cj_mouse_event_t mouse_event = {0};
           mouse_event.type = CJ_MOUSE_LEAVE;
-          mouse_event.x = x;
-          mouse_event.y = y;
+          mouse_event.x = x;  // Physical pixels (Linux/X11)
+          mouse_event.y = y;  // Physical pixels (Linux/X11)
+          mouse_event.screen_x = (int32_t)event.xcrossing.x_root;  // Physical pixels (Linux/X11)
+          mouse_event.screen_y = (int32_t)event.xcrossing.y_root;  // Physical pixels (Linux/X11)
+          // On Linux, coordinates are already physical, so copy to _physical fields
+          mouse_event.x_physical = x;
+          mouse_event.y_physical = y;
+          mouse_event.screen_x_physical = (int32_t)event.xcrossing.x_root;
+          mouse_event.screen_y_physical = (int32_t)event.xcrossing.y_root;
           mouse_event.modifiers = modifiers;
           cj_window__dispatch_mouse_callback(window, &mouse_event);
         }

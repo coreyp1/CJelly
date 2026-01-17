@@ -413,6 +413,9 @@ static float dpi_to_scale(UINT dpi) {
   return (float)dpi / 96.0f;  // 96 DPI = 1.0 scale
 }
 
+/* Forward declarations for helper functions */
+static int32_t logical_to_physical(int32_t logical, float dpi_scale);
+
 /*
  * Windows window procedure.
  *
@@ -669,16 +672,23 @@ static LRESULT CALLBACK CjWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
           int32_t dy = y - window->mouse_y;
           cj_modifiers_t modifiers = get_windows_modifiers();
 
-          // Convert to screen coordinates
+          // Convert to screen coordinates (logical pixels)
           POINT screen_pt = {x, y};
           ClientToScreen(hwnd, &screen_pt);
 
+          // Get DPI scale for physical pixel conversion
+          float dpi_scale = window->plat->dpi_scale;
+
           cj_mouse_event_t event = {0};
           event.type = CJ_MOUSE_MOVE;
-          event.x = x;
-          event.y = y;
-          event.screen_x = screen_pt.x;
-          event.screen_y = screen_pt.y;
+          event.x = x;  // Logical pixels (Windows DPI-aware)
+          event.y = y;  // Logical pixels (Windows DPI-aware)
+          event.screen_x = screen_pt.x;  // Logical pixels (Windows DPI-aware)
+          event.screen_y = screen_pt.y;  // Logical pixels (Windows DPI-aware)
+          event.x_physical = logical_to_physical(x, dpi_scale);
+          event.y_physical = logical_to_physical(y, dpi_scale);
+          event.screen_x_physical = logical_to_physical(screen_pt.x, dpi_scale);
+          event.screen_y_physical = logical_to_physical(screen_pt.y, dpi_scale);
           event.dx = dx;
           event.dy = dy;
           event.modifiers = modifiers;
@@ -698,16 +708,23 @@ static LRESULT CALLBACK CjWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
           int32_t y = (int32_t)(short)HIWORD(lParam);
           cj_modifiers_t modifiers = get_windows_modifiers();
 
-          // Convert to screen coordinates
+          // Convert to screen coordinates (logical pixels)
           POINT screen_pt = {x, y};
           ClientToScreen(hwnd, &screen_pt);
 
+          // Get DPI scale for physical pixel conversion
+          float dpi_scale = window->plat->dpi_scale;
+
           cj_mouse_event_t event = {0};
           event.type = CJ_MOUSE_BUTTON_DOWN;
-          event.x = x;
-          event.y = y;
-          event.screen_x = screen_pt.x;
-          event.screen_y = screen_pt.y;
+          event.x = x;  // Logical pixels (Windows DPI-aware)
+          event.y = y;  // Logical pixels (Windows DPI-aware)
+          event.screen_x = screen_pt.x;  // Logical pixels (Windows DPI-aware)
+          event.screen_y = screen_pt.y;  // Logical pixels (Windows DPI-aware)
+          event.x_physical = logical_to_physical(x, dpi_scale);
+          event.y_physical = logical_to_physical(y, dpi_scale);
+          event.screen_x_physical = logical_to_physical(screen_pt.x, dpi_scale);
+          event.screen_y_physical = logical_to_physical(screen_pt.y, dpi_scale);
           event.button = CJ_MOUSE_BUTTON_LEFT;
           event.modifiers = modifiers;
           // Dispatch as BUTTON_DOWN - the callback can detect double-click via timing
@@ -739,16 +756,23 @@ static LRESULT CALLBACK CjWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
           int32_t y = (int32_t)(short)HIWORD(lParam);
           cj_modifiers_t modifiers = get_windows_modifiers();
 
-          // Convert to screen coordinates
+          // Convert to screen coordinates (logical pixels)
           POINT screen_pt = {x, y};
           ClientToScreen(hwnd, &screen_pt);
 
+          // Get DPI scale for physical pixel conversion
+          float dpi_scale = window->plat->dpi_scale;
+
           cj_mouse_event_t event = {0};
           event.type = CJ_MOUSE_BUTTON_DOWN;
-          event.x = x;
-          event.y = y;
-          event.screen_x = screen_pt.x;
-          event.screen_y = screen_pt.y;
+          event.x = x;  // Logical pixels (Windows DPI-aware)
+          event.y = y;  // Logical pixels (Windows DPI-aware)
+          event.screen_x = screen_pt.x;  // Logical pixels (Windows DPI-aware)
+          event.screen_y = screen_pt.y;  // Logical pixels (Windows DPI-aware)
+          event.x_physical = logical_to_physical(x, dpi_scale);
+          event.y_physical = logical_to_physical(y, dpi_scale);
+          event.screen_x_physical = logical_to_physical(screen_pt.x, dpi_scale);
+          event.screen_y_physical = logical_to_physical(screen_pt.y, dpi_scale);
           event.button = button;
           event.modifiers = modifiers;
           cj_window__dispatch_mouse_callback(window, &event);
@@ -778,16 +802,23 @@ static LRESULT CALLBACK CjWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
           int32_t y = (int32_t)(short)HIWORD(lParam);
           cj_modifiers_t modifiers = get_windows_modifiers();
 
-          // Convert to screen coordinates
+          // Convert to screen coordinates (logical pixels)
           POINT screen_pt = {x, y};
           ClientToScreen(hwnd, &screen_pt);
 
+          // Get DPI scale for physical pixel conversion
+          float dpi_scale = window->plat->dpi_scale;
+
           cj_mouse_event_t event = {0};
           event.type = CJ_MOUSE_BUTTON_UP;
-          event.x = x;
-          event.y = y;
-          event.screen_x = screen_pt.x;
-          event.screen_y = screen_pt.y;
+          event.x = x;  // Logical pixels (Windows DPI-aware)
+          event.y = y;  // Logical pixels (Windows DPI-aware)
+          event.screen_x = screen_pt.x;  // Logical pixels (Windows DPI-aware)
+          event.screen_y = screen_pt.y;  // Logical pixels (Windows DPI-aware)
+          event.x_physical = logical_to_physical(x, dpi_scale);
+          event.y_physical = logical_to_physical(y, dpi_scale);
+          event.screen_x_physical = logical_to_physical(screen_pt.x, dpi_scale);
+          event.screen_y_physical = logical_to_physical(screen_pt.y, dpi_scale);
           event.button = button;
           event.modifiers = modifiers;
           cj_window__dispatch_mouse_callback(window, &event);
@@ -807,10 +838,23 @@ static LRESULT CALLBACK CjWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
           float delta = (float)(short)HIWORD(wParam) / (float)WHEEL_DELTA;
           cj_modifiers_t modifiers = get_windows_modifiers();
 
+          // Get DPI scale for physical pixel conversion
+          float dpi_scale = window->plat->dpi_scale;
+
+          // Convert to screen coordinates for screen_x/screen_y
+          POINT screen_pt = {pt.x, pt.y};
+          ClientToScreen(hwnd, &screen_pt);
+
           cj_mouse_event_t event = {0};
           event.type = CJ_MOUSE_SCROLL;
-          event.x = pt.x;
-          event.y = pt.y;
+          event.x = pt.x;  // Logical pixels (Windows DPI-aware)
+          event.y = pt.y;  // Logical pixels (Windows DPI-aware)
+          event.screen_x = screen_pt.x;  // Logical pixels (Windows DPI-aware)
+          event.screen_y = screen_pt.y;  // Logical pixels (Windows DPI-aware)
+          event.x_physical = logical_to_physical(pt.x, dpi_scale);
+          event.y_physical = logical_to_physical(pt.y, dpi_scale);
+          event.screen_x_physical = logical_to_physical(screen_pt.x, dpi_scale);
+          event.screen_y_physical = logical_to_physical(screen_pt.y, dpi_scale);
           event.scroll_y = delta;
           event.modifiers = modifiers;
           cj_window__dispatch_mouse_callback(window, &event);
@@ -830,10 +874,23 @@ static LRESULT CALLBACK CjWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
           float delta = (float)(short)HIWORD(wParam) / (float)WHEEL_DELTA;
           cj_modifiers_t modifiers = get_windows_modifiers();
 
+          // Get DPI scale for physical pixel conversion
+          float dpi_scale = window->plat->dpi_scale;
+
+          // Convert to screen coordinates for screen_x/screen_y
+          POINT screen_pt = {pt.x, pt.y};
+          ClientToScreen(hwnd, &screen_pt);
+
           cj_mouse_event_t event = {0};
           event.type = CJ_MOUSE_SCROLL;
-          event.x = pt.x;
-          event.y = pt.y;
+          event.x = pt.x;  // Logical pixels (Windows DPI-aware)
+          event.y = pt.y;  // Logical pixels (Windows DPI-aware)
+          event.screen_x = screen_pt.x;  // Logical pixels (Windows DPI-aware)
+          event.screen_y = screen_pt.y;  // Logical pixels (Windows DPI-aware)
+          event.x_physical = logical_to_physical(pt.x, dpi_scale);
+          event.y_physical = logical_to_physical(pt.y, dpi_scale);
+          event.screen_x_physical = logical_to_physical(screen_pt.x, dpi_scale);
+          event.screen_y_physical = logical_to_physical(screen_pt.y, dpi_scale);
           event.scroll_x = delta;
           event.modifiers = modifiers;
           cj_window__dispatch_mouse_callback(window, &event);
@@ -850,10 +907,23 @@ static LRESULT CALLBACK CjWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
         if (window && !window->is_destroyed) {
           cj_modifiers_t modifiers = get_windows_modifiers();
 
+          // Get DPI scale for physical pixel conversion
+          float dpi_scale = window->plat->dpi_scale;
+
+          // Convert cached mouse position to screen coordinates
+          POINT screen_pt = {window->mouse_x, window->mouse_y};
+          ClientToScreen(hwnd, &screen_pt);
+
           cj_mouse_event_t event = {0};
           event.type = CJ_MOUSE_LEAVE;
-          event.x = window->mouse_x;
-          event.y = window->mouse_y;
+          event.x = window->mouse_x;  // Logical pixels (Windows DPI-aware)
+          event.y = window->mouse_y;  // Logical pixels (Windows DPI-aware)
+          event.screen_x = screen_pt.x;  // Logical pixels (Windows DPI-aware)
+          event.screen_y = screen_pt.y;  // Logical pixels (Windows DPI-aware)
+          event.x_physical = logical_to_physical(window->mouse_x, dpi_scale);
+          event.y_physical = logical_to_physical(window->mouse_y, dpi_scale);
+          event.screen_x_physical = logical_to_physical(screen_pt.x, dpi_scale);
+          event.screen_y_physical = logical_to_physical(screen_pt.y, dpi_scale);
           event.modifiers = modifiers;
           cj_window__dispatch_mouse_callback(window, &event);
         }
