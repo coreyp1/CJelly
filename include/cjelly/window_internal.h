@@ -75,6 +75,17 @@ void cj_window__dispatch_move_callback(cj_window_t* window, int32_t new_x, int32
  */
 void cj_window__dispatch_state_callback(cj_window_t* window, cj_window_state_t new_state);
 
+#ifndef _WIN32
+/** Internal helper to get DPI scale for a window based on its position (Linux/XRandR).
+ *  @param display X11 display.
+ *  @param root Root window.
+ *  @param win_x Window X position.
+ *  @param win_y Window Y position.
+ *  @return DPI scale factor (1.0 = 96 DPI).
+ */
+float cj_window__get_dpi_scale_linux(Display* display, Window root, int32_t win_x, int32_t win_y);
+#endif
+
 /** Internal helper to get window position.
  *  @param window The window to query.
  *  @param out_x Pointer to receive X position. Can be NULL.
@@ -100,6 +111,23 @@ cj_window_state_t cj_window__get_state(cj_window_t* window);
  *  @param state New window state.
  */
 void cj_window__set_state(cj_window_t* window, cj_window_state_t state);
+
+/** Internal helper to get DPI scale.
+ *  @param window The window to query.
+ *  @return DPI scale factor (1.0 = 96 DPI).
+ */
+float cj_window__get_dpi_scale(cj_window_t* window);
+
+/** Internal helper to set DPI scale.
+ *  @param window The window to update.
+ *  @param dpi_scale New DPI scale factor.
+ */
+void cj_window__set_dpi_scale(cj_window_t* window, float dpi_scale);
+
+/** Internal helper to mark swapchain for recreation.
+ *  @param window The window to mark.
+ */
+void cj_window__mark_swapchain_for_recreation(cj_window_t* window);
 
 /** Internal helper to check if dirty flag should be cleared after frame render.
  *  @param window The window to check.

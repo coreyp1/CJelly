@@ -385,6 +385,21 @@ CJ_API void cj_window_get_position(const cj_window_t* window, int32_t* out_x, in
  */
 CJ_API cj_window_state_t cj_window_get_state(const cj_window_t* window);
 
+/** Get the DPI scale factor for a window.
+ *  Returns the DPI scale factor (1.0 = 96 DPI, 2.0 = 192 DPI, etc.).
+ *  This value can change when the window moves to a different monitor.
+ *  @param window The window to query.
+ *  @return The DPI scale factor, or 1.0 if window is invalid.
+ */
+CJ_API float cj_window_get_dpi_scale(const cj_window_t* window);
+
+/** Check if a window is on a high-DPI monitor.
+ *  Returns true if the window's DPI scale is greater than 1.0 (i.e., > 96 DPI).
+ *  @param window The window to query.
+ *  @return true if the window is on a high-DPI monitor, false otherwise.
+ */
+CJ_API bool cj_window_is_high_dpi(const cj_window_t* window);
+
 /** Set the window position in screen coordinates.
  *  Moves the window frame (including decorations) to the specified position.
  *  @param window The window to move.

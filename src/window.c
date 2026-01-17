@@ -318,12 +318,100 @@ static cj_modifiers_t get_x11_modifiers(unsigned int state) {
 #endif
 
 #ifdef _WIN32
+#include <shellscalingapi.h>
+// MDT_EFFECTIVE_DPI constant (if not defined in headers)
+#ifndef MDT_EFFECTIVE_DPI
+#define MDT_EFFECTIVE_DPI 0
+#endif
+
 /* Timer ID for resize rendering */
 #define CJ_RESIZE_TIMER_ID 1
 #define CJ_RESIZE_TIMER_MS 16  /* ~60 FPS during resize */
 
 /* Forward declaration for rendering during resize */
 static void cj_window__render_frame_immediate(cj_window_t* window);
+
+/**
+ * @brief Get DPI for a window
+ * @param hwnd Window handle
+ * @return DPI value (96 = 100% scaling)
+ */
+static UINT get_window_dpi(HWND hwnd) {
+  // Try GetDpiForWindow first (Windows 10 1607+)
+  typedef UINT (WINAPI *GetDpiForWindowFunc)(HWND);
+  static GetDpiForWindowFunc get_dpi_for_window = NULL;
+  static bool tried_load = false;
+
+  if (!tried_load) {
+    HMODULE user32 = GetModuleHandleA("user32.dll");
+    if (user32) {
+      FARPROC proc = GetProcAddress(user32, "GetDpiForWindow");
+      if (proc) {
+        // Use union to convert between function pointer types (ISO C compliant)
+        union {
+          FARPROC farproc;
+          GetDpiForWindowFunc func;
+        } u;
+        u.farproc = proc;
+        get_dpi_for_window = u.func;
+      }
+    }
+    tried_load = true;
+  }
+
+  if (get_dpi_for_window) {
+    return get_dpi_for_window(hwnd);
+  }
+
+  // Fallback: GetDpiForMonitor (Windows 8.1+)
+  {
+    // MONITOR_DPI_TYPE is an enum, use int if not defined
+    typedef HRESULT (WINAPI *GetDpiForMonitorFunc)(HMONITOR, int, UINT*, UINT*);
+    static GetDpiForMonitorFunc get_dpi_for_monitor = NULL;
+    static bool tried_load_monitor = false;
+
+    if (!tried_load_monitor) {
+      HMODULE shcore = LoadLibraryA("shcore.dll");
+      if (shcore) {
+        FARPROC proc = GetProcAddress(shcore, "GetDpiForMonitor");
+        if (proc) {
+          // Use union to convert between function pointer types (ISO C compliant)
+          union {
+            FARPROC farproc;
+            GetDpiForMonitorFunc func;
+          } u;
+          u.farproc = proc;
+          get_dpi_for_monitor = u.func;
+        }
+        FreeLibrary(shcore);
+      }
+      tried_load_monitor = true;
+    }
+
+    if (get_dpi_for_monitor) {
+      HMONITOR monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+      UINT dpi_x, dpi_y;
+      if (SUCCEEDED(get_dpi_for_monitor(monitor, MDT_EFFECTIVE_DPI, &dpi_x, &dpi_y))) {
+        return dpi_x;  // Usually same as dpi_y
+      }
+    }
+  }
+
+  // Final fallback: System DPI
+  HDC hdc = GetDC(hwnd);
+  int dpi = GetDeviceCaps(hdc, LOGPIXELSX);
+  ReleaseDC(hwnd, hdc);
+  return dpi;
+}
+
+/**
+ * @brief Convert DPI to scale factor
+ * @param dpi DPI value
+ * @return Scale factor (1.0 = 96 DPI)
+ */
+static float dpi_to_scale(UINT dpi) {
+  return (float)dpi / 96.0f;  // 96 DPI = 1.0 scale
+}
 
 /*
  * Windows window procedure.
@@ -394,6 +482,46 @@ static LRESULT CALLBACK CjWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
       return DefWindowProc(hwnd, uMsg, wParam, lParam);
     }
 
+    case WM_DPICHANGED: {
+      // DPI changed (e.g., window moved to different monitor)
+      CJellyApplication* app = cjelly_application_get_current();
+      if (app) {
+        cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)hwnd);
+        if (window && window->plat) {
+          // wParam contains new DPI (low word = X, high word = Y)
+          UINT new_dpi = LOWORD(wParam);
+          float new_scale = dpi_to_scale(new_dpi);
+          window->plat->dpi_scale = new_scale;
+
+          // lParam contains suggested new window rect in logical pixels
+          // This rect accounts for the DPI change and maintains the same physical size
+          RECT* suggested_rect = (RECT*)lParam;
+
+          // Update window size/position to suggested rect
+          // This ensures the window maintains appropriate size on the new monitor
+          SetWindowPos(hwnd, NULL,
+                      suggested_rect->left, suggested_rect->top,
+                      suggested_rect->right - suggested_rect->left,
+                      suggested_rect->bottom - suggested_rect->top,
+                      SWP_NOZORDER | SWP_NOACTIVATE);
+
+          // Update cached position and size
+          cj_window__set_position(window, suggested_rect->left, suggested_rect->top);
+          window->plat->width = suggested_rect->right - suggested_rect->left;
+          window->plat->height = suggested_rect->bottom - suggested_rect->top;
+
+          // Mark swapchain for recreation (physical size may have changed)
+          window->plat->needs_swapchain_recreate = true;
+
+          // Dispatch resize callback (size in logical pixels may have changed)
+          cj_window__dispatch_resize_callback(window,
+                                              (uint32_t)(suggested_rect->right - suggested_rect->left),
+                                              (uint32_t)(suggested_rect->bottom - suggested_rect->top));
+        }
+      }
+      return 0;
+    }
+
     case WM_MOVE: {
       // Window position changed
       CJellyApplication* app = cjelly_application_get_current();
@@ -405,10 +533,9 @@ static LRESULT CALLBACK CjWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
           if (GetWindowRect(hwnd, &rect)) {
             int32_t new_x = rect.left;
             int32_t new_y = rect.top;
-            // TODO: Apply DPI scaling conversion (for now, assume 1.0 scale)
+            // GetWindowRect returns logical pixels for DPI-aware apps
             if (new_x != window->plat->x || new_y != window->plat->y) {
-              window->plat->x = new_x;
-              window->plat->y = new_y;
+              cj_window__set_position(window, new_x, new_y);
               cj_window__dispatch_move_callback(window, new_x, new_y);
             }
           }
@@ -743,9 +870,179 @@ static LRESULT CALLBACK CjWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
       return DefWindowProc(hwnd, uMsg, wParam, lParam);
   }
 }
-#else
+#endif
+
+/**
+ * @brief Convert logical pixels to physical pixels
+ * @param logical Logical pixel value
+ * @param dpi_scale DPI scale factor
+ * @return Physical pixel value
+ */
+static int32_t logical_to_physical(int32_t logical, float dpi_scale) {
+  return (int32_t)(logical * dpi_scale + 0.5f);  // Round to nearest
+}
+
+/**
+ * @brief Convert physical pixels to logical pixels
+ * @param physical Physical pixel value
+ * @param dpi_scale DPI scale factor
+ * @return Logical pixel value
+ */
+static int32_t physical_to_logical(int32_t physical, float dpi_scale) {
+  return (int32_t)(physical / dpi_scale + 0.5f);  // Round to nearest
+}
+
+#ifndef _WIN32
 // Linux window handling is done in processWindowEvents() in cjelly.c
 // No window procedure needed for X11
+
+#include <math.h>
+
+/* XRandR support - try to include, but handle gracefully if not available */
+#if __has_include(<X11/extensions/Xrandr.h>)
+#include <X11/extensions/Xrandr.h>
+#define HAVE_XRANDR_HEADERS 1
+#else
+#define HAVE_XRANDR_HEADERS 0
+/* Minimal type definitions if headers not available */
+typedef unsigned long XID;
+typedef XID RROutput;
+typedef XID RRCrtc;
+typedef XID RRMode;
+#define None 0L
+#define RR_Connected 0
+#endif
+
+/**
+ * @brief Structure to cache monitor DPI information
+ */
+typedef struct MonitorDPI {
+  int32_t x, y;           /* Monitor position in screen coordinates */
+  uint32_t width, height; /* Monitor resolution */
+  float dpi_scale;        /* DPI scale factor (1.0 = 96 DPI) */
+  bool valid;             /* True if DPI was successfully calculated */
+} MonitorDPI;
+
+static MonitorDPI* monitor_dpis = NULL;
+static int monitor_dpi_count = 0;
+
+/**
+ * @brief Query all monitors and cache their DPI
+ * @param display X11 display
+ * @param root Root window
+ */
+static void refresh_monitor_dpis(Display* display, Window root) {
+  (void)display;  /* May be unused if XRandR not available */
+  (void)root;     /* May be unused if XRandR not available */
+
+  /* Free old cache */
+  if (monitor_dpis) {
+    free(monitor_dpis);
+    monitor_dpis = NULL;
+    monitor_dpi_count = 0;
+  }
+
+#if HAVE_XRANDR_HEADERS
+  /* Check if XRandR is available */
+  int event_base, error_base;
+  if (!XRRQueryExtension(display, &event_base, &error_base)) {
+    return;  /* XRandR not available */
+  }
+#else
+  return;  /* XRandR headers not available */
+#endif
+
+#if HAVE_XRANDR_HEADERS
+  /* Get screen resources */
+  XRRScreenResources* res = XRRGetScreenResources(display, root);
+  if (!res) return;
+#else
+  return;
+#endif
+
+#if HAVE_XRANDR_HEADERS
+  /* Allocate cache */
+  monitor_dpis = calloc(res->noutput, sizeof(MonitorDPI));
+  if (!monitor_dpis) {
+    XRRFreeScreenResources(res);
+    return;
+  }
+
+  /* Query each output */
+  for (int i = 0; i < res->noutput; i++) {
+    XRROutputInfo* output = XRRGetOutputInfo(display, res, res->outputs[i]);
+    if (!output || output->connection != RR_Connected) {
+      if (output) XRRFreeOutputInfo(output);
+      continue;
+    }
+
+    /* Get CRTC (monitor) info */
+    if (output->crtc != None) {
+      XRRCrtcInfo* crtc = XRRGetCrtcInfo(display, res, output->crtc);
+      if (crtc) {
+        MonitorDPI* m = &monitor_dpis[monitor_dpi_count];
+        m->x = crtc->x;
+        m->y = crtc->y;
+        m->width = crtc->width;
+        m->height = crtc->height;
+
+        /* Calculate DPI if physical size is available */
+        if (output->mm_width > 0 && output->mm_height > 0) {
+          /* DPI = (pixels / physical_size_inches) * 25.4mm_per_inch */
+          float dpi_x = ((float)crtc->width / (output->mm_width / 25.4f));
+          float dpi_y = ((float)crtc->height / (output->mm_height / 25.4f));
+          /* Use average of X and Y DPI */
+          float dpi = (dpi_x + dpi_y) / 2.0f;
+          m->dpi_scale = dpi / 96.0f;  /* Convert to scale factor */
+          m->valid = true;
+        } else {
+          /* No physical size - assume 96 DPI (1.0 scale) */
+          m->dpi_scale = 1.0f;
+          m->valid = false;
+        }
+
+        monitor_dpi_count++;
+        XRRFreeCrtcInfo(crtc);
+      }
+    }
+
+    XRRFreeOutputInfo(output);
+  }
+
+  XRRFreeScreenResources(res);
+#endif
+}
+
+/**
+ * @brief Get DPI scale for a window based on its position
+ * @param display X11 display
+ * @param root Root window
+ * @param win_x Window X position
+ * @param win_y Window Y position
+ * @return DPI scale factor (1.0 = 96 DPI)
+ */
+float cj_window__get_dpi_scale_linux(Display* display, Window root, int32_t win_x, int32_t win_y) {
+  /* Refresh monitor cache if needed */
+  if (!monitor_dpis) {
+    refresh_monitor_dpis(display, root);
+  }
+
+  /* Find which monitor contains the window center */
+  int32_t win_center_x = win_x;  /* Window position is top-left, use center for better matching */
+  int32_t win_center_y = win_y;
+
+  /* Find matching monitor */
+  for (int i = 0; i < monitor_dpi_count; i++) {
+    MonitorDPI* m = &monitor_dpis[i];
+    if (win_center_x >= m->x && win_center_x < m->x + (int32_t)m->width &&
+        win_center_y >= m->y && win_center_y < m->y + (int32_t)m->height) {
+      return m->dpi_scale;
+    }
+  }
+
+  /* No monitor found - default to 1.0 (96 DPI) */
+  return 1.0f;
+}
 #endif
 
 /* === Platform helpers === */
@@ -760,7 +1057,7 @@ static void plat_createPlatformWindow(CJPlatformWindow * win, const char * title
   win->last_mouse_root_y = 0;
   win->has_seen_mouse_move = false;
   win->state = initial_state;
-  win->dpi_scale = 1.0f;  /* Will be updated on first query */
+  win->dpi_scale = 1.0f;  /* Will be updated after window creation */
 #ifdef _WIN32
   HINSTANCE hInstance = GetModuleHandle(NULL);
   WNDCLASS wc = {0};
@@ -789,6 +1086,9 @@ static void plat_createPlatformWindow(CJPlatformWindow * win, const char * title
     win->x = rect.left;
     win->y = rect.top;
   }
+
+  /* Get DPI for this window */
+  win->dpi_scale = dpi_to_scale(get_window_dpi(win->handle));
 #else
   int screen = DefaultScreen(display);
   /* Determine window position */
@@ -866,6 +1166,10 @@ static void plat_createPlatformWindow(CJPlatformWindow * win, const char * title
     win->y = actual_y;
   }
 
+  /* Get DPI for this window based on position */
+  Window root = RootWindow(display, screen);
+  win->dpi_scale = cj_window__get_dpi_scale_linux(display, root, win->x, win->y);
+
   XFlush(display);
 #endif
 }
@@ -884,7 +1188,19 @@ static void plat_createSurfaceForWindow(CJPlatformWindow * win) {
 static void plat_createSwapChainForWindow(CJPlatformWindow * win) {
   if (!win) return;
   VkSurfaceCapabilitiesKHR caps; vkGetPhysicalDeviceSurfaceCapabilitiesKHR(cj_engine_physical_device(cj_engine_get_current()), win->surface, &caps);
-  win->swapChainExtent = caps.currentExtent;
+
+  /* Calculate physical size from logical size for swapchain */
+  uint32_t physical_width = (uint32_t)logical_to_physical((int32_t)win->width, win->dpi_scale);
+  uint32_t physical_height = (uint32_t)logical_to_physical((int32_t)win->height, win->dpi_scale);
+
+  /* Clamp to surface capabilities */
+  if (physical_width < caps.minImageExtent.width) physical_width = caps.minImageExtent.width;
+  if (physical_width > caps.maxImageExtent.width) physical_width = caps.maxImageExtent.width;
+  if (physical_height < caps.minImageExtent.height) physical_height = caps.minImageExtent.height;
+  if (physical_height > caps.maxImageExtent.height) physical_height = caps.maxImageExtent.height;
+
+  win->swapChainExtent.width = physical_width;
+  win->swapChainExtent.height = physical_height;
   VkSwapchainCreateInfoKHR ci = {0}; ci.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR; ci.surface = win->surface; ci.minImageCount = caps.minImageCount; ci.imageFormat = VK_FORMAT_B8G8R8A8_SRGB; ci.imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR; ci.imageExtent = win->swapChainExtent; ci.imageArrayLayers = 1; ci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT; ci.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR; ci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR; ci.presentMode = VK_PRESENT_MODE_FIFO_KHR; ci.clipped = VK_TRUE;
   /* Ensure we do not reference an invalid oldSwapchain */
   ci.oldSwapchain = VK_NULL_HANDLE;
@@ -938,7 +1254,19 @@ static void plat_recreateSwapChainForWindow(CJPlatformWindow * win) {
   /* Query new surface capabilities */
   VkSurfaceCapabilitiesKHR caps;
   vkGetPhysicalDeviceSurfaceCapabilitiesKHR(cj_engine_physical_device(cj_engine_get_current()), win->surface, &caps);
-  win->swapChainExtent = caps.currentExtent;
+
+  /* Calculate physical size from logical size for swapchain */
+  uint32_t physical_width = (uint32_t)logical_to_physical((int32_t)win->width, win->dpi_scale);
+  uint32_t physical_height = (uint32_t)logical_to_physical((int32_t)win->height, win->dpi_scale);
+
+  /* Clamp to surface capabilities */
+  if (physical_width < caps.minImageExtent.width) physical_width = caps.minImageExtent.width;
+  if (physical_width > caps.maxImageExtent.width) physical_width = caps.maxImageExtent.width;
+  if (physical_height < caps.minImageExtent.height) physical_height = caps.minImageExtent.height;
+  if (physical_height > caps.maxImageExtent.height) physical_height = caps.maxImageExtent.height;
+
+  win->swapChainExtent.width = physical_width;
+  win->swapChainExtent.height = physical_height;
 
   /* Create new swapchain with old swapchain reference */
   VkSwapchainCreateInfoKHR ci = {0};
@@ -1590,6 +1918,16 @@ CJ_API cj_window_state_t cj_window_get_state(const cj_window_t* window) {
   return window->plat->state;
 }
 
+CJ_API float cj_window_get_dpi_scale(const cj_window_t* window) {
+  if (!window || !window->plat) return 1.0f;
+  return window->plat->dpi_scale;
+}
+
+CJ_API bool cj_window_is_high_dpi(const cj_window_t* window) {
+  if (!window || !window->plat) return false;
+  return window->plat->dpi_scale > 1.0f;
+}
+
 CJ_API cj_result_t cj_window_set_position(cj_window_t* window, int32_t x, int32_t y) {
   if (!window || !window->plat || window->is_destroyed) return CJ_E_INVALID_ARGUMENT;
 #ifdef _WIN32
@@ -1980,6 +2318,21 @@ cj_window_state_t cj_window__get_state(cj_window_t* window) {
 void cj_window__set_state(cj_window_t* window, cj_window_state_t state) {
   if (!window || !window->plat) return;
   window->plat->state = state;
+}
+
+float cj_window__get_dpi_scale(cj_window_t* window) {
+  if (!window || !window->plat) return 1.0f;
+  return window->plat->dpi_scale;
+}
+
+void cj_window__set_dpi_scale(cj_window_t* window, float dpi_scale) {
+  if (!window || !window->plat) return;
+  window->plat->dpi_scale = dpi_scale;
+}
+
+void cj_window__mark_swapchain_for_recreation(cj_window_t* window) {
+  if (!window || !window->plat) return;
+  window->plat->needs_swapchain_recreate = true;
 }
 
 void cj_window__get_mouse_position(cj_window_t* window, int32_t* out_x, int32_t* out_y) {

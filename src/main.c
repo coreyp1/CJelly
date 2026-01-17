@@ -424,11 +424,26 @@ int main(void) {
 
   printf("Creating windows...\n");
   cj_window_t* win1 = cj_window_create(engine, &wdesc1);
-  printf("Created window 1\n");
+  {
+    float dpi_scale = cj_window_get_dpi_scale(win1);
+    bool is_high_dpi = cj_window_is_high_dpi(win1);
+    printf("Created window 1 - DPI scale: %.2f (%s)\n",
+           dpi_scale, is_high_dpi ? "High DPI" : "Standard DPI");
+  }
   cj_window_t* win2 = cj_window_create(engine, &wdesc2);
-  printf("Created window 2\n");
+  {
+    float dpi_scale = cj_window_get_dpi_scale(win2);
+    bool is_high_dpi = cj_window_is_high_dpi(win2);
+    printf("Created window 2 - DPI scale: %.2f (%s)\n",
+           dpi_scale, is_high_dpi ? "High DPI" : "Standard DPI");
+  }
   cj_window_t* win3 = cj_window_create(engine, &wdesc3);
-  printf("Created window 3\n");
+  {
+    float dpi_scale = cj_window_get_dpi_scale(win3);
+    bool is_high_dpi = cj_window_is_high_dpi(win3);
+    printf("Created window 3 - DPI scale: %.2f (%s)\n",
+           dpi_scale, is_high_dpi ? "High DPI" : "Standard DPI");
+  }
 
   // Create different render graphs for each window
   printf("Creating render graphs...\n");

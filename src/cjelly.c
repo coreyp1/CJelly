@@ -48,6 +48,7 @@
 #else
 #include <X11/Xlib.h>
 #include <X11/keysym.h>
+#include <math.h>
 #include <X11/extensions/XI.h>
 #include <X11/extensions/XI2.h>
 #include <X11/extensions/XI2proto.h>
@@ -1148,6 +1149,16 @@ CJ_API void processWindowEvents() {
                 // Small change (< 2 pixels) - just update cache without dispatching callback
                 cj_window__set_position(window, root_x, root_y);
               }
+
+              // Check if DPI changed (window moved to different monitor)
+              float old_scale = cj_window__get_dpi_scale(window);
+              Window root = RootWindow(display, DefaultScreen(display));
+              float new_scale = cj_window__get_dpi_scale_linux(display, root, root_x, root_y);
+              if (fabsf(new_scale - old_scale) > 0.01f) {  // DPI changed (with small threshold for floating point)
+                cj_window__set_dpi_scale(window, new_scale);
+                // Mark swapchain for recreation (physical size may have changed)
+                cj_window__mark_swapchain_for_recreation(window);
+              }
             }
           }
 
@@ -1190,10 +1201,10 @@ CJ_API void processWindowEvents() {
     }
     if (event.type == KeyPress) {
       // Handle keyboard input
-        CJellyApplication* app = cjelly_application_get_current();
-        if (app) {
-          cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)event.xkey.window);
-          if (window) {
+      CJellyApplication* app = cjelly_application_get_current();
+      if (app) {
+        cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)event.xkey.window);
+        if (window) {
           KeySym sym = XLookupKeysym(&event.xkey, 0);
 
           // Map X11 keysym to cj_keycode_t
@@ -1311,10 +1322,10 @@ CJ_API void processWindowEvents() {
         }
       }
       // Handle key release
-      CJellyApplication* app = cjelly_application_get_current();
-      if (app) {
-        cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)event.xkey.window);
-        if (window) {
+        CJellyApplication* app = cjelly_application_get_current();
+        if (app) {
+          cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)event.xkey.window);
+          if (window) {
           KeySym sym = XLookupKeysym(&event.xkey, 0);
 
           // Map X11 keysym to cj_keycode_t (same mapping as KeyPress)
