@@ -128,7 +128,7 @@ Each iteration of the event loop performs the following steps:
 
 Platform-specific events are polled and processed:
 - **Window Events**: Resize, close, minimize/restore, expose
-- **Input Events**: Keyboard, mouse (future)
+- **Input Events**: Keyboard (key down/up/repeat), mouse (move, buttons, scroll, enter/leave), focus (gained/lost)
 - **System Events**: Application shutdown signals
 
 **Processing:**
