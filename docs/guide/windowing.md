@@ -168,6 +168,117 @@ typedef cj_frame_result_t (*cj_window_frame_callback_t)(
 - `CJ_FRAME_CLOSE_WINDOW`: Close the window
 - `CJ_FRAME_STOP_LOOP`: Stop the event loop
 
+## Window Closing
+
+Windows can be closed in several ways, each with different behaviors and use cases.
+
+### Close Callbacks
+
+Register a close callback to intercept window close requests:
+
+```c
+cj_window_close_response_t close_callback(cj_window_t* window, 
+                                           bool cancellable, 
+                                           void* user_data) {
+    // Check if there are unsaved changes
+    if (has_unsaved_changes()) {
+        // Show save dialog, etc.
+        return CJ_WINDOW_CLOSE_PREVENT;  // Prevent close
+    }
+    return CJ_WINDOW_CLOSE_ALLOW;  // Allow close
+}
+
+cj_window_on_close(window, close_callback, user_data);
+```
+
+**Callback parameters:**
+- `window`: The window requesting to close
+- `cancellable`: `true` if the close can be prevented, `false` if close is mandatory (e.g., application shutdown)
+- `user_data`: User-provided data pointer
+
+**Return values:**
+- `CJ_WINDOW_CLOSE_ALLOW`: Allow the window to close
+- `CJ_WINDOW_CLOSE_PREVENT`: Prevent the window from closing (only honored if `cancellable` is `true`)
+
+**When callbacks are invoked:**
+- **User clicks X button**: Callback is invoked with `cancellable = true`
+- **Application shutdown**: Callback is invoked with `cancellable = false` (close cannot be prevented)
+
+### Close Methods
+
+Windows can be closed in three ways:
+
+1. **User-initiated close (X button)**:
+   - Platform sends close message (`WM_CLOSE` on Windows, `WM_DELETE_WINDOW` on Linux)
+   - Close callback is invoked (if registered)
+   - If callback returns `CJ_WINDOW_CLOSE_ALLOW` (or no callback), window is destroyed
+   - If callback returns `CJ_WINDOW_CLOSE_PREVENT`, close is prevented
+
+2. **Frame callback returns `CJ_FRAME_CLOSE_WINDOW`**:
+   - Window is closed immediately (no close callback invoked)
+   - Useful for programmatic closing from within the frame callback
+
+3. **Application calls `cj_window_destroy()`**:
+   - Window is destroyed immediately (no close callback invoked)
+   - All resources are cleaned up synchronously
+   - Window is removed from application tracking
+
+### Close Callback Flow
+
+**Windows:**
+1. User clicks X button → `WM_CLOSE` message sent
+2. Window is looked up via application handle map
+3. Close callback is invoked (if registered)
+4. If allowed, `cj_window_destroy()` is called
+5. Returns 0 to indicate message was handled
+
+**Linux (X11):**
+1. User clicks X button → `ClientMessage` with `WM_DELETE_WINDOW` received
+2. Window is looked up via application
+3. Close callback is invoked (if registered)
+4. If allowed, `cj_window_destroy()` is called
+
+### Window Destruction
+
+All window destruction flows through `cj_window_destroy()`, which:
+
+1. Guards against null or double-destruction (`is_destroyed` flag)
+2. Marks window as destroyed immediately
+3. Unregisters from application (before freeing resources)
+4. Waits for GPU idle (`vkDeviceWaitIdle`)
+5. Cleans up Vulkan resources (semaphores, fences, command buffers, framebuffers, image views, swapchain, surface)
+6. Destroys platform window (`DestroyWindow` on Windows, `XDestroyWindow` on Linux)
+7. Frees the `cj_window_t` structure
+
+**Important:** After a window is destroyed, any stored pointers to that window become invalid. Always check if a window still exists before using it:
+
+```c
+// Get current window list
+uint32_t count = cjelly_application_window_count(app);
+void* windows[10];
+uint32_t actual = cjelly_application_get_windows(app, windows, 10);
+
+// Check if specific window still exists
+bool window_exists = false;
+for (uint32_t i = 0; i < actual; i++) {
+    if (windows[i] == my_window) {
+        window_exists = true;
+        break;
+    }
+}
+
+if (window_exists) {
+    // Safe to use my_window
+}
+```
+
+### Best Practices
+
+1. **Use close callbacks for unsaved changes**: Prompt user to save before closing
+2. **Handle mandatory closes**: Check `cancellable` parameter - if `false`, save immediately
+3. **Clean up resources**: Release window-specific resources in close callbacks or after destruction
+4. **Verify window existence**: Always check if windows exist before using them after the event loop
+
 ## Event Loop Integration
 
 The event loop (`cj_run_with_config()`) orchestrates everything:
