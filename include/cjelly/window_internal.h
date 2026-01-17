@@ -62,6 +62,45 @@ void cj_window__update_size_and_mark_recreate(cj_window_t* window, uint32_t new_
  */
 void cj_window__dispatch_resize_callback(cj_window_t* window, uint32_t new_width, uint32_t new_height);
 
+/** Internal helper to dispatch move callback (called from window messages/events).
+ *  @param window The window that was moved.
+ *  @param new_x New X position in screen coordinates.
+ *  @param new_y New Y position in screen coordinates.
+ */
+void cj_window__dispatch_move_callback(cj_window_t* window, int32_t new_x, int32_t new_y);
+
+/** Internal helper to dispatch state change callback (called from window messages/events).
+ *  @param window The window whose state changed.
+ *  @param new_state The new window state.
+ */
+void cj_window__dispatch_state_callback(cj_window_t* window, cj_window_state_t new_state);
+
+/** Internal helper to get window position.
+ *  @param window The window to query.
+ *  @param out_x Pointer to receive X position. Can be NULL.
+ *  @param out_y Pointer to receive Y position. Can be NULL.
+ */
+void cj_window__get_position(cj_window_t* window, int32_t* out_x, int32_t* out_y);
+
+/** Internal helper to set window position (updates cache only, doesn't move window).
+ *  @param window The window to update.
+ *  @param x New X position.
+ *  @param y New Y position.
+ */
+void cj_window__set_position(cj_window_t* window, int32_t x, int32_t y);
+
+/** Internal helper to get window state.
+ *  @param window The window to query.
+ *  @return The current window state.
+ */
+cj_window_state_t cj_window__get_state(cj_window_t* window);
+
+/** Internal helper to set window state (updates cache only, doesn't change state).
+ *  @param window The window to update.
+ *  @param state New window state.
+ */
+void cj_window__set_state(cj_window_t* window, cj_window_state_t state);
+
 /** Internal helper to check if dirty flag should be cleared after frame render.
  *  @param window The window to check.
  *  @return true if dirty flag should be cleared, false otherwise.
@@ -178,6 +217,38 @@ void cj_window__clear_input_state(cj_window_t* window);
  *  @param out_y Pointer to receive Y coordinate. Can be NULL.
  */
 void cj_window__get_mouse_position(cj_window_t* window, int32_t* out_x, int32_t* out_y);
+
+/** Internal helper to check if window is being programmatically moved (suppress ConfigureNotify feedback).
+ *  @param window The window to check.
+ *  @return true if window is being programmatically moved, false otherwise.
+ */
+bool cj_window__is_programmatic_move(cj_window_t* window);
+
+/** Internal helper to set programmatic move flag (suppress ConfigureNotify feedback).
+ *  @param window The window to update.
+ *  @param is_programmatic True to set flag, false to clear it.
+ */
+void cj_window__set_programmatic_move(cj_window_t* window, bool is_programmatic);
+
+/** Internal helper to update mouse root coordinates (for screen-space delta calculation).
+ *  @param window The window to update.
+ *  @param root_x Root X coordinate.
+ *  @param root_y Root Y coordinate.
+ */
+void cj_window__update_mouse_root(cj_window_t* window, int32_t root_x, int32_t root_y);
+
+/** Internal helper to get last mouse root coordinates and check if we've seen a move.
+ *  @param window The window to query.
+ *  @param out_root_x Pointer to receive root X coordinate. Can be NULL.
+ *  @param out_root_y Pointer to receive root Y coordinate. Can be NULL.
+ *  @param out_has_seen_move Pointer to receive flag indicating if we've seen a move. Can be NULL.
+ */
+void cj_window__get_mouse_root(cj_window_t* window, int32_t* out_root_x, int32_t* out_root_y, bool* out_has_seen_move);
+
+/** Internal helper to reset mouse root tracking (call when starting drag or moving window).
+ *  @param window The window to reset.
+ */
+void cj_window__reset_mouse_root(cj_window_t* window);
 
 #ifdef __cplusplus
 }

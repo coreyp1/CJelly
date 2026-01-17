@@ -1119,6 +1119,38 @@ CJ_API void processWindowEvents() {
       if (app) {
         cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)event.xconfigure.window);
         if (window) {
+          // Skip position updates if we're programmatically moving (avoid feedback loops)
+          if (cj_window__is_programmatic_move(window)) {
+            // Just update cache silently, don't dispatch callback
+            Window child;
+            int root_x, root_y;
+            if (XTranslateCoordinates(display, event.xconfigure.window, RootWindow(display, DefaultScreen(display)),
+                                       0, 0, &root_x, &root_y, &child)) {
+              cj_window__set_position(window, root_x, root_y);
+              // Clear the flag after we've processed this ConfigureNotify
+              cj_window__set_programmatic_move(window, false);
+            }
+          } else {
+            // Update position (xconfigure.x/y are relative to parent, need root coordinates)
+            Window child;
+            int root_x, root_y;
+            if (XTranslateCoordinates(display, event.xconfigure.window, RootWindow(display, DefaultScreen(display)),
+                                       0, 0, &root_x, &root_y, &child)) {
+              int32_t current_x, current_y;
+              cj_window__get_position(window, &current_x, &current_y);
+              // Only update if position changed significantly (avoid feedback loops during drag)
+              int32_t dx = (root_x > current_x) ? (root_x - current_x) : (current_x - root_x);
+              int32_t dy = (root_y > current_y) ? (root_y - current_y) : (current_y - root_y);
+              if (dx > 1 || dy > 1) {
+                cj_window__set_position(window, root_x, root_y);
+                cj_window__dispatch_move_callback(window, root_x, root_y);
+              } else if (root_x != current_x || root_y != current_y) {
+                // Small change (< 2 pixels) - just update cache without dispatching callback
+                cj_window__set_position(window, root_x, root_y);
+              }
+            }
+          }
+
           uint32_t new_width = (uint32_t)event.xconfigure.width;
           uint32_t new_height = (uint32_t)event.xconfigure.height;
 
@@ -1133,6 +1165,25 @@ CJ_API void processWindowEvents() {
 
             // Dispatch resize callback (user can do additional work)
             cj_window__dispatch_resize_callback(window, new_width, new_height);
+          }
+        }
+      }
+    }
+    if (event.type == PropertyNotify) {
+      // Window property changed (e.g., _NET_WM_STATE)
+      CJellyApplication* app = cjelly_application_get_current();
+      if (app) {
+        cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)event.xproperty.window);
+        if (window) {
+          Atom wm_state = XInternAtom(display, "_NET_WM_STATE", False);
+          if (event.xproperty.atom == wm_state) {
+            // _NET_WM_STATE changed, query new state
+            cj_window_state_t new_state = cj_window_get_state(window);
+            cj_window_state_t current_state = cj_window__get_state(window);
+            if (new_state != current_state) {
+              cj_window__set_state(window, new_state);
+              cj_window__dispatch_state_callback(window, new_state);
+            }
           }
         }
       }
@@ -1396,6 +1447,33 @@ CJ_API void processWindowEvents() {
           int32_t dx = x - old_x;
           int32_t dy = y - old_y;
 
+          // For dragging, we need screen-space deltas, not window-relative
+          // Use root coordinates (x_root, y_root) to calculate screen-space movement
+          int32_t last_root_x, last_root_y;
+          bool has_seen_move;
+          cj_window__get_mouse_root(window, &last_root_x, &last_root_y, &has_seen_move);
+
+          int32_t screen_dx = 0, screen_dy = 0;
+          if (has_seen_move) {
+            // Calculate screen-space delta from root coordinates
+            screen_dx = (int32_t)event.xmotion.x_root - last_root_x;
+            screen_dy = (int32_t)event.xmotion.y_root - last_root_y;
+          } else {
+            // First move after button press - root coordinates should be initialized from button press
+            // If they are, calculate delta normally; otherwise use window-relative as fallback
+            if (last_root_x != 0 || last_root_y != 0) {
+              // Root coordinates were initialized - calculate delta normally
+              screen_dx = (int32_t)event.xmotion.x_root - last_root_x;
+              screen_dy = (int32_t)event.xmotion.y_root - last_root_y;
+            } else {
+              // Root coordinates not initialized - use window-relative delta as fallback
+              screen_dx = dx;
+              screen_dy = dy;
+            }
+          }
+          // Update root coordinates AFTER calculating delta (for next event)
+          cj_window__update_mouse_root(window, (int32_t)event.xmotion.x_root, (int32_t)event.xmotion.y_root);
+
           // Extract modifiers from event state
           cj_modifiers_t modifiers = CJ_MOD_NONE;
           if (event.xmotion.state & ShiftMask) modifiers |= CJ_MOD_SHIFT;
@@ -1409,8 +1487,11 @@ CJ_API void processWindowEvents() {
           mouse_event.type = CJ_MOUSE_MOVE;
           mouse_event.x = x;
           mouse_event.y = y;
-          mouse_event.dx = dx;
-          mouse_event.dy = dy;
+          mouse_event.screen_x = (int32_t)event.xmotion.x_root;
+          mouse_event.screen_y = (int32_t)event.xmotion.y_root;
+          // Use screen-space deltas (calculated above)
+          mouse_event.dx = screen_dx;
+          mouse_event.dy = screen_dy;
           mouse_event.modifiers = modifiers;
           cj_window__dispatch_mouse_callback(window, &mouse_event);
         }
@@ -1472,10 +1553,16 @@ CJ_API void processWindowEvents() {
             if (event.xbutton.state & LockMask) modifiers |= CJ_MOD_CAPS;
             if (event.xbutton.state & Mod2Mask) modifiers |= CJ_MOD_NUM;
 
+            // Initialize mouse root coordinates from button press event
+            // This ensures we have correct root coordinates when drag starts
+            cj_window__update_mouse_root(window, (int32_t)event.xbutton.x_root, (int32_t)event.xbutton.y_root);
+
             cj_mouse_event_t mouse_event = {0};
             mouse_event.type = CJ_MOUSE_BUTTON_DOWN;
             mouse_event.x = x;
             mouse_event.y = y;
+            mouse_event.screen_x = (int32_t)event.xbutton.x_root;
+            mouse_event.screen_y = (int32_t)event.xbutton.y_root;
             mouse_event.button = button;
             mouse_event.modifiers = modifiers;
             cj_window__dispatch_mouse_callback(window, &mouse_event);

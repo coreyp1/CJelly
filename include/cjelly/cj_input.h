@@ -205,6 +205,8 @@ typedef struct cj_mouse_event {
   cj_mouse_event_type_t type; /**< Type of mouse event. */
   int32_t x;                  /**< X position in window coordinates (0 = left edge). */
   int32_t y;                  /**< Y position in window coordinates (0 = top edge). */
+  int32_t screen_x;           /**< X position in screen coordinates (for dragging). */
+  int32_t screen_y;           /**< Y position in screen coordinates (for dragging). */
   int32_t dx;                 /**< Delta X since last move (for MOVE events). */
   int32_t dy;                 /**< Delta Y since last move (for MOVE events). */
   float scroll_x;             /**< Horizontal scroll delta (for SCROLL events, positive = right). */

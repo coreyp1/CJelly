@@ -8,6 +8,7 @@
 #pragma once
 #include <stdint.h>
 #include <stdbool.h>
+#include <limits.h>
 #include "cj_macros.h"
 #include "cj_types.h"
 #include "cj_result.h"
@@ -29,11 +30,26 @@ typedef enum cj_present_mode_t {
   CJ_PRESENT_DEFAULT = CJ_PRESENT_VSYNC
 } cj_present_mode_t;
 
+/** Window state. */
+typedef enum cj_window_state_t {
+  CJ_WINDOW_STATE_NORMAL = 0,    /**< Normal windowed state. */
+  CJ_WINDOW_STATE_MAXIMIZED,     /**< Maximized (fullscreen within monitor work area). */
+  CJ_WINDOW_STATE_MINIMIZED,     /**< Minimized (iconified). */
+  CJ_WINDOW_STATE_FULLSCREEN,    /**< Exclusive fullscreen (future). */
+} cj_window_state_t;
+
+/** Window position constants. */
+#define CJ_WINDOW_POSITION_DEFAULT INT32_MIN  /**< Let platform choose position. */
+
 /** Window creation descriptor (platform-agnostic). */
 typedef struct cj_window_desc_t {
   uint32_t width;
   uint32_t height;
   cj_str_t title;                 /**< Optional; UTF-8. */
+
+  int32_t x;                      /**< Initial X position (screen coordinates). Use CJ_WINDOW_POSITION_DEFAULT to let platform choose. */
+  int32_t y;                      /**< Initial Y position (screen coordinates). Use CJ_WINDOW_POSITION_DEFAULT to let platform choose. */
+  cj_window_state_t initial_state; /**< Initial window state. Defaults to CJ_WINDOW_STATE_NORMAL. */
 
   cj_present_mode_t present_mode; /**< Preference; backend may override. */
   uint32_t frames_in_flight;      /**< 0 = default (typically 2 or 3). */
@@ -162,6 +178,28 @@ typedef void (*cj_window_resize_callback_t)(cj_window_t* window,
                                             uint32_t new_height,
                                             void* user_data);
 
+/** Window move callback function type.
+ *  Called when the window position changes.
+ *  @param window The window that moved.
+ *  @param new_x New X position (screen coordinates).
+ *  @param new_y New Y position (screen coordinates).
+ *  @param user_data User-provided data pointer.
+ */
+typedef void (*cj_window_move_callback_t)(cj_window_t* window,
+                                          int32_t new_x,
+                                          int32_t new_y,
+                                          void* user_data);
+
+/** Window state change callback function type.
+ *  Called when the window state changes (normal, maximized, minimized).
+ *  @param window The window whose state changed.
+ *  @param new_state The new window state.
+ *  @param user_data User-provided data pointer.
+ */
+typedef void (*cj_window_state_callback_t)(cj_window_t* window,
+                                           cj_window_state_t new_state,
+                                           void* user_data);
+
 /** Register a close callback for a window.
  *  @param window The window to register the callback for.
  *  @param callback Callback function to invoke when close is requested. NULL to remove callback.
@@ -188,6 +226,24 @@ CJ_API void cj_window_on_frame(cj_window_t* window,
 CJ_API void cj_window_on_resize(cj_window_t* window,
                                 cj_window_resize_callback_t callback,
                                 void* user_data);
+
+/** Register a move callback for a window.
+ *  @param window The window to register the callback for.
+ *  @param callback Callback invoked when window moves. NULL to remove callback.
+ *  @param user_data User data pointer passed to callback.
+ */
+CJ_API void cj_window_on_move(cj_window_t* window,
+                              cj_window_move_callback_t callback,
+                              void* user_data);
+
+/** Register a state change callback for a window.
+ *  @param window The window to register the callback for.
+ *  @param callback Callback invoked when state changes. NULL to remove callback.
+ *  @param user_data User data pointer passed to callback.
+ */
+CJ_API void cj_window_on_state_change(cj_window_t* window,
+                                      cj_window_state_callback_t callback,
+                                      void* user_data);
 
 /** Keyboard callback function type.
  *  Called when a keyboard event occurs (key press, release, or repeat).
@@ -314,6 +370,36 @@ CJ_API void cj_window_set_redraw_policy(cj_window_t* window, cj_redraw_policy_t 
  *  @param max_fps Maximum frames per second (0 = unlimited, use global FPS limit).
  */
 CJ_API void cj_window_set_max_fps(cj_window_t* window, uint32_t max_fps);
+
+/** Get the current window position in screen coordinates.
+ *  Returns the position of the window frame (including decorations).
+ *  @param window The window to query.
+ *  @param out_x Pointer to receive X position. Can be NULL.
+ *  @param out_y Pointer to receive Y position. Can be NULL.
+ */
+CJ_API void cj_window_get_position(const cj_window_t* window, int32_t* out_x, int32_t* out_y);
+
+/** Get the current window state.
+ *  @param window The window to query.
+ *  @return The current window state, or CJ_WINDOW_STATE_NORMAL if window is invalid.
+ */
+CJ_API cj_window_state_t cj_window_get_state(const cj_window_t* window);
+
+/** Set the window position in screen coordinates.
+ *  Moves the window frame (including decorations) to the specified position.
+ *  @param window The window to move.
+ *  @param x New X position (screen coordinates).
+ *  @param y New Y position (screen coordinates).
+ *  @return CJ_SUCCESS on success, or an error code.
+ */
+CJ_API cj_result_t cj_window_set_position(cj_window_t* window, int32_t x, int32_t y);
+
+/** Set the window state.
+ *  @param window The window to change.
+ *  @param state New window state (NORMAL, MAXIMIZED, MINIMIZED).
+ *  @return CJ_SUCCESS on success, or an error code.
+ */
+CJ_API cj_result_t cj_window_set_state(cj_window_t* window, cj_window_state_t state);
 
 /** Re-record a color-only bindless command buffer set for a window.
  *  This is a temporary helper function during migration. It uses opaque pointers

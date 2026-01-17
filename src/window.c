@@ -7,6 +7,7 @@
 #include <vulkan/vulkan_win32.h>
 #else
 #include <X11/Xlib.h>
+#include <X11/Xutil.h>
 #include <vulkan/vulkan.h>
 #include <vulkan/vulkan_xlib.h>
 extern Display* display; /* provided by main on Linux */
@@ -58,6 +59,16 @@ typedef struct CJPlatformWindow {
   uint64_t nextFrameTime;
   bool is_minimized;  /* Cached minimized state (updated via window messages) */
   bool needs_swapchain_recreate;  /* Flag to defer swapchain recreation until next frame */
+
+  /* Position and state tracking */
+  int32_t x;                    /* Current X position (screen coordinates, logical pixels) */
+  int32_t y;                    /* Current Y position (screen coordinates, logical pixels) */
+  cj_window_state_t state;      /* Current window state */
+  float dpi_scale;              /* DPI scale factor for this window */
+  bool is_programmatic_move;    /* True when we're programmatically moving the window (suppress ConfigureNotify feedback) */
+  int32_t last_mouse_root_x;    /* Last mouse root X coordinate (for screen-space delta calculation) */
+  int32_t last_mouse_root_y;    /* Last mouse root Y coordinate (for screen-space delta calculation) */
+  bool has_seen_mouse_move;     /* True if we've seen at least one mouse move event (for delta calculation) */
 } CJPlatformWindow;
 
 /* Internal definition of the opaque window type */
@@ -71,6 +82,10 @@ struct cj_window_t {
   void* frame_callback_user_data; /* User data for per-frame callback */
   cj_window_resize_callback_t resize_callback;  /* Resize callback (NULL if none) */
   void* resize_callback_user_data; /* User data for resize callback */
+  cj_window_move_callback_t move_callback;  /* Move callback (NULL if none) */
+  void* move_callback_user_data; /* User data for move callback */
+  cj_window_state_callback_t state_callback;  /* State change callback (NULL if none) */
+  void* state_callback_user_data; /* User data for state callback */
   cj_key_callback_t key_callback;  /* Keyboard callback (NULL if none) */
   void* key_callback_user_data; /* User data for keyboard callback */
   /* Key state tracking for repeat detection (X11) and future key state queries (Phase 2) */
@@ -379,6 +394,29 @@ static LRESULT CALLBACK CjWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
       return DefWindowProc(hwnd, uMsg, wParam, lParam);
     }
 
+    case WM_MOVE: {
+      // Window position changed
+      CJellyApplication* app = cjelly_application_get_current();
+      if (app) {
+        cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)hwnd);
+        if (window && window->plat) {
+          // WM_MOVE provides client area position, use GetWindowRect for frame position
+          RECT rect;
+          if (GetWindowRect(hwnd, &rect)) {
+            int32_t new_x = rect.left;
+            int32_t new_y = rect.top;
+            // TODO: Apply DPI scaling conversion (for now, assume 1.0 scale)
+            if (new_x != window->plat->x || new_y != window->plat->y) {
+              window->plat->x = new_x;
+              window->plat->y = new_y;
+              cj_window__dispatch_move_callback(window, new_x, new_y);
+            }
+          }
+        }
+      }
+      return 0;
+    }
+
     case WM_SIZE: {
       // Track minimized/restored state and handle resize
       CJellyApplication* app = cjelly_application_get_current();
@@ -386,26 +424,38 @@ static LRESULT CALLBACK CjWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
         cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)hwnd);
         if (window && window->plat) {
           // wParam: SIZE_MINIMIZED, SIZE_MAXIMIZED, SIZE_RESTORED, SIZE_MAXSHOW, SIZE_MAXHIDE
+          cj_window_state_t new_state = window->plat->state;
           if (wParam == SIZE_MINIMIZED) {
             cj_window__set_minimized(window, true);
-          } else if (wParam == SIZE_RESTORED || wParam == SIZE_MAXIMIZED) {
+            new_state = CJ_WINDOW_STATE_MINIMIZED;
+          } else if (wParam == SIZE_MAXIMIZED) {
             cj_window__set_minimized(window, false);
+            new_state = CJ_WINDOW_STATE_MAXIMIZED;
+          } else if (wParam == SIZE_RESTORED) {
+            cj_window__set_minimized(window, false);
+            new_state = CJ_WINDOW_STATE_NORMAL;
             /* Mark window dirty when restored from minimized */
             window->plat->needsRedraw = 1;
             window->pending_render_reason = CJ_RENDER_REASON_EXPOSE;
+          }
 
-            // Extract new width and height from lParam
-            uint32_t new_width = (uint32_t)(LOWORD(lParam));
-            uint32_t new_height = (uint32_t)(HIWORD(lParam));
+          // Dispatch state change callback if state changed
+          if (new_state != window->plat->state) {
+            window->plat->state = new_state;
+            cj_window__dispatch_state_callback(window, new_state);
+          }
 
-            // Only update if size actually changed
-            if ((int)new_width != window->plat->width || (int)new_height != window->plat->height) {
-              // Update size and mark swapchain for recreation
-              cj_window__update_size_and_mark_recreate(window, new_width, new_height);
+          // Extract new width and height from lParam
+          uint32_t new_width = (uint32_t)(LOWORD(lParam));
+          uint32_t new_height = (uint32_t)(HIWORD(lParam));
 
-              // Dispatch resize callback (user can do additional work)
-              cj_window__dispatch_resize_callback(window, new_width, new_height);
-            }
+          // Only update if size actually changed
+          if ((int)new_width != window->plat->width || (int)new_height != window->plat->height) {
+            // Update size and mark swapchain for recreation
+            cj_window__update_size_and_mark_recreate(window, new_width, new_height);
+
+            // Dispatch resize callback (user can do additional work)
+            cj_window__dispatch_resize_callback(window, new_width, new_height);
           }
         }
       }
@@ -492,13 +542,49 @@ static LRESULT CALLBACK CjWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
           int32_t dy = y - window->mouse_y;
           cj_modifiers_t modifiers = get_windows_modifiers();
 
+          // Convert to screen coordinates
+          POINT screen_pt = {x, y};
+          ClientToScreen(hwnd, &screen_pt);
+
           cj_mouse_event_t event = {0};
           event.type = CJ_MOUSE_MOVE;
           event.x = x;
           event.y = y;
+          event.screen_x = screen_pt.x;
+          event.screen_y = screen_pt.y;
           event.dx = dx;
           event.dy = dy;
           event.modifiers = modifiers;
+          cj_window__dispatch_mouse_callback(window, &event);
+        }
+      }
+      return 0;
+    }
+
+    case WM_LBUTTONDBLCLK: {
+      // Left button double-click
+      CJellyApplication* app = cjelly_application_get_current();
+      if (app) {
+        cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)hwnd);
+        if (window && !window->is_destroyed) {
+          int32_t x = (int32_t)(short)LOWORD(lParam);
+          int32_t y = (int32_t)(short)HIWORD(lParam);
+          cj_modifiers_t modifiers = get_windows_modifiers();
+
+          // Convert to screen coordinates
+          POINT screen_pt = {x, y};
+          ClientToScreen(hwnd, &screen_pt);
+
+          cj_mouse_event_t event = {0};
+          event.type = CJ_MOUSE_BUTTON_DOWN;
+          event.x = x;
+          event.y = y;
+          event.screen_x = screen_pt.x;
+          event.screen_y = screen_pt.y;
+          event.button = CJ_MOUSE_BUTTON_LEFT;
+          event.modifiers = modifiers;
+          // Dispatch as BUTTON_DOWN - the callback can detect double-click via timing
+          // or we could add a double-click event type in the future
           cj_window__dispatch_mouse_callback(window, &event);
         }
       }
@@ -526,10 +612,16 @@ static LRESULT CALLBACK CjWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
           int32_t y = (int32_t)(short)HIWORD(lParam);
           cj_modifiers_t modifiers = get_windows_modifiers();
 
+          // Convert to screen coordinates
+          POINT screen_pt = {x, y};
+          ClientToScreen(hwnd, &screen_pt);
+
           cj_mouse_event_t event = {0};
           event.type = CJ_MOUSE_BUTTON_DOWN;
           event.x = x;
           event.y = y;
+          event.screen_x = screen_pt.x;
+          event.screen_y = screen_pt.y;
           event.button = button;
           event.modifiers = modifiers;
           cj_window__dispatch_mouse_callback(window, &event);
@@ -559,10 +651,16 @@ static LRESULT CALLBACK CjWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
           int32_t y = (int32_t)(short)HIWORD(lParam);
           cj_modifiers_t modifiers = get_windows_modifiers();
 
+          // Convert to screen coordinates
+          POINT screen_pt = {x, y};
+          ClientToScreen(hwnd, &screen_pt);
+
           cj_mouse_event_t event = {0};
           event.type = CJ_MOUSE_BUTTON_UP;
           event.x = x;
           event.y = y;
+          event.screen_x = screen_pt.x;
+          event.screen_y = screen_pt.y;
           event.button = button;
           event.modifiers = modifiers;
           cj_window__dispatch_mouse_callback(window, &event);
@@ -651,23 +749,81 @@ static LRESULT CALLBACK CjWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
 #endif
 
 /* === Platform helpers === */
-static void plat_createPlatformWindow(CJPlatformWindow * win, const char * title, int width, int height) {
+static void plat_createPlatformWindow(CJPlatformWindow * win, const char * title, int width, int height, int32_t x, int32_t y, cj_window_state_t initial_state) {
   if (!win) return;
   win->width = width; win->height = height;
   win->is_minimized = false;  /* Initialize minimized state */
+  win->x = x;
+  win->y = y;
+  win->is_programmatic_move = false;
+  win->last_mouse_root_x = 0;
+  win->last_mouse_root_y = 0;
+  win->has_seen_mouse_move = false;
+  win->state = initial_state;
+  win->dpi_scale = 1.0f;  /* Will be updated on first query */
 #ifdef _WIN32
   HINSTANCE hInstance = GetModuleHandle(NULL);
   WNDCLASS wc = {0};
   wc.lpfnWndProc = CjWndProc; wc.hInstance = hInstance; wc.lpszClassName = "CJellyWindow";
+  wc.style = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;  /* Add CS_DBLCLKS for double-click support */
   RegisterClass(&wc);
-  win->handle = CreateWindowEx(0, "CJellyWindow", title, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, width, height, NULL, NULL, hInstance, NULL);
-  ShowWindow(win->handle, SW_SHOW);
+
+  /* Determine window position */
+  int win_x = (x == CJ_WINDOW_POSITION_DEFAULT) ? CW_USEDEFAULT : x;
+  int win_y = (y == CJ_WINDOW_POSITION_DEFAULT) ? CW_USEDEFAULT : y;
+
+  win->handle = CreateWindowEx(0, "CJellyWindow", title, WS_OVERLAPPEDWINDOW, win_x, win_y, width, height, NULL, NULL, hInstance, NULL);
+
+  /* Set initial window state */
+  int show_cmd = SW_SHOWNORMAL;
+  if (initial_state == CJ_WINDOW_STATE_MAXIMIZED) {
+    show_cmd = SW_SHOWMAXIMIZED;
+  } else if (initial_state == CJ_WINDOW_STATE_MINIMIZED) {
+    show_cmd = SW_SHOWMINIMIZED;
+  }
+  ShowWindow(win->handle, show_cmd);
+
+  /* Update cached position from actual window position */
+  RECT rect;
+  if (GetWindowRect(win->handle, &rect)) {
+    win->x = rect.left;
+    win->y = rect.top;
+  }
 #else
   int screen = DefaultScreen(display);
+  /* Determine window position */
+  int win_x = (x == CJ_WINDOW_POSITION_DEFAULT) ? 0 : x;
+  int win_y = (y == CJ_WINDOW_POSITION_DEFAULT) ? 0 : y;
+
   /* Use black background to reduce flickering during resize */
-  win->handle = XCreateSimpleWindow(display, RootWindow(display, screen), 0, 0, (unsigned)width, (unsigned)height, 0, BlackPixel(display, screen), BlackPixel(display, screen));
+  win->handle = XCreateSimpleWindow(display, RootWindow(display, screen), win_x, win_y, (unsigned)width, (unsigned)height, 0, BlackPixel(display, screen), BlackPixel(display, screen));
+
+  /* Set position hint if position was specified */
+  if (x != CJ_WINDOW_POSITION_DEFAULT && y != CJ_WINDOW_POSITION_DEFAULT) {
+    XSizeHints* hints = XAllocSizeHints();
+    if (hints) {
+      hints->flags = USPosition;
+      hints->x = x;
+      hints->y = y;
+      XSetWMNormalHints(display, win->handle, hints);
+      XFree(hints);
+    }
+  }
+
+  /* Set initial maximized state if requested */
+  if (initial_state == CJ_WINDOW_STATE_MAXIMIZED) {
+    Atom wm_state = XInternAtom(display, "_NET_WM_STATE", False);
+    Atom max_horz = XInternAtom(display, "_NET_WM_STATE_MAXIMIZED_HORZ", False);
+    Atom max_vert = XInternAtom(display, "_NET_WM_STATE_MAXIMIZED_VERT", False);
+    if (wm_state != None && max_horz != None && max_vert != None) {
+      XChangeProperty(display, win->handle, wm_state, XA_ATOM, 32, PropModeReplace,
+                      (unsigned char*)&max_horz, 1);
+      // Note: We'll set both atoms via ClientMessage after mapping
+    }
+  }
+
   XSelectInput(display, win->handle, StructureNotifyMask | KeyPressMask | KeyReleaseMask | ExposureMask |
-               ButtonPressMask | ButtonReleaseMask | PointerMotionMask | EnterWindowMask | LeaveWindowMask | FocusChangeMask);
+               ButtonPressMask | ButtonReleaseMask | PointerMotionMask | EnterWindowMask | LeaveWindowMask | FocusChangeMask | PropertyChangeMask);
 
   /* Try to select XInput2 events for smooth scrolling (falls back to traditional events if unavailable) */
   extern bool select_xinput2_events(Window window);
@@ -682,6 +838,34 @@ static void plat_createPlatformWindow(CJPlatformWindow * win, const char * title
   XSetWindowBackgroundPixmap(display, win->handle, None);
 
   XMapWindow(display, win->handle);
+
+  /* Set maximized state after mapping (via ClientMessage) */
+  if (initial_state == CJ_WINDOW_STATE_MAXIMIZED) {
+    XEvent ev = {0};
+    ev.type = ClientMessage;
+    ev.xclient.window = win->handle;
+    ev.xclient.message_type = XInternAtom(display, "_NET_WM_STATE", False);
+    ev.xclient.format = 32;
+    ev.xclient.data.l[0] = 1;  // _NET_WM_STATE_ADD
+    ev.xclient.data.l[1] = XInternAtom(display, "_NET_WM_STATE_MAXIMIZED_HORZ", False);
+    ev.xclient.data.l[2] = XInternAtom(display, "_NET_WM_STATE_MAXIMIZED_VERT", False);
+    ev.xclient.data.l[3] = 1;  // Source indication: application
+    ev.xclient.data.l[4] = 0;
+    XSendEvent(display, RootWindow(display, screen), False,
+               SubstructureNotifyMask | SubstructureRedirectMask, &ev);
+  } else if (initial_state == CJ_WINDOW_STATE_MINIMIZED) {
+    XIconifyWindow(display, win->handle, screen);
+  }
+
+  /* Update cached position from actual window position */
+  Window child;
+  int actual_x, actual_y;
+  if (XTranslateCoordinates(display, win->handle, RootWindow(display, screen),
+                            0, 0, &actual_x, &actual_y, &child)) {
+    win->x = actual_x;
+    win->y = actual_y;
+  }
+
   XFlush(display);
 #endif
 }
@@ -943,7 +1127,7 @@ void cjelly_init_textured_pipeline_ctx(const CJellyVulkanContext* ctx);
 
 
 /* Internal helpers (static) */
-static void plat_createPlatformWindow(CJPlatformWindow * win, const char * title, int width, int height);
+static void plat_createPlatformWindow(CJPlatformWindow * win, const char * title, int width, int height, int32_t x, int32_t y, cj_window_state_t initial_state);
 static void plat_createSurfaceForWindow(CJPlatformWindow * win);
 static void plat_createSwapChainForWindow(CJPlatformWindow * win);
 static void plat_recreateSwapChainForWindow(CJPlatformWindow * win);
@@ -971,7 +1155,23 @@ CJ_API cj_window_t* cj_window_create(cj_engine_t* engine, const cj_window_desc_t
 
   /* Create OS window and per-window Vulkan resources */
   const char* title = desc->title.ptr ? desc->title.ptr : "CJelly Window";
-  plat_createPlatformWindow(win->plat, title, (int)desc->width, (int)desc->height);
+  int32_t x = desc->x;
+  int32_t y = desc->y;
+  cj_window_state_t initial_state = desc->initial_state;
+  /* If x/y are uninitialized (0) and not explicitly set, use default position */
+  /* Note: We can't distinguish between uninitialized 0 and explicit (0,0), so we assume 0 means default */
+  /* Users who want (0,0) can set it after creation */
+  if (x == 0) {
+    x = CJ_WINDOW_POSITION_DEFAULT;
+  }
+  if (y == 0) {
+    y = CJ_WINDOW_POSITION_DEFAULT;
+  }
+  /* If initial_state is 0 (uninitialized), use normal */
+  if (initial_state == 0) {
+    initial_state = CJ_WINDOW_STATE_NORMAL;
+  }
+  plat_createPlatformWindow(win->plat, title, (int)desc->width, (int)desc->height, x, y, initial_state);
   plat_createSurfaceForWindow(win->plat);
   plat_createSwapChainForWindow(win->plat);
   if (!plat_createImageViewsForWindow(win->plat)) {
@@ -1300,6 +1500,200 @@ CJ_API void cj_window_get_size(const cj_window_t* win, uint32_t* out_w, uint32_t
   if (out_h) *out_h = (uint32_t)win->plat->height;
 }
 
+CJ_API void cj_window_get_position(const cj_window_t* window, int32_t* out_x, int32_t* out_y) {
+  if (!window || !window->plat) {
+    if (out_x) *out_x = 0;
+    if (out_y) *out_y = 0;
+    return;
+  }
+#ifdef _WIN32
+  // Query actual position from Windows (may have changed externally)
+  RECT rect;
+  if (GetWindowRect(window->plat->handle, &rect)) {
+    // TODO: Apply DPI scaling conversion (for now, assume 1.0 scale)
+    if (out_x) *out_x = rect.left;
+    if (out_y) *out_y = rect.top;
+    // Update cached position
+    window->plat->x = rect.left;
+    window->plat->y = rect.top;
+  } else {
+    // Fallback to cached position
+    if (out_x) *out_x = window->plat->x;
+    if (out_y) *out_y = window->plat->y;
+  }
+#else
+  // Linux: return cached position (will be updated via ConfigureNotify)
+  if (out_x) *out_x = window->plat->x;
+  if (out_y) *out_y = window->plat->y;
+#endif
+}
+
+CJ_API cj_window_state_t cj_window_get_state(const cj_window_t* window) {
+  if (!window || !window->plat) return CJ_WINDOW_STATE_NORMAL;
+#ifdef _WIN32
+  // Query actual state from Windows
+  HWND hwnd = window->plat->handle;
+  if (IsZoomed(hwnd)) {
+    window->plat->state = CJ_WINDOW_STATE_MAXIMIZED;
+  } else if (IsIconic(hwnd)) {
+    window->plat->state = CJ_WINDOW_STATE_MINIMIZED;
+  } else {
+    window->plat->state = CJ_WINDOW_STATE_NORMAL;
+  }
+#else
+  // Linux: Query _NET_WM_STATE property
+  extern Display* display;
+  Atom wm_state = XInternAtom(display, "_NET_WM_STATE", False);
+  Atom actual_type;
+  int actual_format;
+  unsigned long nitems, bytes_after;
+  unsigned char* prop = NULL;
+
+  if (XGetWindowProperty(display, window->plat->handle, wm_state, 0, 1024, False,
+                         XA_ATOM, &actual_type, &actual_format, &nitems, &bytes_after, &prop) == Success) {
+    if (prop && nitems > 0) {
+      Atom* atoms = (Atom*)prop;
+      Atom max_horz = XInternAtom(display, "_NET_WM_STATE_MAXIMIZED_HORZ", False);
+      Atom max_vert = XInternAtom(display, "_NET_WM_STATE_MAXIMIZED_VERT", False);
+      bool has_max_horz = false, has_max_vert = false;
+      for (unsigned long i = 0; i < nitems; i++) {
+        if (atoms[i] == max_horz) has_max_horz = true;
+        if (atoms[i] == max_vert) has_max_vert = true;
+      }
+      if (has_max_horz && has_max_vert) {
+        window->plat->state = CJ_WINDOW_STATE_MAXIMIZED;
+      } else {
+        // Check if minimized (viewable attribute)
+        XWindowAttributes attrs;
+        if (XGetWindowAttributes(display, window->plat->handle, &attrs)) {
+          if (attrs.map_state == IsUnmapped) {
+            window->plat->state = CJ_WINDOW_STATE_MINIMIZED;
+          } else {
+            window->plat->state = CJ_WINDOW_STATE_NORMAL;
+          }
+        }
+      }
+      XFree(prop);
+    } else {
+      // No state atoms, check if minimized
+      XWindowAttributes attrs;
+      if (XGetWindowAttributes(display, window->plat->handle, &attrs)) {
+        if (attrs.map_state == IsUnmapped) {
+          window->plat->state = CJ_WINDOW_STATE_MINIMIZED;
+        } else {
+          window->plat->state = CJ_WINDOW_STATE_NORMAL;
+        }
+      }
+    }
+  }
+#endif
+  return window->plat->state;
+}
+
+CJ_API cj_result_t cj_window_set_position(cj_window_t* window, int32_t x, int32_t y) {
+  if (!window || !window->plat || window->is_destroyed) return CJ_E_INVALID_ARGUMENT;
+#ifdef _WIN32
+  // TODO: Apply DPI scaling conversion (for now, assume 1.0 scale)
+  SetWindowPos(window->plat->handle, NULL, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
+  // Update cached position
+  window->plat->x = x;
+  window->plat->y = y;
+#else
+  extern Display* display;
+  // Set flag to suppress ConfigureNotify feedback during programmatic moves
+  cj_window__set_programmatic_move(window, true);
+  XMoveWindow(display, window->plat->handle, x, y);
+  XFlush(display);
+  // Update cached position (will be confirmed by ConfigureNotify)
+  window->plat->x = x;
+  window->plat->y = y;
+  // Flag will be cleared in ConfigureNotify handler
+  // Note: We don't update root coordinates here because the mouse cursor hasn't moved
+  // in screen space - only the window has moved. Root coordinates will be updated
+  // by the next MotionNotify event, which will have the correct root coordinates.
+#endif
+  return CJ_SUCCESS;
+}
+
+CJ_API cj_result_t cj_window_set_state(cj_window_t* window, cj_window_state_t state) {
+  if (!window || !window->plat || window->is_destroyed) return CJ_E_INVALID_ARGUMENT;
+#ifdef _WIN32
+  HWND hwnd = window->plat->handle;
+  int show_cmd;
+  switch (state) {
+    case CJ_WINDOW_STATE_NORMAL:
+      show_cmd = SW_RESTORE;
+      break;
+    case CJ_WINDOW_STATE_MAXIMIZED:
+      show_cmd = SW_MAXIMIZE;
+      break;
+    case CJ_WINDOW_STATE_MINIMIZED:
+      show_cmd = SW_MINIMIZE;
+      break;
+    case CJ_WINDOW_STATE_FULLSCREEN:
+      // Not implemented yet
+      return CJ_E_UNSUPPORTED;
+    default:
+      return CJ_E_INVALID_ARGUMENT;
+  }
+  ShowWindow(hwnd, show_cmd);
+  window->plat->state = state;
+  // State change callback will be invoked by WM_SIZE handler
+#else
+  extern Display* display;
+  int screen = DefaultScreen(display);
+  XEvent ev = {0};
+  Atom wm_state = XInternAtom(display, "_NET_WM_STATE", False);
+  Atom max_horz = XInternAtom(display, "_NET_WM_STATE_MAXIMIZED_HORZ", False);
+  Atom max_vert = XInternAtom(display, "_NET_WM_STATE_MAXIMIZED_VERT", False);
+
+  switch (state) {
+    case CJ_WINDOW_STATE_NORMAL:
+      // Remove maximized atoms
+      ev.type = ClientMessage;
+      ev.xclient.window = window->plat->handle;
+      ev.xclient.message_type = wm_state;
+      ev.xclient.format = 32;
+      ev.xclient.data.l[0] = 0;  // _NET_WM_STATE_REMOVE
+      ev.xclient.data.l[1] = max_horz;
+      ev.xclient.data.l[2] = max_vert;
+      ev.xclient.data.l[3] = 1;  // Source indication: application
+      ev.xclient.data.l[4] = 0;
+      XSendEvent(display, RootWindow(display, screen), False,
+                 SubstructureNotifyMask | SubstructureRedirectMask, &ev);
+      window->plat->state = CJ_WINDOW_STATE_NORMAL;
+      break;
+    case CJ_WINDOW_STATE_MAXIMIZED:
+      // Add maximized atoms
+      ev.type = ClientMessage;
+      ev.xclient.window = window->plat->handle;
+      ev.xclient.message_type = wm_state;
+      ev.xclient.format = 32;
+      ev.xclient.data.l[0] = 1;  // _NET_WM_STATE_ADD
+      ev.xclient.data.l[1] = max_horz;
+      ev.xclient.data.l[2] = max_vert;
+      ev.xclient.data.l[3] = 1;  // Source indication: application
+      ev.xclient.data.l[4] = 0;
+      XSendEvent(display, RootWindow(display, screen), False,
+                 SubstructureNotifyMask | SubstructureRedirectMask, &ev);
+      window->plat->state = CJ_WINDOW_STATE_MAXIMIZED;
+      break;
+    case CJ_WINDOW_STATE_MINIMIZED:
+      XIconifyWindow(display, window->plat->handle, screen);
+      window->plat->state = CJ_WINDOW_STATE_MINIMIZED;
+      break;
+    case CJ_WINDOW_STATE_FULLSCREEN:
+      // Not implemented yet
+      return CJ_E_UNSUPPORTED;
+    default:
+      return CJ_E_INVALID_ARGUMENT;
+  }
+  XFlush(display);
+  // State change callback will be invoked by PropertyNotify handler
+#endif
+  return CJ_SUCCESS;
+}
+
 CJ_API uint64_t cj_window_frame_index(const cj_window_t* win) {
   return win ? win->frame_index : 0u;
 }
@@ -1326,6 +1720,22 @@ CJ_API void cj_window_on_resize(cj_window_t* window,
   if (!window) return;
   window->resize_callback = callback;
   window->resize_callback_user_data = user_data;
+}
+
+CJ_API void cj_window_on_move(cj_window_t* window,
+                              cj_window_move_callback_t callback,
+                              void* user_data) {
+  if (!window) return;
+  window->move_callback = callback;
+  window->move_callback_user_data = user_data;
+}
+
+CJ_API void cj_window_on_state_change(cj_window_t* window,
+                                      cj_window_state_callback_t callback,
+                                      void* user_data) {
+  if (!window) return;
+  window->state_callback = callback;
+  window->state_callback_user_data = user_data;
 }
 
 CJ_API void cj_window_on_key(cj_window_t* window,
@@ -1412,6 +1822,22 @@ void cj_window__dispatch_resize_callback(cj_window_t* window, uint32_t new_width
   /* Dispatch user callback */
   if (window->resize_callback) {
     window->resize_callback(window, new_width, new_height, window->resize_callback_user_data);
+  }
+}
+
+/* Internal helper to dispatch move callback. */
+void cj_window__dispatch_move_callback(cj_window_t* window, int32_t new_x, int32_t new_y) {
+  if (!window || window->is_destroyed || !window->plat) return;
+  if (window->move_callback) {
+    window->move_callback(window, new_x, new_y, window->move_callback_user_data);
+  }
+}
+
+/* Internal helper to dispatch state change callback. */
+void cj_window__dispatch_state_callback(cj_window_t* window, cj_window_state_t new_state) {
+  if (!window || window->is_destroyed || !window->plat) return;
+  if (window->state_callback) {
+    window->state_callback(window, new_state, window->state_callback_user_data);
   }
 }
 
@@ -1530,6 +1956,32 @@ void cj_window__clear_input_state(cj_window_t* window) {
 }
 
 /* Internal helper to get current mouse position (for calculating deltas). */
+void cj_window__get_position(cj_window_t* window, int32_t* out_x, int32_t* out_y) {
+  if (!window || !window->plat) {
+    if (out_x) *out_x = 0;
+    if (out_y) *out_y = 0;
+    return;
+  }
+  if (out_x) *out_x = window->plat->x;
+  if (out_y) *out_y = window->plat->y;
+}
+
+void cj_window__set_position(cj_window_t* window, int32_t x, int32_t y) {
+  if (!window || !window->plat) return;
+  window->plat->x = x;
+  window->plat->y = y;
+}
+
+cj_window_state_t cj_window__get_state(cj_window_t* window) {
+  if (!window || !window->plat) return CJ_WINDOW_STATE_NORMAL;
+  return window->plat->state;
+}
+
+void cj_window__set_state(cj_window_t* window, cj_window_state_t state) {
+  if (!window || !window->plat) return;
+  window->plat->state = state;
+}
+
 void cj_window__get_mouse_position(cj_window_t* window, int32_t* out_x, int32_t* out_y) {
   if (!window) {
     if (out_x) *out_x = 0;
@@ -1538,6 +1990,45 @@ void cj_window__get_mouse_position(cj_window_t* window, int32_t* out_x, int32_t*
   }
   if (out_x) *out_x = window->mouse_x;
   if (out_y) *out_y = window->mouse_y;
+}
+
+bool cj_window__is_programmatic_move(cj_window_t* window) {
+  if (!window || !window->plat) return false;
+  return window->plat->is_programmatic_move;
+}
+
+void cj_window__set_programmatic_move(cj_window_t* window, bool is_programmatic) {
+  if (!window || !window->plat) return;
+  window->plat->is_programmatic_move = is_programmatic;
+}
+
+void cj_window__update_mouse_root(cj_window_t* window, int32_t root_x, int32_t root_y) {
+  if (!window || !window->plat) return;
+  window->plat->last_mouse_root_x = root_x;
+  window->plat->last_mouse_root_y = root_y;
+  window->plat->has_seen_mouse_move = true;
+}
+
+/** Internal helper to reset mouse root tracking (call when starting drag).
+ *  @param window The window to reset.
+ */
+void cj_window__reset_mouse_root(cj_window_t* window) {
+  if (!window || !window->plat) return;
+  window->plat->has_seen_mouse_move = false;
+  window->plat->last_mouse_root_x = 0;
+  window->plat->last_mouse_root_y = 0;
+}
+
+void cj_window__get_mouse_root(cj_window_t* window, int32_t* out_root_x, int32_t* out_root_y, bool* out_has_seen_move) {
+  if (!window || !window->plat) {
+    if (out_root_x) *out_root_x = 0;
+    if (out_root_y) *out_root_y = 0;
+    if (out_has_seen_move) *out_has_seen_move = false;
+    return;
+  }
+  if (out_root_x) *out_root_x = window->plat->last_mouse_root_x;
+  if (out_root_y) *out_root_y = window->plat->last_mouse_root_y;
+  if (out_has_seen_move) *out_has_seen_move = window->plat->has_seen_mouse_move;
 }
 
 /* Mouse state polling functions */

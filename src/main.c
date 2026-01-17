@@ -274,6 +274,84 @@ static void window3_on_focus(cj_window_t* window, const cj_focus_event_t* event,
   printf("Window 3: Focus %s\n", action_str);
 }
 
+/* State for custom drag behavior */
+typedef struct WindowDragState {
+  bool is_dragging;
+  int32_t drag_start_mouse_screen_x;  /* Mouse screen X when drag started */
+  int32_t drag_start_mouse_screen_y;  /* Mouse screen Y when drag started */
+  int32_t drag_start_window_x;        /* Window X when drag started */
+  int32_t drag_start_window_y;        /* Window Y when drag started */
+  uint64_t last_click_time;           /* For double-click detection */
+  int32_t last_click_x;               /* X position of last click (window-relative) */
+  int32_t last_click_y;               /* Y position of last click (window-relative) */
+  bool pending_double_click;          /* True if we're waiting to see if this is a double-click */
+} WindowDragState;
+
+static WindowDragState drag_states[3] = {0};  /* One per test window */
+
+/* Test mouse callback implementing drag-to-move, double-click maximize, right-click close */
+static void test_mouse_callback(cj_window_t* window, const cj_mouse_event_t* event, void* user_data) {
+  WindowDragState* state = (WindowDragState*)user_data;
+  if (!state) return;
+
+  if (event->type == CJ_MOUSE_BUTTON_DOWN && event->button == CJ_MOUSE_BUTTON_LEFT) {
+    uint64_t now = getCurrentTimeInMilliseconds();
+    /* Check for double-click: same position within 500ms */
+    bool is_double_click = (now - state->last_click_time < 500) &&  /* 500ms threshold */
+                           (event->x >= state->last_click_x - 5 && event->x <= state->last_click_x + 5) &&
+                           (event->y >= state->last_click_y - 5 && event->y <= state->last_click_y + 5);
+
+    if (is_double_click) {
+      /* Double-click - cancel any pending drag and toggle maximize */
+      if (state->is_dragging) {
+        state->is_dragging = false;
+        cj_window_release_mouse(window);
+      }
+      cj_window_state_t current = cj_window_get_state(window);
+      if (current == CJ_WINDOW_STATE_MAXIMIZED) {
+        cj_window_set_state(window, CJ_WINDOW_STATE_NORMAL);
+      } else {
+        cj_window_set_state(window, CJ_WINDOW_STATE_MAXIMIZED);
+      }
+      state->last_click_time = 0;  /* Reset to prevent triple-click */
+      state->pending_double_click = false;
+    } else {
+      /* Single click - start drag (or prepare for potential double-click) */
+      state->pending_double_click = true;
+      state->is_dragging = true;
+      cj_window_get_position(window, &state->drag_start_window_x, &state->drag_start_window_y);
+      /* Store mouse screen position when drag started */
+      state->drag_start_mouse_screen_x = event->screen_x;
+      state->drag_start_mouse_screen_y = event->screen_y;
+      state->last_click_time = now;
+      state->last_click_x = event->x;
+      state->last_click_y = event->y;
+      cj_window_capture_mouse(window);
+    }
+  }
+  else if (event->type == CJ_MOUSE_BUTTON_UP && event->button == CJ_MOUSE_BUTTON_LEFT) {
+    if (state->is_dragging) {
+      state->is_dragging = false;
+      cj_window_release_mouse(window);
+    }
+  }
+  else if (event->type == CJ_MOUSE_MOVE && state->is_dragging) {
+    /* Use screen coordinates directly to calculate new window position */
+    /* This avoids all the delta calculation complexity */
+    int32_t mouse_delta_x = event->screen_x - state->drag_start_mouse_screen_x;
+    int32_t mouse_delta_y = event->screen_y - state->drag_start_mouse_screen_y;
+
+    int32_t new_x = state->drag_start_window_x + mouse_delta_x;
+    int32_t new_y = state->drag_start_window_y + mouse_delta_y;
+
+    cj_window_set_position(window, new_x, new_y);
+  }
+  else if (event->type == CJ_MOUSE_BUTTON_UP && event->button == CJ_MOUSE_BUTTON_RIGHT) {
+    /* Right-click up - close window */
+    cj_window_destroy(window);
+  }
+}
+
 int main(void) {
 #ifndef _WIN32
   fprintf(stderr, "Starting CJelly demo...\n");
@@ -316,21 +394,33 @@ int main(void) {
   }
 
   // Create three windows via new API (now that Vulkan is ready)
+  // All windows open at the same position (offset for visibility)
+  static int32_t base_x = 100;
+  static int32_t base_y = 100;
+  static const int32_t window_offset = 50;
+
   cj_window_desc_t wdesc1 = {0};
   wdesc1.title.ptr = "CJelly Window 1 (Color Graph)";
   wdesc1.title.len = strlen(wdesc1.title.ptr);
   wdesc1.width = 800;
   wdesc1.height = 600;
+  wdesc1.x = base_x;
+  wdesc1.y = base_y;
+  wdesc1.initial_state = CJ_WINDOW_STATE_NORMAL;
 
   cj_window_desc_t wdesc2 = wdesc1;
   wdesc2.title.ptr = "CJelly Window 2 (Textured Graph)";
   wdesc2.title.len = strlen(wdesc2.title.ptr);
+  wdesc2.x = base_x + window_offset;
+  wdesc2.y = base_y + window_offset;
 
   cj_window_desc_t wdesc3 = wdesc1;
   wdesc3.title.ptr = "CJelly Window 3 (Multi-Pass Graph)";
   wdesc3.title.len = strlen(wdesc3.title.ptr);
   wdesc3.width = 600;
   wdesc3.height = 400;
+  wdesc3.x = base_x + window_offset * 2;
+  wdesc3.y = base_y + window_offset * 2;
 
   printf("Creating windows...\n");
   cj_window_t* win1 = cj_window_create(engine, &wdesc1);
@@ -431,14 +521,16 @@ int main(void) {
 
   // Register keyboard callback for window 1 (test input handling)
   cj_window_on_key(win1, window1_on_key, NULL);
-  cj_window_on_mouse(win1, window1_on_mouse, NULL);
   cj_window_on_focus(win1, window1_on_focus, NULL);
 
-  // Register mouse and focus callbacks for windows 2 and 3
-  cj_window_on_mouse(win2, window2_on_mouse, NULL);
-  cj_window_on_focus(win2, window2_on_focus, NULL);
+  // Register test mouse callbacks for drag-to-move, double-click maximize, right-click close
+  // These replace the original mouse callbacks for testing window placement features
+  cj_window_on_mouse(win1, test_mouse_callback, &drag_states[0]);
+  cj_window_on_mouse(win2, test_mouse_callback, &drag_states[1]);
+  cj_window_on_mouse(win3, test_mouse_callback, &drag_states[2]);
 
-  cj_window_on_mouse(win3, window3_on_mouse, NULL);
+  // Register focus callbacks for windows 2 and 3
+  cj_window_on_focus(win2, window2_on_focus, NULL);
   cj_window_on_focus(win3, window3_on_focus, NULL);
 
   // Register signal handlers automatically (handlers only set shutdown flag)
