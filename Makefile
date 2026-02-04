@@ -154,8 +154,9 @@ $(APP_DIR)/test/%: test/%
 # Dependency Inclusion
 ####################################################################
 
-# Automatically include all generated dependency files.
--include $(wildcard $(OBJ_DIR)/*.d)
+# Explicit list of dependency files (no wildcard: same set on all platforms, faster make startup).
+DEPFILES := $(LIBOBJECTS:.o=.d)
+-include $(DEPFILES)
 
 
 ####################################################################
