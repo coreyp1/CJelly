@@ -207,12 +207,26 @@ VAR_NAME = $(subst .,_, $(notdir $<))
 SHADER_SOURCES := $(shell find src/shaders -name "*.vert" -o -name "*.frag" -o -name "*.comp")
 SHADER_HEADERS := $(patsubst src/shaders/%,$(GEN_DIR)/shaders/%.h,$(SHADER_SOURCES))
 
+SHADER_SPV := $(patsubst src/shaders/%,$(APP_DIR)/shaders/%.spv,$(SHADER_SOURCES))
+
+# The .spv files are only ever needed to build the generated headers, so make
+# treats them as intermediate and deletes them once the headers exist. On the
+# next build the headers look up to date while their inputs are gone, and any
+# regeneration runs xxd against a missing file and writes an empty header --
+# which then fails to compile with "'color_vert_spv' undeclared". Keep them.
+.SECONDARY: $(SHADER_SPV)
+.PRECIOUS: $(SHADER_SPV)
+
 # Phony target to ensure all shader headers are generated before any object files
 .PHONY: shader-headers
 shader-headers: $(SHADER_HEADERS)
 
-# Make specific object files that need shader headers depend on them
-$(OBJ_DIR)/rgraph.o: shader-headers
+# Every object must wait for the headers, not just rgraph.o: engine.c and
+# cjelly.c include them too, so a parallel build could compile either before
+# the headers exist. Depend on the header files themselves rather than the
+# phony target, which would be out of date on every run and force a full
+# rebuild each time.
+$(LIBOBJECTS): | $(SHADER_HEADERS)
 
 # Pattern rule to generate a header file from a SPIR-V file.
 $(GEN_DIR)/shaders/%.h: $(APP_DIR)/shaders/%.spv
