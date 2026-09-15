@@ -1,0 +1,7 @@
+Name: Ghoti.io CJelly(BRANCH)
+Description: Cross-platform GUI library rendering through Vulkan
+Version: (VERSION)
+URL: https://github.com/coreyp1/CJelly
+Libs: -L(LIB)/(SUITE) -l(SUITE)-(PROJECT)(BRANCH)
+CFlags: -I(INCLUDE)/(SUITE)/(PROJECT)(BRANCH)
+Requires: vulkan
