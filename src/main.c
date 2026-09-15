@@ -350,8 +350,10 @@ static void test_mouse_callback(cj_window_t* window, const cj_mouse_event_t* eve
 }
 
 /* Where the demo looks for a model when none is named on the command line.
- * The path is relative to the repository root, which is where `make demo`
- * runs from. */
+ *
+ * `make demo` copies test/ next to the binary and runs from there, so this
+ * relative path resolves. Running the binary straight out of the build tree
+ * from somewhere else will not find it - pass a path instead. */
 #define DEMO_DEFAULT_MODEL "test/models/cube.obj"
 
 int main(int argc, char ** argv) {

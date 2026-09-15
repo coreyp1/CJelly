@@ -440,7 +440,13 @@ test: \
 			$$test_exe --gtest_brief=1 || exit 1; \
 	done
 
-demo: ## Build and run the interactive Vulkan demo (needs a display)
+# An .obj file for the demo's model window: make demo MODEL=path/to/model.obj
+# Made absolute because the demo runs from $(APP_DIR), not from here, so a
+# relative path would be resolved against the wrong directory.
+MODEL ?=
+DEMO_MODEL_ARG := $(if $(MODEL),$(abspath $(MODEL)),)
+
+demo: ## Build and run the interactive Vulkan demo (needs a display). MODEL=x.obj to choose a model.
 demo: \
 		$(TEST_FILES) \
 		$(APP_DIR)/$(TARGET) \
@@ -450,7 +456,11 @@ demo: \
 	@printf "### Running the demo     ###\n"
 	@printf "############################\n"
 	@printf "\033[0m\n"
-	cd $(APP_DIR) && LD_LIBRARY_PATH="$(RUNTIME_LIB_PATH)" $(ENV_VARS) ./main$(EXE_EXTENSION)
+	@if [ -n "$(DEMO_MODEL_ARG)" ] && [ ! -f "$(DEMO_MODEL_ARG)" ]; then \
+		printf "\033[0;31mNo such file: $(DEMO_MODEL_ARG)\033[0m\n"; \
+		exit 1; \
+	fi
+	cd $(APP_DIR) && LD_LIBRARY_PATH="$(RUNTIME_LIB_PATH)" $(ENV_VARS) ./main$(EXE_EXTENSION) $(DEMO_MODEL_ARG)
 
 clean: ## Remove all contents of the build directories.
 	-@rm -rvf $(BUILD_DIR)
