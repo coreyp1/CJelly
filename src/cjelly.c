@@ -54,6 +54,13 @@
 #include <X11/extensions/XI2proto.h>
 #endif
 #include <shaders/basic.vert.h>
+
+/* textured.vert lives in rgraph.c's translation unit: the generated SPIR-V
+ * headers define their arrays with external linkage, so including one in a
+ * second file is a duplicate-symbol link error. engine.c reaches the colour
+ * shaders the same way. */
+extern unsigned char textured_vert_spv[];
+extern unsigned int textured_vert_spv_len;
 #include <shaders/color.vert.h>
 #include <shaders/color.frag.h>
 #include <shaders/textured.frag.h>
@@ -1843,7 +1850,7 @@ static void allocateTextureDescriptorSetCtx(const CJellyVulkanContext* ctx) {
 void createTexturedGraphicsPipeline() {
   // Load SPIR-V binaries and create shader modules for texturing.
   VkShaderModule vertShaderModule =
-      createShaderModuleFromMemory(cur_device(), basic_vert_spv, basic_vert_spv_len);
+      createShaderModuleFromMemory(cur_device(), textured_vert_spv, textured_vert_spv_len);
   VkShaderModule fragShaderModule = createShaderModuleFromMemory(
       cur_device(), textured_frag_spv, textured_frag_spv_len);
 
@@ -1987,7 +1994,7 @@ void createTexturedGraphicsPipeline() {
 
 static void createTexturedGraphicsPipelineCtx(const CJellyVulkanContext* ctx) {
   VkShaderModule vertShaderModule =
-      createShaderModuleFromMemory(ctx->device, basic_vert_spv, basic_vert_spv_len);
+      createShaderModuleFromMemory(ctx->device, textured_vert_spv, textured_vert_spv_len);
   VkShaderModule fragShaderModule = createShaderModuleFromMemory(
       ctx->device, textured_frag_spv, textured_frag_spv_len);
   if (vertShaderModule == VK_NULL_HANDLE || fragShaderModule == VK_NULL_HANDLE) {

@@ -99,3 +99,39 @@ down or not at all, and there is no way to tell which from reading the code.
 - **One model per node**, with no transform control beyond the built-in spin.
 - **The fan triangulation is wrong for concave faces.** A real triangulator
   would be needed for those.
+
+## Verifying the rendering without a display
+
+The model path can be checked end to end on a virtual display, which is how
+the screenshots in this document were produced and how the Vulkan half of it
+was first verified at all. Two things make that worth doing: the validation
+layers report the mistakes that do not show up on screen, and a captured frame
+settles the ones that do.
+
+```bash
+sudo apt install vulkan-validationlayers xvfb netpbm
+
+Xvfb :99 -screen 0 1600x1200x24 &
+
+cd build/linux/release/apps
+DISPLAY=:99 \
+  LD_LIBRARY_PATH="$(cd ../../../..; pwd)/build/linux/release/apps:..." \
+  VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.json \
+  VK_LOADER_LAYERS_ENABLE=VK_LAYER_KHRONOS_validation \
+  ./main /path/to/model.obj
+
+DISPLAY=:99 xwd -name "CJelly Window 4 (Model)" -out win4.xwd
+xwdtopnm win4.xwd | pnmtopng > win4.png
+```
+
+`VK_DRIVER_FILES` points at lavapipe because Xvfb has no DRI3 and the hardware
+driver cannot present to it. Software rendering is slow, and it will not catch
+a fault specific to a real driver, but for correctness it is the better test:
+lavapipe is strict where a vendor driver is often forgiving.
+
+Two details that cost time the first time round. Without a window manager, an
+obscured window captures as black - there is nothing to repaint what is
+underneath it - so spread the demo's windows out with
+`CJELLY_DEMO_WINDOW_OFFSET=820` before capturing more than one. And the
+validation layers need `VK_LAYER_PATH` set if they are not in the loader's
+default search path.

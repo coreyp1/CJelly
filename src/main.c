@@ -402,7 +402,20 @@ int main(int argc, char ** argv) {
   // All windows open at the same position (offset for visibility)
   static int32_t base_x = 100;
   static int32_t base_y = 100;
-  static const int32_t window_offset = 50;
+  /* How far each window is offset from the previous one. Overridable because
+   * the default cascade overlaps heavily, and on a headless display with no
+   * window manager an obscured window cannot be captured - there is nothing
+   * to redraw what is underneath. */
+  int32_t window_offset = 50;
+  {
+    const char * from_env = getenv("CJELLY_DEMO_WINDOW_OFFSET");
+    if (from_env) {
+      int parsed = atoi(from_env);
+      if (parsed > 0) {
+        window_offset = (int32_t)parsed;
+      }
+    }
+  }
 
   cj_window_desc_t wdesc1 = {0};
   wdesc1.title.ptr = "CJelly Window 1 (Color Graph)";

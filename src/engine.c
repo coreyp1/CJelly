@@ -173,6 +173,11 @@ CJ_API int cj_engine_ensure_render_pass(cj_engine_t* e, VkFormat fmt) {
 
 static int eng_create_command_pool(cj_engine_t* e) {
   VkCommandPoolCreateInfo pci = {0}; pci.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO; pci.queueFamilyIndex = 0;
+  /* The render-graph frame path calls vkBeginCommandBuffer on the same buffer
+   * every frame, which implicitly resets it. That is only legal when the pool
+   * allows it; without this flag every frame of every render-graph window is
+   * undefined behaviour that happens to work. */
+  pci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
   if (vkCreateCommandPool(e->device, &pci, NULL, &e->command_pool) != VK_SUCCESS) return 0;
   return 1;
 }
