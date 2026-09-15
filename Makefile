@@ -448,7 +448,17 @@ clean: ## Remove all contents of the build directories.
 #   lib(SUITE)-(PROJECT)(BRANCH).so.(MAJOR).(MINOR)
 #   lib(SUITE)-(PROJECT)(BRANCH).so.(MAJOR) link to previous
 #   lib(SUITE)-(PROJECT)(BRANCH).so link to previous
-# /etc/ld.so.conf.d/(SUITE)-(PROJECT)(BRANCH).conf will point to /usr/local/lib/(SUITE)
+# Where the dynamic loader configuration fragment goes. Overridable so a
+# staged or user-prefix install has somewhere to write it; the default is the
+# system location, which is what an ordinary `sudo make install` uses.
+LDCONF_INSTALL_PATH ?= /etc/ld.so.conf.d
+
+# Where this project's own .pc file is installed. Defaults to the directory
+# pkg-config is already being told to search, but separate from it so a
+# staged install can write somewhere else without also redirecting lookups.
+PKGCONFIG_INSTALL_PATH ?= $(PKG_CONFIG_PATH)
+
+# $(LDCONF_INSTALL_PATH)/(SUITE)-(PROJECT)(BRANCH).conf will point to $(LIB_INSTALL_PATH)/(SUITE)
 # /usr/local/include/(SUITE)/(PROJECT)(BRANCH)
 #   *.h copied from ./include/(PROJECT)
 # /usr/local/share/pkgconfig
@@ -463,7 +473,8 @@ ifeq ($(OS_NAME), Linux)
 	@ln -f -s $(TARGET) $(LIB_INSTALL_PATH)/$(SUITE)/$(SO_NAME)
 	@ln -f -s $(SO_NAME) $(LIB_INSTALL_PATH)/$(SUITE)/$(BASE_NAME)
 	# Installing the ld configuration file.
-	@echo "/usr/local/lib/$(SUITE)" > /etc/ld.so.conf.d/$(SUITE)-$(PROJECT)$(BRANCH).conf
+	@mkdir -p $(LDCONF_INSTALL_PATH)
+	@echo "$(LIB_INSTALL_PATH)/$(SUITE)" > $(LDCONF_INSTALL_PATH)/$(SUITE)-$(PROJECT)$(BRANCH).conf
 endif
 ifeq ($(OS_NAME), Windows)
 # The .dll file and the .dll.a file
@@ -472,12 +483,20 @@ ifeq ($(OS_NAME), Windows)
 	@cp $(APP_DIR)/$(TARGET) $(BIN_INSTALL_PATH)
 endif
 	# Installing the headers.
-	@mkdir -p $(INCLUDE_INSTALL_PATH)/$(SUITE)/$(PROJECT)$(BRANCH)/$(PROJECT)
-	@cp include/cjelly/*.h $(INCLUDE_INSTALL_PATH)/$(SUITE)/$(PROJECT)$(BRANCH)/$(PROJECT)
-	@cp $(GEN_DIR)/*.h $(INCLUDE_INSTALL_PATH)/$(SUITE)/$(PROJECT)$(BRANCH)/$(PROJECT)
+	#
+	# Copied recursively: a flat glob of include/cjelly/*.h left out the whole
+	# format/ tree, so an installed CJelly could not compile anything that
+	# included cjelly/format/image.h or cjelly/format/3d/obj.h. The generated
+	# directory holds shaders rather than headers, and a glob over it failed
+	# the install outright when it matched nothing.
+	@mkdir -p $(INCLUDE_INSTALL_PATH)/$(SUITE)/$(PROJECT)$(BRANCH)
+	@cd include && find . -name "*.h" -exec cp --parents '{}' $(INCLUDE_INSTALL_PATH)/$(SUITE)/$(PROJECT)$(BRANCH)/ \;
+	@if [ -d "$(GEN_DIR)" ]; then \
+		cd $(GEN_DIR) && find . -name "*.h" -exec cp --parents '{}' $(INCLUDE_INSTALL_PATH)/$(SUITE)/$(PROJECT)$(BRANCH)/$(PROJECT)/ \; ; \
+	fi
 	# Installing the pkg-config files.
-	@mkdir -p $(PKG_CONFIG_PATH)
-	@cat pkgconfig/$(SUITE)-$(PROJECT).pc | sed 's/(SUITE)/$(SUITE)/g; s/(PROJECT)/$(PROJECT)/g; s/(BRANCH)/$(BRANCH)/g; s/(VERSION)/$(VERSION)/g; s|(LIB)|$(LIB_INSTALL_PATH)|g; s|(INCLUDE)|$(INCLUDE_INSTALL_PATH)|g' > $(PKG_CONFIG_PATH)/$(SUITE)-$(PROJECT)$(BRANCH).pc
+	@mkdir -p $(PKGCONFIG_INSTALL_PATH)
+	@cat pkgconfig/$(SUITE)-$(PROJECT).pc | sed 's/(SUITE)/$(SUITE)/g; s/(PROJECT)/$(PROJECT)/g; s/(BRANCH)/$(BRANCH)/g; s/(VERSION)/$(VERSION)/g; s|(LIB)|$(LIB_INSTALL_PATH)|g; s|(INCLUDE)|$(INCLUDE_INSTALL_PATH)|g' > $(PKGCONFIG_INSTALL_PATH)/$(SUITE)-$(PROJECT)$(BRANCH).pc
 ifeq ($(OS_NAME), Linux)
 	# Running ldconfig.
 	@ldconfig >> /dev/null 2>&1
@@ -489,7 +508,7 @@ uninstall: ## Delete the globally-installed files.  Requires sudo.
 ifeq ($(OS_NAME), Linux)
 	@rm -f $(LIB_INSTALL_PATH)/$(SUITE)/$(BASE_NAME)*
 	# Deleting the ld configuration file.
-	@rm -f /etc/ld.so.conf.d/$(SUITE)-$(PROJECT)$(BRANCH).conf
+	@rm -f $(LDCONF_INSTALL_PATH)/$(SUITE)-$(PROJECT)$(BRANCH).conf
 endif
 ifeq ($(OS_NAME), Windows)
 	@rm -f $(LIB_INSTALL_PATH)/$(TARGET).a
@@ -498,7 +517,7 @@ endif
 	# Deleting the headers.
 	@rm -rf $(INCLUDE_INSTALL_PATH)/$(SUITE)/$(PROJECT)$(BRANCH)
 	# Deleting the pkg-config files.
-	@rm -f $(PKG_CONFIG_PATH)/$(SUITE)-$(PROJECT)$(BRANCH).pc
+	@rm -f $(PKGCONFIG_INSTALL_PATH)/$(SUITE)-$(PROJECT)$(BRANCH).pc
 	# Cleaning up (potentially) no longer needed directories.
 	@rmdir --ignore-fail-on-non-empty $(INCLUDE_INSTALL_PATH)/$(SUITE)
 	@rmdir --ignore-fail-on-non-empty $(LIB_INSTALL_PATH)/$(SUITE)
