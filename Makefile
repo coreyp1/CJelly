@@ -135,6 +135,31 @@ CJELLYLIBRARY := -L $(APP_DIR) -l$(SUITE)-$(PROJECT)$(BRANCH)
 all: $(APP_DIR)/$(TARGET) $(APP_DIR)/main$(EXE_EXTENSION) ## Build the shared library
 
 ####################################################################
+# Unit Tests
+####################################################################
+
+# Discover test sources and compute an executable name for each.
+# test_foo.cpp -> testFoo, matching the convention used across the suite.
+UNIT_TEST_PAIRS := $(shell find tests -type f -name 'test*.cpp' 2>/dev/null | sort | while read f; do \
+	echo "$$f|$$(basename "$$f" .cpp | sed 's/test_/test/; s/^test\([a-z]\)/test\U\1/')"; done)
+UNIT_TEST_EXECUTABLES := $(addprefix $(APP_DIR)/,$(addsuffix $(EXE_EXTENSION),\
+	$(foreach pair,$(UNIT_TEST_PAIRS),$(word 2,$(subst |, ,$(pair))))))
+
+# Tests reach internal headers as well as the public ones, and locate their
+# fixtures through CJELLY_TEST_DIR (see tests/test_helpers.h).
+TEST_INCLUDE := $(INCLUDE) -I src/ -I tests/
+
+define unit-test-rule
+$(APP_DIR)/$2$(EXE_EXTENSION): $1 | $(APP_DIR)/$(TARGET)
+	@printf "\n### Compiling and linking %s Test ###\n" "$2"
+	@mkdir -p $$(@D)
+	$$(CXX) $$(CXXFLAGS) $$(TEST_INCLUDE) -MMD -MP -MF $$(APP_DIR)/$2.d -o $$@ $$< $$(LDFLAGS) $$(TESTFLAGS) $$(CJELLYLIBRARY)
+endef
+$(foreach pair,$(UNIT_TEST_PAIRS),$(eval $(call unit-test-rule,$(word 1,$(subst |, ,$(pair))),$(word 2,$(subst |, ,$(pair))))))
+
+-include $(UNIT_TEST_EXECUTABLES:%=%.d)
+
+####################################################################
 # Test Files
 ####################################################################
 
@@ -307,7 +332,7 @@ $(APP_DIR)/main$(EXE_EXTENSION): \
 # General commands
 .PHONY: clean cloc docs docs-pdf
 # Release build commands
-.PHONY: all install test test-watch uninstall watch
+.PHONY: all demo install test test-watch uninstall watch
 # Debug build commands
 .PHONY: all-debug install-debug test-debug test-watch-debug uninstall-debug watch-debug
 
@@ -339,12 +364,26 @@ test: ## Make and run the Unit tests
 test: \
 		$(TEST_FILES) \
 		$(APP_DIR)/$(TARGET) \
-		$(APP_DIR)/main$(EXE_EXTENSION)
-#				$(APP_DIR)/test$(EXE_EXTENSION) \
+		$(UNIT_TEST_EXECUTABLES)
+	@for test_exe in $(UNIT_TEST_EXECUTABLES); do \
+		test_name=$$(basename $$test_exe $(EXE_EXTENSION)); \
+		printf "\033[0;32m\n"; \
+		printf "############################\n"; \
+		printf "### Running %s\n" "$$test_name"; \
+		printf "############################\n"; \
+		printf "\033[0m\n"; \
+		LD_LIBRARY_PATH="$(APP_DIR)" CJELLY_TEST_DIR="$(CURDIR)/test" \
+			$$test_exe --gtest_brief=1 || exit 1; \
+	done
 
+demo: ## Build and run the interactive Vulkan demo (needs a display)
+demo: \
+		$(TEST_FILES) \
+		$(APP_DIR)/$(TARGET) \
+		$(APP_DIR)/main$(EXE_EXTENSION)
 	@printf "\033[0;32m\n"
 	@printf "############################\n"
-	@printf "### Running normal tests ###\n"
+	@printf "### Running the demo     ###\n"
 	@printf "############################\n"
 	@printf "\033[0m\n"
 	cd $(APP_DIR) && LD_LIBRARY_PATH="./" $(ENV_VARS) ./main$(EXE_EXTENSION)
