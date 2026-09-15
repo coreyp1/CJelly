@@ -1,7 +1,10 @@
 #include <assert.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+
+#include <cutil/array.h>
 
 #include <cjelly/format/3d/obj.h>
 
@@ -15,6 +18,70 @@
 #define LINE_SIZE 256
 
 
+/**
+ * The arrays an OBJ file builds up while it is being parsed.
+ *
+ * The parser used to grow six arrays by hand, each with its own doubling
+ * step and its own out-of-memory branch. They are GCU_Arrays now, and the
+ * finished contents are handed to the model with gcu_array_steal(), so the
+ * public CJellyFormat3dObjModel still exposes plain pointers and counts.
+ */
+typedef struct {
+  GCU_Array vertices;
+  GCU_Array texcoords;
+  GCU_Array normals;
+  GCU_Array faces;
+  GCU_Array groups;
+  GCU_Array material_mappings;
+} obj_builder_t;
+
+/** Initialize every array, with the capacities the parser used to preallocate. */
+static bool obj_builder_init(obj_builder_t * b) {
+  memset(b, 0, sizeof(*b));
+  return gcu_array_create_in_place(
+             &b->vertices, sizeof(CJellyFormat3dObjVertex), 128, NULL) &&
+      gcu_array_create_in_place(
+          &b->texcoords, sizeof(CJellyFormat3dObjTexCoord), 128, NULL) &&
+      gcu_array_create_in_place(
+          &b->normals, sizeof(CJellyFormat3dObjNormal), 128, NULL) &&
+      gcu_array_create_in_place(
+          &b->faces, sizeof(CJellyFormat3dObjFace), 128, NULL) &&
+      gcu_array_create_in_place(
+          &b->groups, sizeof(CJellyFormat3dObjGroup), 16, NULL) &&
+      gcu_array_create_in_place(&b->material_mappings,
+          sizeof(CJellyFormat3dObjMaterialMapping), 4, NULL);
+}
+
+/**
+ * Release everything the builder holds, including the per-face overflow
+ * arrays, which the model's own free function would otherwise be responsible
+ * for once the faces reached it.
+ */
+static void obj_builder_destroy(obj_builder_t * b) {
+  for (size_t i = 0; i < gcu_array_count(&b->faces); i++) {
+    CJellyFormat3dObjFace * face =
+        (CJellyFormat3dObjFace *)gcu_array_at(&b->faces, i);
+    free(face->overflow);
+  }
+  gcu_array_destroy_in_place(&b->vertices);
+  gcu_array_destroy_in_place(&b->texcoords);
+  gcu_array_destroy_in_place(&b->normals);
+  gcu_array_destroy_in_place(&b->faces);
+  gcu_array_destroy_in_place(&b->groups);
+  gcu_array_destroy_in_place(&b->material_mappings);
+}
+
+/** Move one array into a model's pointer/count/capacity triple. */
+static void obj_steal_into(
+    GCU_Array * array, void ** out_data, int * out_count, int * out_capacity) {
+  // Trim first, so the capacity the model reports is the one it actually has.
+  (void)gcu_array_shrink_to_fit(array);
+  size_t count = 0;
+  *out_data = gcu_array_steal(array, &count);
+  *out_count = (int)count;
+  *out_capacity = (int)count;
+}
+
 CJellyFormat3dObjError cjelly_format_3d_obj_load(const char * filename, CJellyFormat3dObjModel * * outModel) {
   CJellyFormat3dObjError err = CJELLY_FORMAT_3D_OBJ_SUCCESS;
 
@@ -22,6 +89,7 @@ CJellyFormat3dObjError cjelly_format_3d_obj_load(const char * filename, CJellyFo
   if (!filename || !outModel) {
     return CJELLY_FORMAT_3D_OBJ_ERR_INVALID_FORMAT;
   }
+  *outModel = NULL;
 
   // Open the file for reading.
   FILE* fp = fopen(filename, "r");
@@ -30,43 +98,15 @@ CJellyFormat3dObjError cjelly_format_3d_obj_load(const char * filename, CJellyFo
     return CJELLY_FORMAT_3D_OBJ_ERR_FILE_NOT_FOUND;
   }
 
-  // Allocate memory for the model structure.
-  CJellyFormat3dObjModel * model = (CJellyFormat3dObjModel *)malloc(sizeof(CJellyFormat3dObjModel));
-  if (!model) { goto ERROR_CLEANUP; }
+  obj_builder_t builder;
+  if (!obj_builder_init(&builder)) {
+    obj_builder_destroy(&builder);
+    fclose(fp);
+    return CJELLY_FORMAT_3D_OBJ_ERR_OUT_OF_MEMORY;
+  }
 
-  // Initialize all counts and capacities, and preallocate memory.
-  model->vertex_count = 0;
-  model->vertex_capacity = 128;
-  model->vertices = (CJellyFormat3dObjVertex *)malloc(model->vertex_capacity * sizeof(CJellyFormat3dObjVertex));
-  if (!model->vertices) { goto ERROR_CLEANUP; }
-
-  model->texcoord_count = 0;
-  model->texcoord_capacity = 128;
-  model->texcoords = (CJellyFormat3dObjTexCoord *)malloc(model->texcoord_capacity * sizeof(CJellyFormat3dObjTexCoord));
-  if (!model->texcoords) { goto ERROR_CLEANUP; }
-
-  model->normal_count = 0;
-  model->normal_capacity = 128;
-  model->normals = (CJellyFormat3dObjNormal *)malloc(model->normal_capacity * sizeof(CJellyFormat3dObjNormal));
-  if (!model->normals) { goto ERROR_CLEANUP; }
-
-  model->face_count = 0;
-  model->face_capacity = 128;
-  model->faces = (CJellyFormat3dObjFace *)malloc(model->face_capacity * sizeof(CJellyFormat3dObjFace));
-  if (!model->faces) { goto ERROR_CLEANUP; }
-
-  model->group_count = 0;
-  model->group_capacity = 16;
-  model->groups = (CJellyFormat3dObjGroup *)malloc(model->group_capacity * sizeof(CJellyFormat3dObjGroup));
-  if (!model->groups) { goto ERROR_CLEANUP; }
-
-  model->material_mapping_count = 0;
-  model->material_mapping_capacity = 4;
-  model->material_mappings = (CJellyFormat3dObjMaterialMapping *)malloc(model->material_mapping_capacity * sizeof(CJellyFormat3dObjMaterialMapping));
-  if (!model->material_mappings) { goto ERROR_CLEANUP; }
-
-  // Initialize the material library name.
-  model->mtllib[0] = '\0';
+  char mtllib[256];
+  mtllib[0] = '\0';
 
   int current_group = -1;            // Index of the current active group
   int current_material_index = -1;   // Current material index (updated by "usemtl" directive)
@@ -80,53 +120,29 @@ CJellyFormat3dObjError cjelly_format_3d_obj_load(const char * filename, CJellyFo
     if (strncmp(line, "v ", 2) == 0) {
       // Read a vertex line.
       CJellyFormat3dObjVertex v;
-      if (sscanf(line + 2, "%f %f %f", &v.x, &v.y, &v.z) == 3) {
-        if (model->vertex_count >= model->vertex_capacity) {
-          model->vertex_capacity *= 2;
-          CJellyFormat3dObjVertex* temp = realloc(model->vertices, model->vertex_capacity * sizeof(CJellyFormat3dObjVertex));
-          if (!temp) { goto ERROR_CLEANUP; }
-          model->vertices = temp;
-        }
-        model->vertices[model->vertex_count++] = v;
-      }
-      else {
+      if (sscanf(line + 2, "%f %f %f", &v.x, &v.y, &v.z) != 3) {
         err = CJELLY_FORMAT_3D_OBJ_ERR_INVALID_FORMAT;
         goto ERROR_CLEANUP;
       }
+      if (!gcu_array_append(&builder.vertices, &v)) { goto ERROR_CLEANUP; }
     }
     else if (strncmp(line, "vt ", 3) == 0) {
       // Read a texture coordinate line.
       CJellyFormat3dObjTexCoord vt;
-      if (sscanf(line + 3, "%f %f", &vt.u, &vt.v) == 2) {
-        if (model->texcoord_count >= model->texcoord_capacity) {
-          model->texcoord_capacity *= 2;
-          CJellyFormat3dObjTexCoord* temp = realloc(model->texcoords, model->texcoord_capacity * sizeof(CJellyFormat3dObjTexCoord));
-          if (!temp) { goto ERROR_CLEANUP; }
-          model->texcoords = temp;
-        }
-        model->texcoords[model->texcoord_count++] = vt;
-      }
-      else {
+      if (sscanf(line + 3, "%f %f", &vt.u, &vt.v) != 2) {
         err = CJELLY_FORMAT_3D_OBJ_ERR_INVALID_FORMAT;
         goto ERROR_CLEANUP;
       }
+      if (!gcu_array_append(&builder.texcoords, &vt)) { goto ERROR_CLEANUP; }
     }
     else if (strncmp(line, "vn ", 3) == 0) {
       // Read a normal line.
       CJellyFormat3dObjNormal vn;
-      if (sscanf(line + 3, "%f %f %f", &vn.x, &vn.y, &vn.z) == 3) {
-        if (model->normal_count >= model->normal_capacity) {
-          model->normal_capacity *= 2;
-          CJellyFormat3dObjNormal* temp = realloc(model->normals, model->normal_capacity * sizeof(CJellyFormat3dObjNormal));
-          if (!temp) { goto ERROR_CLEANUP; }
-          model->normals = temp;
-        }
-        model->normals[model->normal_count++] = vn;
-      }
-      else {
+      if (sscanf(line + 3, "%f %f %f", &vn.x, &vn.y, &vn.z) != 3) {
         err = CJELLY_FORMAT_3D_OBJ_ERR_INVALID_FORMAT;
         goto ERROR_CLEANUP;
       }
+      if (!gcu_array_append(&builder.normals, &vn)) { goto ERROR_CLEANUP; }
     }
     else if (strncmp(line, "f ", 2) == 0) {
       // Read a face line.
@@ -134,8 +150,14 @@ CJellyFormat3dObjError cjelly_format_3d_obj_load(const char * filename, CJellyFo
       face.count = 0;
       face.material_index = current_material_index;
       face.overflow = NULL; // Initialize overflow to NULL.
-      int extra_count = 0;  // Number of vertices stored in overflow.
-      int extra_capacity = 0; // Capacity for overflow array.
+
+      // Vertices past the fourth go into an overflow array, which is handed
+      // to the face at the end of the line.
+      GCU_Array overflow;
+      if (!gcu_array_create_in_place(
+              &overflow, sizeof(CJellyFormat3dObjFaceOverflow), 0, NULL)) {
+        goto ERROR_CLEANUP;
+      }
 
       // Tokenize the line after "f ".
       char * token = strtok(line + 2, " ");
@@ -181,44 +203,38 @@ CJellyFormat3dObjError cjelly_format_3d_obj_load(const char * filename, CJellyFo
           face.count++;
         }
         else {
-          // For extra vertices, allocate or grow the overflow array.
-          if (face.overflow == NULL) {
-            extra_capacity = 4;
-            face.overflow = (CJellyFormat3dObjFaceOverflow *)malloc(extra_capacity * sizeof(CJellyFormat3dObjFaceOverflow));
-            if (!face.overflow) { goto ERROR_CLEANUP; }
-            extra_count = 0;
+          CJellyFormat3dObjFaceOverflow * extra =
+              (CJellyFormat3dObjFaceOverflow *)gcu_array_emplace(&overflow);
+          if (!extra) {
+            gcu_array_destroy_in_place(&overflow);
+            goto ERROR_CLEANUP;
           }
-          if (extra_count >= extra_capacity) {
-            extra_capacity *= 2;
-            CJellyFormat3dObjFaceOverflow * tmp = realloc(face.overflow, extra_capacity * sizeof(CJellyFormat3dObjFaceOverflow));
-            if (!tmp) { goto ERROR_CLEANUP; }
-            face.overflow = tmp;
-          }
-          face.overflow[extra_count].vertex = vIndex - 1;
-          face.overflow[extra_count].texcoord = vtIndex ? (vtIndex - 1) : -1;
-          face.overflow[extra_count].normal = vnIndex ? (vnIndex - 1) : -1;
-          extra_count++;
+          extra->vertex = vIndex - 1;
+          extra->texcoord = vtIndex ? (vtIndex - 1) : -1;
+          extra->normal = vnIndex ? (vnIndex - 1) : -1;
           face.count++; // Increase total vertex count.
         }
         token = strtok(NULL, " ");
       }
+
+      // Trim before handing it over: this block outlives the parse and there
+      // may be one per face.
+      (void)gcu_array_shrink_to_fit(&overflow);
+      face.overflow =
+          (CJellyFormat3dObjFaceOverflow *)gcu_array_steal(&overflow, NULL);
+      gcu_array_destroy_in_place(&overflow);
+
       // Append the face to the model's face array.
-      if (model->face_count >= model->face_capacity) {
-        model->face_capacity *= 2;
-        CJellyFormat3dObjFace * temp = realloc(model->faces, model->face_capacity * sizeof(CJellyFormat3dObjFace));
-        if (!temp) {
-          // Free the overflow array if it was allocated.
-          // The code pattern is different for this case because the operation
-          // to add the face to the faces array failed.  Therefore, it will
-          // not be automatically freed when the model itself is freed.
-          if (face.overflow) free(face.overflow);
-          goto ERROR_CLEANUP;
-        }
-        model->faces = temp;
+      if (!gcu_array_append(&builder.faces, &face)) {
+        // The face never reached the array, so its overflow will not be freed
+        // along with the rest.
+        free(face.overflow);
+        goto ERROR_CLEANUP;
       }
-      model->faces[model->face_count++] = face;
       if (current_group >= 0) {
-        model->groups[current_group].face_count++;
+        CJellyFormat3dObjGroup * group = (CJellyFormat3dObjGroup *)gcu_array_at(
+            &builder.groups, (size_t)current_group);
+        group->face_count++;
       }
     }
     else if (strncmp(line, "g ", 2) == 0 || strncmp(line, "o ", 2) == 0) {
@@ -228,23 +244,17 @@ CJellyFormat3dObjError cjelly_format_3d_obj_load(const char * filename, CJellyFo
       // The assert is used to ensure that the buffer cannot be smaller
       // than this hard-coded value.
       assert(sizeof(name) >= 128);
-      if (sscanf(line + 2, "%127s", name) == 1) {
-        if (model->group_count >= model->group_capacity) {
-          model->group_capacity *= 2;
-          CJellyFormat3dObjGroup* temp = realloc(model->groups, model->group_capacity * sizeof(CJellyFormat3dObjGroup));
-          if (!temp) { goto ERROR_CLEANUP; }
-          model->groups = temp;
-        }
-        strcpy(model->groups[model->group_count].name, name);
-        model->groups[model->group_count].start_face = model->face_count;
-        model->groups[model->group_count].face_count = 0;
-        current_group = model->group_count;
-        model->group_count++;
-      }
-      else {
+      if (sscanf(line + 2, "%127s", name) != 1) {
         err = CJELLY_FORMAT_3D_OBJ_ERR_INVALID_FORMAT;
         goto ERROR_CLEANUP;
       }
+      CJellyFormat3dObjGroup * group =
+          (CJellyFormat3dObjGroup *)gcu_array_emplace(&builder.groups);
+      if (!group) { goto ERROR_CLEANUP; }
+      strcpy(group->name, name);
+      group->start_face = (int)gcu_array_count(&builder.faces);
+      group->face_count = 0;
+      current_group = (int)gcu_array_count(&builder.groups) - 1;
     }
     else if (strncmp(line, "usemtl", 6) == 0) {
       // Read a material usage directive.
@@ -253,47 +263,69 @@ CJellyFormat3dObjError cjelly_format_3d_obj_load(const char * filename, CJellyFo
       // The assert is used to ensure that the buffer cannot be smaller
       // than this hard-coded value.
       assert(sizeof(mtl_name) >= 128);
-      if (sscanf(line + 6, "%127s", mtl_name) == 1) {
-        int found = 0;
-        int mapped_index = -1;
-        // Search for an existing mapping.
-        for (int i = 0; i < model->material_mapping_count; i++) {
-          if (strcmp(model->material_mappings[i].name, mtl_name) == 0) {
-            found = 1;
-            mapped_index = model->material_mappings[i].index;
-            break;
-          }
-        }
-        if (!found) {
-          // Add a new mapping.
-          if (model->material_mapping_count >= model->material_mapping_capacity) {
-            model->material_mapping_capacity *= 2;
-            CJellyFormat3dObjMaterialMapping* temp = realloc(model->material_mappings, model->material_mapping_capacity * sizeof(CJellyFormat3dObjMaterialMapping));
-            if (!temp) { goto ERROR_CLEANUP; }
-            model->material_mappings = temp;
-          }
-          strcpy(model->material_mappings[model->material_mapping_count].name, mtl_name);
-          model->material_mappings[model->material_mapping_count].index = model->material_mapping_count;
-          mapped_index = model->material_mapping_count;
-          model->material_mapping_count++;
-        }
-        current_material_index = mapped_index;
-      }
-      else {
+      if (sscanf(line + 6, "%127s", mtl_name) != 1) {
         err = CJELLY_FORMAT_3D_OBJ_ERR_INVALID_FORMAT;
         goto ERROR_CLEANUP;
       }
+
+      // Search for an existing mapping.
+      int mapped_index = -1;
+      for (size_t i = 0; i < gcu_array_count(&builder.material_mappings); i++) {
+        CJellyFormat3dObjMaterialMapping * mapping =
+            (CJellyFormat3dObjMaterialMapping *)gcu_array_at(
+                &builder.material_mappings, i);
+        if (strcmp(mapping->name, mtl_name) == 0) {
+          mapped_index = mapping->index;
+          break;
+        }
+      }
+      if (mapped_index < 0) {
+        // Add a new mapping.
+        CJellyFormat3dObjMaterialMapping * mapping =
+            (CJellyFormat3dObjMaterialMapping *)gcu_array_emplace(
+                &builder.material_mappings);
+        if (!mapping) { goto ERROR_CLEANUP; }
+        strcpy(mapping->name, mtl_name);
+        mapping->index =
+            (int)gcu_array_count(&builder.material_mappings) - 1;
+        mapped_index = mapping->index;
+      }
+      current_material_index = mapped_index;
     }
     else if (strncmp(line, "mtllib", 6) == 0) {
       // Read the material library name.
-      sscanf(line + 6, "%255s", model->mtllib);
+      sscanf(line + 6, "%255s", mtllib);
     }
   }
 
-  // Close the file and return the model.
-  fclose(fp);
-  *outModel = model;
-  return CJELLY_FORMAT_3D_OBJ_SUCCESS;
+  // Parsing succeeded: build the model and move the arrays into it. Doing
+  // this last means there is no half-built model to unwind on the error path.
+  {
+    CJellyFormat3dObjModel * model = (CJellyFormat3dObjModel *)calloc(
+        1, sizeof(CJellyFormat3dObjModel));
+    if (!model) { goto ERROR_CLEANUP; }
+
+    obj_steal_into(&builder.vertices, (void **)&model->vertices,
+        &model->vertex_count, &model->vertex_capacity);
+    obj_steal_into(&builder.texcoords, (void **)&model->texcoords,
+        &model->texcoord_count, &model->texcoord_capacity);
+    obj_steal_into(&builder.normals, (void **)&model->normals,
+        &model->normal_count, &model->normal_capacity);
+    obj_steal_into(&builder.faces, (void **)&model->faces, &model->face_count,
+        &model->face_capacity);
+    obj_steal_into(&builder.groups, (void **)&model->groups,
+        &model->group_count, &model->group_capacity);
+    obj_steal_into(&builder.material_mappings,
+        (void **)&model->material_mappings, &model->material_mapping_count,
+        &model->material_mapping_capacity);
+
+    memcpy(model->mtllib, mtllib, sizeof(model->mtllib));
+
+    obj_builder_destroy(&builder);
+    fclose(fp);
+    *outModel = model;
+    return CJELLY_FORMAT_3D_OBJ_SUCCESS;
+  }
 
   // Error handling.
 ERROR_CLEANUP:
@@ -303,7 +335,7 @@ ERROR_CLEANUP:
   if (err == CJELLY_FORMAT_3D_OBJ_SUCCESS) {
     err = CJELLY_FORMAT_3D_OBJ_ERR_OUT_OF_MEMORY;
   }
-  cjelly_format_3d_obj_free(model);
+  obj_builder_destroy(&builder);
   fclose(fp);
   return err;
 }

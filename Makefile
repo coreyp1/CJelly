@@ -116,6 +116,21 @@ else
 
 endif
 
+# The Ghoti.io CUtil library supplies the generic container used by the format
+# parsers. Same install-then-sibling arrangement as image below.
+CUTIL_PC ?= $(SUITE)-cutil$(BRANCH)
+CUTIL_CFLAGS := $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --cflags $(CUTIL_PC) 2>/dev/null)
+CUTIL_LIBS := $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --libs $(CUTIL_PC) 2>/dev/null)
+CUTIL_PLACEHOLDER := (
+CUTIL_NEED_FALLBACK := $(or $(findstring $(CUTIL_PLACEHOLDER),$(CUTIL_CFLAGS)),$(if $(CUTIL_CFLAGS),,y))
+ifneq ($(CUTIL_NEED_FALLBACK),)
+CUTIL_CFLAGS := -I../cutil/include -I../cutil/build/$(firstword $(subst /, ,$(BUILD)))/include
+CUTIL_LIBS := -L../cutil/build/$(firstword $(subst /, ,$(BUILD)))/apps -l$(SUITE)-cutil$(BRANCH)
+endif
+CFLAGS += $(CUTIL_CFLAGS)
+LIB_CFLAGS += $(CUTIL_CFLAGS)
+LDFLAGS += $(CUTIL_LIBS)
+
 # The Ghoti.io Image library supplies every image codec CJelly can load (BMP,
 # PNG, JPEG). Prefer the installed package; fall back to a sibling checkout so
 # the suite still builds from a fresh clone before anything is installed.
