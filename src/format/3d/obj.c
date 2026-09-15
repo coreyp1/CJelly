@@ -141,22 +141,36 @@ CJellyFormat3dObjError cjelly_format_3d_obj_load(const char * filename, CJellyFo
       char * token = strtok(line + 2, " ");
       while (token != NULL) {
         int vIndex = 0, vtIndex = 0, vnIndex = 0;
-        if (strchr(token, '/')) {
-          /* Replace '/' with space for easier parsing */
-          char temp[64];
-          strncpy(temp, token, 63);
-          temp[63] = '\0';
-          for (int i = 0; i < (int)strlen(temp); i++) {
-            if (temp[i] == '/')
-              temp[i] = ' ';
+        // A face token is one of "v", "v/vt", "v//vn" or "v/vt/vn". Read the
+        // fields positionally so an omitted one stays distinct from a present
+        // one.
+        //
+        // Rewriting every '/' as a space and handing the result to sscanf
+        // cannot do that: "1//2" and "1 2" become the same string, so the
+        // normal was read as the texture coordinate and then discarded, and
+        // "1/2" was treated as a missing texture coordinate for the same
+        // reason. Only the fully specified "v/vt/vn" form survived.
+        {
+          const char * cursor = token;
+          char * end = NULL;
+          long value = strtol(cursor, &end, 10);
+          if (end != cursor) {
+            vIndex = (int)value;
           }
-          // Parse the indices (some may be missing).
-          int parsed = sscanf(temp, "%d %d %d", &vIndex, &vtIndex, &vnIndex);
-          if (parsed < 3)
-            vtIndex = 0; // If texture coordinate is missing, set to 0 (or use -1).
-        }
-        else {
-          vIndex = atoi(token);
+          if (end && *end == '/') {
+            cursor = end + 1;
+            value = strtol(cursor, &end, 10);
+            if (end != cursor) {
+              vtIndex = (int)value; // Left empty in "v//vn"; stays 0.
+            }
+            if (end && *end == '/') {
+              cursor = end + 1;
+              value = strtol(cursor, &end, 10);
+              if (end != cursor) {
+                vnIndex = (int)value;
+              }
+            }
+          }
         }
 
         // For the first four vertices, store in fixed arrays.
