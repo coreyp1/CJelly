@@ -35,17 +35,7 @@ extern "C" {
  */
 typedef struct CJellyFormatImageRaw CJellyFormatImageRaw;
 typedef struct CJellyFormatImage CJellyFormatImage;
-typedef struct CJellyFormat3dMtlMaterial CJellyFormat3dMtlMaterial;
-typedef struct CJellyFormat3dMtl CJellyFormat3dMtl;
-typedef struct CJellyFormat3dObjVertex CJellyFormat3dObjVertex;
-typedef struct CJellyFormat3dObjTexCoord CJellyFormat3dObjTexCoord;
-typedef struct CJellyFormat3dObjNormal CJellyFormat3dObjNormal;
-typedef struct CJellyFormat3dObjFaceOverflow CJellyFormat3dObjFaceOverflow;
-typedef struct CJellyFormat3dObjFace CJellyFormat3dObjFace;
-typedef struct CJellyFormat3dObjGroup CJellyFormat3dObjGroup;
-typedef struct CJellyFormat3dObjMaterialMapping
-    CJellyFormat3dObjMaterialMapping;
-typedef struct CJellyFormat3dObjModel CJellyFormat3dObjModel;
+typedef struct CJellyModelMesh CJellyModelMesh;
 
 /**
  * A cross-compiler macro for marking a function parameter as unused.

@@ -154,11 +154,24 @@ LDFLAGS += -Wl,-rpath-link,../cutil/build/$(firstword $(subst /, ,$(BUILD)))/app
 endif
 LDFLAGS += $(IMAGE_LIBS)
 
+# ghoti.io-model, for the OBJ and MTL parsing behind the model render node.
+MODEL_PC ?= $(SUITE)-model$(BRANCH)
+MODEL_CFLAGS := $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --cflags $(MODEL_PC) 2>/dev/null)
+MODEL_LIBS := $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --libs $(MODEL_PC) 2>/dev/null)
+MODEL_PLACEHOLDER := (
+MODEL_NEED_FALLBACK := $(or $(findstring $(MODEL_PLACEHOLDER),$(MODEL_CFLAGS)),$(if $(MODEL_CFLAGS),,y))
+ifneq ($(MODEL_NEED_FALLBACK),)
+MODEL_CFLAGS := -I../model/include
+MODEL_LIBS := -L../model/build/$(BUILD)/apps -l$(SUITE)-model$(BRANCH)
+LDFLAGS += -Wl,-rpath-link,../model/build/$(BUILD)/apps
+endif
+LDFLAGS += $(MODEL_LIBS)
+
 # Where the loader has to look when running the tests and the demo. When the
 # libraries are installed the loader finds them through ld.so.conf and these
 # extra entries are simply unused; when building against sibling checkouts
 # they are what makes the binaries runnable at all.
-RUNTIME_LIB_DIRS := $(APP_DIR) ../image/build/$(BUILD)/apps ../compress/build/$(BUILD)/apps ../cutil/build/$(firstword $(subst /, ,$(BUILD)))/apps
+RUNTIME_LIB_DIRS := $(APP_DIR) ../image/build/$(BUILD)/apps ../model/build/$(BUILD)/apps ../compress/build/$(BUILD)/apps ../cutil/build/$(firstword $(subst /, ,$(BUILD)))/apps
 # Absolute, so a recipe that cd's elsewhere first still resolves them.
 EMPTY :=
 SPACE := $(EMPTY) $(EMPTY)
@@ -168,7 +181,7 @@ RUNTIME_LIB_PATH := $(subst $(SPACE),:,$(strip $(abspath $(RUNTIME_LIB_DIRS))))
 # These belong here rather than in CFLAGS because every compile rule uses
 # INCLUDE - the test rule among them, through TEST_INCLUDE - and a test that
 # cannot include a dependency's header cannot test code that uses it.
-INCLUDE := -I include/ -I $(GEN_DIR)/ $(CUTIL_CFLAGS) $(IMAGE_CFLAGS)
+INCLUDE := -I include/ -I $(GEN_DIR)/ $(CUTIL_CFLAGS) $(IMAGE_CFLAGS) $(MODEL_CFLAGS)
 
 # Automatically collect all .c source files under the src directory.
 SOURCES := $(shell find src -type f -name '*.c')

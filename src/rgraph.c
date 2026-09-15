@@ -11,6 +11,7 @@
 #include <cjelly/cj_result.h>
 #include <cjelly/cj_types.h>
 #include <cjelly/engine_internal.h>
+#include <cjelly/rgraph_model_internal.h>
 #include <cjelly/textured_internal.h>
 #include <cjelly/bindless_internal.h>
 #include <shaders/blur.vert.h>
@@ -23,6 +24,7 @@ typedef enum {
     CJ_RGRAPH_NODE_BLUR = 1,
     CJ_RGRAPH_NODE_TEXTURED = 2,
     CJ_RGRAPH_NODE_COLOR = 3,
+    CJ_RGRAPH_NODE_MODEL = 4,
     CJ_RGRAPH_NODE_COUNT
 } cj_rgraph_node_type_t;
 
@@ -88,6 +90,9 @@ typedef struct cj_rgraph_node_t {
         cj_rgraph_blur_node_t blur;      /* Blur node data */
         cj_rgraph_textured_node_t textured; /* Textured node data */
         cj_rgraph_color_node_t color;    /* Color node data */
+        /* The model node owns a good deal more, and lives in its own
+         * translation unit, so it is held by pointer rather than by value. */
+        cj_rgraph_model_node_t* model;
     } data;
 } cj_rgraph_node_t;
 
@@ -184,6 +189,12 @@ CJ_API void cj_rgraph_destroy(cj_rgraph_t* graph) {
             destroy_textured_node(graph, node);
         } else if (node->type == CJ_RGRAPH_NODE_COLOR) {
             destroy_color_node(graph, node);
+        } else if (node->type == CJ_RGRAPH_NODE_MODEL) {
+            if (node->data.model) {
+                cj_rgraph_model_destroy(graph->engine, node->data.model);
+                free(node->data.model);
+                node->data.model = NULL;
+            }
         }
 
         free(node);
@@ -310,6 +321,72 @@ CJ_API cj_result_t cj_rgraph_add_color_node(cj_rgraph_t* graph, const char* name
     return CJ_SUCCESS;
 }
 
+/* Add a model node to the render graph */
+CJ_API cj_result_t cj_rgraph_add_model_node(cj_rgraph_t* graph, const char* name, const char* obj_path) {
+    if (!graph || !name || !obj_path) return CJ_E_INVALID_ARGUMENT;
+
+    CJellyModelMesh* mesh = NULL;
+    CJellyModelMeshError mesh_err = cjelly_model_mesh_load(obj_path, &mesh);
+    if (mesh_err != CJELLY_MODEL_MESH_SUCCESS) {
+        fprintf(stderr, "cj_rgraph_add_model_node: %s: %s\n", obj_path,
+                cjelly_model_mesh_strerror(mesh_err));
+        return mesh_err == CJELLY_MODEL_MESH_ERR_OUT_OF_MEMORY
+            ? CJ_E_OUT_OF_MEMORY
+            : CJ_E_INVALID_ARGUMENT;
+    }
+    if (mesh->dropped_faces) {
+        fprintf(stderr, "cj_rgraph_add_model_node: %s: skipped %u face(s) "
+                "naming a vertex that does not exist\n",
+                obj_path, mesh->dropped_faces);
+    }
+
+    cj_rgraph_node_t* node = (cj_rgraph_node_t*)malloc(sizeof(cj_rgraph_node_t));
+    if (!node) {
+        cjelly_model_mesh_free(mesh);
+        return CJ_E_OUT_OF_MEMORY;
+    }
+    memset(node, 0, sizeof(cj_rgraph_node_t));
+    strncpy(node->name, name, sizeof(node->name) - 1);
+    node->name[sizeof(node->name) - 1] = '\0';
+    node->type = CJ_RGRAPH_NODE_MODEL;
+
+    node->data.model = (cj_rgraph_model_node_t*)malloc(sizeof(cj_rgraph_model_node_t));
+    if (!node->data.model) {
+        free(node);
+        cjelly_model_mesh_free(mesh);
+        return CJ_E_OUT_OF_MEMORY;
+    }
+    memset(node->data.model, 0, sizeof(cj_rgraph_model_node_t));
+
+    int built = cj_rgraph_model_create(graph->engine, node->data.model, mesh);
+    /* The mesh is uploaded by now; the node keeps only its bounds. */
+    cjelly_model_mesh_free(mesh);
+    if (!built) {
+        free(node->data.model);
+        free(node);
+        return CJ_E_UNKNOWN;
+    }
+
+    /* Linked last, so a failure above leaves the graph untouched. */
+    node->next = graph->nodes;
+    graph->nodes = node;
+    return CJ_SUCCESS;
+}
+
+/* Run whatever has to happen before the window's render pass begins. */
+CJ_API cj_result_t cj_rgraph_execute_prepass(cj_rgraph_t* graph, VkCommandBuffer cmd, uint64_t now_ms) {
+    if (!graph || !cmd) return CJ_E_INVALID_ARGUMENT;
+
+    for (cj_rgraph_node_t* node = graph->nodes; node; node = node->next) {
+        if (node->type == CJ_RGRAPH_NODE_MODEL && node->data.model) {
+            if (!cj_rgraph_model_prepass(node->data.model, cmd, now_ms)) {
+                return CJ_E_UNKNOWN;
+            }
+        }
+    }
+    return CJ_SUCCESS;
+}
+
 /* Execute the render graph */
 CJ_API cj_result_t cj_rgraph_execute(cj_rgraph_t* graph, VkCommandBuffer cmd, VkExtent2D extent) {
     if (!graph || !cmd) return CJ_E_INVALID_ARGUMENT;
@@ -331,6 +408,15 @@ CJ_API cj_result_t cj_rgraph_execute(cj_rgraph_t* graph, VkCommandBuffer cmd, Vk
 
             case CJ_RGRAPH_NODE_TEXTURED:
                 if (!execute_textured_node(graph, node, cmd, extent)) {
+                    return CJ_E_UNKNOWN;
+                }
+                break;
+
+            case CJ_RGRAPH_NODE_MODEL:
+                /* The model itself was drawn in the prepass, outside this
+                 * render pass; what happens here is compositing the result. */
+                if (node->data.model
+                    && !cj_rgraph_model_composite(node->data.model, cmd, extent)) {
                     return CJ_E_UNKNOWN;
                 }
                 break;

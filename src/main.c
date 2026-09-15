@@ -9,8 +9,7 @@
 #include <cjelly/application.h>
 #include <cjelly/macros.h>
 
-// #include <cjelly/format/3d/obj.h>
-// #include <cjelly/format/3d/mtl.h>
+#include <cjelly/format/3d/mesh.h>
 #include <cjelly/format/image.h>
 
 
@@ -350,7 +349,13 @@ static void test_mouse_callback(cj_window_t* window, const cj_mouse_event_t* eve
   }
 }
 
-int main(void) {
+/* Where the demo looks for a model when none is named on the command line.
+ * The path is relative to the repository root, which is where `make demo`
+ * runs from. */
+#define DEMO_DEFAULT_MODEL "test/models/cube.obj"
+
+int main(int argc, char ** argv) {
+  const char * model_path = (argc > 1) ? argv[1] : DEMO_DEFAULT_MODEL;
 #ifndef _WIN32
   fprintf(stderr, "Starting CJelly demo...\n");
 #endif
@@ -420,6 +425,14 @@ int main(void) {
   wdesc3.x = base_x + window_offset * 2;
   wdesc3.y = base_y + window_offset * 2;
 
+  cj_window_desc_t wdesc4 = wdesc1;
+  wdesc4.title.ptr = "CJelly Window 4 (Model)";
+  wdesc4.title.len = strlen(wdesc4.title.ptr);
+  wdesc4.width = 640;
+  wdesc4.height = 640;
+  wdesc4.x = base_x + window_offset * 3;
+  wdesc4.y = base_y + window_offset * 3;
+
   printf("Creating windows...\n");
   cj_window_t* win1 = cj_window_create(engine, &wdesc1);
   {
@@ -443,6 +456,8 @@ int main(void) {
            dpi_scale, is_high_dpi ? "High DPI" : "Standard DPI");
   }
 
+  cj_window_t* win4 = cj_window_create(engine, &wdesc4);
+
   // Create different render graphs for each window
   printf("Creating render graphs...\n");
   cj_rgraph_desc_t rgraph_desc = {0};
@@ -455,11 +470,14 @@ int main(void) {
   printf("About to create graph3...\n");
   cj_rgraph_t* graph3 = cj_rgraph_create(engine, &rgraph_desc);  // Multi-pass graph
   printf("Created graph3\n");
+  cj_rgraph_t* graph4 = cj_rgraph_create(engine, &rgraph_desc);  // Model graph
+  printf("Created graph4\n");
 
   // Attach render graphs to windows
   cj_window_set_render_graph(win1, graph1);
   cj_window_set_render_graph(win2, graph2);
   cj_window_set_render_graph(win3, graph3);
+  cj_window_set_render_graph(win4, graph4);
 
   // Configure different parameters for each window's render graph
   cj_str_t param_color = {"render_mode", 11};
@@ -500,6 +518,21 @@ int main(void) {
     printf("Failed to add blur effect to Window 3\n");
   }
 
+  // Window 4 draws a model. Unlike the other three, its geometry comes from a
+  // file, so this is where the demo can fail for a reason that has nothing to
+  // do with Vulkan - a path that does not exist, or a file with nothing
+  // drawable in it.
+  printf("Loading model: %s\n", model_path);
+  cj_result_t model_result =
+      cj_rgraph_add_model_node(graph4, "model", model_path);
+  if (model_result == CJ_SUCCESS) {
+    printf("Added model to Window 4 (%s)\n", model_path);
+  } else {
+    printf("Failed to load %s; Window 4 will be empty. "
+           "Pass a path to an .obj file as the first argument.\n",
+        model_path);
+  }
+
   // Legacy fallback: still set up color pipeline for window 1
   CJellyBindlessResources* colorOnly = cj_engine_color_pipeline(engine);
   CJellyVulkanContext ctx_local = {0};
@@ -524,6 +557,10 @@ int main(void) {
   cj_window_set_redraw_policy(win3, CJ_REDRAW_ALWAYS);
   cj_window_set_max_fps(win3, 60);  // High FPS for blur effect
 
+  // Window 4: the model turns, so it needs a frame whenever one is available.
+  cj_window_set_redraw_policy(win4, CJ_REDRAW_ALWAYS);
+  cj_window_set_max_fps(win4, 60);
+
   cj_window_on_frame(win1, window1_on_frame, &w1ctx);
   cj_window_on_frame(win3, window3_on_frame, &w3ctx);
 
@@ -531,6 +568,7 @@ int main(void) {
   cj_window_on_resize(win1, window1_on_resize, NULL);
   cj_window_on_resize(win2, window2_on_resize, NULL);
   cj_window_on_resize(win3, window3_on_resize, NULL);
+  cj_window_on_resize(win4, window3_on_resize, NULL);
 
   // Register keyboard callback for window 1 (test input handling)
   cj_window_on_key(win1, window1_on_key, NULL);
@@ -565,21 +603,25 @@ int main(void) {
     uint32_t final_actual = cjelly_application_get_windows(app, final_windows, final_count < 10 ? final_count : 10);
 
     bool win1_exists = false, win2_exists = false, win3_exists = false;
+    bool win4_exists = false;
     for (uint32_t j = 0; j < final_actual; j++) {
       if (final_windows[j] == win1) win1_exists = true;
       if (final_windows[j] == win2) win2_exists = true;
       if (final_windows[j] == win3) win3_exists = true;
+      if (final_windows[j] == win4) win4_exists = true;
     }
 
     if (win1_exists) cj_window_destroy(win1);
     if (win2_exists) cj_window_destroy(win2);
     if (win3_exists) cj_window_destroy(win3);
+    if (win4_exists) cj_window_destroy(win4);
   }
 
   // Destroy render graphs
   cj_rgraph_destroy(graph1);
   cj_rgraph_destroy(graph2);
   cj_rgraph_destroy(graph3);
+  cj_rgraph_destroy(graph4);
 
   // Cleanup - colorOnly is now engine-owned, no manual cleanup needed
 

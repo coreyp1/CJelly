@@ -1,5 +1,12 @@
 /* Headers */
 
+/* clock_gettime() is POSIX, and the platform headers below are included before
+ * cjelly/macros.h gets a chance to ask for it. Declaring the level here, at
+ * the top of the file, is the only place it takes effect. */
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200809L
+#endif
+
 /* Platform includes */
 #ifdef _WIN32
 #include <windows.h>
@@ -18,6 +25,7 @@ extern Display* display; /* provided by main on Linux */
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <time.h>
 #include <stdbool.h>
 #include <cjelly/cj_window.h>
 #include <cjelly/cj_platform.h>
@@ -1778,6 +1786,23 @@ CJ_API cj_result_t cj_window_begin_frame(cj_window_t* win, cj_frame_info_t* out_
   return CJ_SUCCESS;
 }
 
+/* Milliseconds from a monotonic clock, for render-graph nodes that animate.
+ * Monotonic rather than wall clock: a clock adjustment must not make a model
+ * jump or run backwards. */
+static uint64_t cj_window_now_ms(void) {
+#ifdef _WIN32
+  LARGE_INTEGER frequency;
+  LARGE_INTEGER counter;
+  QueryPerformanceFrequency(&frequency);
+  QueryPerformanceCounter(&counter);
+  return (uint64_t)((counter.QuadPart * 1000LL) / frequency.QuadPart);
+#else
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (uint64_t)ts.tv_sec * 1000ULL + (uint64_t)ts.tv_nsec / 1000000ULL;
+#endif
+}
+
 CJ_API cj_result_t cj_window_execute(cj_window_t* win) {
   if (!win || win->is_destroyed || !win->plat) return CJ_E_INVALID_ARGUMENT;
 
@@ -1823,6 +1848,11 @@ CJ_API cj_result_t cj_window_execute(cj_window_t* win) {
         plat_drawFrameForWindow(win->plat);
         return CJ_SUCCESS;
       }
+
+      /* Anything that renders into its own target has to be recorded before
+       * the window's render pass begins, because a render pass cannot be
+       * nested inside another. A graph with no such nodes records nothing. */
+      cj_rgraph_execute_prepass(win->render_graph, cmd, cj_window_now_ms());
 
       /* Begin render pass for render graph */
       VkRenderPassBeginInfo renderPassInfo = {0};

@@ -37,3 +37,15 @@ For other command, run:
 ```
 make help
 ```
+
+## Drawing a model
+
+The demo's fourth window loads a Wavefront OBJ file and spins it. Pass a path
+to use your own:
+
+```
+./build/linux/release/apps/main path/to/model.obj
+```
+
+See [docs/models.md](docs/models.md) for how that is put together, and what it
+does not do yet.

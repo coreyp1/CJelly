@@ -83,6 +83,37 @@ CJ_API cj_result_t  cj_rgraph_add_textured_node(cj_rgraph_t* graph, const char* 
  */
 CJ_API cj_result_t  cj_rgraph_add_color_node(cj_rgraph_t* graph, const char* name);
 
+/** Add a node that draws a 3D model loaded from a Wavefront OBJ file.
+ *
+ *  The model is drawn into an offscreen target with its own depth buffer and
+ *  composited into the window, because the engine's render pass has no depth
+ *  attachment. Faces naming a vertex that does not exist are skipped, and
+ *  reported on stderr.
+ *
+ *  A node added this way needs cj_rgraph_execute_prepass() to be called before
+ *  the window's render pass begins; the window's own frame path does that.
+ *
+ *  @param graph The render graph to add the node to.
+ *  @param name Name for the model node.
+ *  @param obj_path Path to the .obj file.
+ *  @return CJ_SUCCESS on success, or an error code.
+ */
+CJ_API cj_result_t  cj_rgraph_add_model_node(cj_rgraph_t* graph, const char* name, const char* obj_path);
+
+/** Record the work that has to happen outside the window's render pass.
+ *
+ *  Nodes that render into their own targets - the model node, for one - cannot
+ *  do so inside an already-active render pass. This is recorded after the
+ *  command buffer begins and before the window's pass does. A graph with no
+ *  such nodes records nothing.
+ *
+ *  @param graph The render graph.
+ *  @param cmd Command buffer, with no render pass active.
+ *  @param now_ms Current time in milliseconds, for time-based animation.
+ *  @return CJ_SUCCESS on success, or an error code.
+ */
+CJ_API cj_result_t  cj_rgraph_execute_prepass(cj_rgraph_t* graph, VkCommandBuffer cmd, uint64_t now_ms);
+
 /** Execute the render graph with the given command buffer and extent.
  *  @param graph The render graph to execute.
  *  @param cmd Command buffer to record rendering commands into.
