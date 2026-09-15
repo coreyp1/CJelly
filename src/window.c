@@ -1198,6 +1198,13 @@ static void plat_createPlatformWindow(CJPlatformWindow * win, const char * title
   int win_x = (x == CJ_WINDOW_POSITION_DEFAULT) ? CW_USEDEFAULT : x;
   int win_y = (y == CJ_WINDOW_POSITION_DEFAULT) ? CW_USEDEFAULT : y;
 
+  /* TODO(windows): width/height here size the whole frame and the client area
+   * is fitted inside it, where X11 below sizes the client area and the window
+   * manager hangs decoration outside. The same cj_window_desc_t therefore
+   * gives a smaller drawable on Windows. AdjustWindowRectEx() is the fix, but
+   * it changes the size of every window in every application using CJelly, so
+   * it should land on a machine that can verify it. Same split applies to
+   * win_x/win_y. See WINDOWS-TODO.md items 1 and 2. */
   win->handle = CreateWindowEx(0, "CJellyWindow", title, WS_OVERLAPPEDWINDOW, win_x, win_y, width, height, NULL, NULL, hInstance, NULL);
 
   /* Set initial window state */

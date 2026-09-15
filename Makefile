@@ -336,6 +336,10 @@ ifeq ($(OS),Windows_NT)
 # Check if glslangValidator is available
 GLSLANG_AVAILABLE := $(shell which glslangValidator 2>/dev/null)
 ifeq ($(GLSLANG_AVAILABLE),)
+# TODO(windows): this writes an empty shader header rather than failing, so
+# the build succeeds and every pipeline creation fails at run time with
+# nothing pointing at the cause. It should fail at this step instead, naming
+# the missing tool. See WINDOWS-TODO.md item 3.
 # If glslangValidator is not available, create empty shader headers
 $(GEN_DIR)/shaders/%.h: $(APP_DIR)/shaders/%.spv
 	@printf "\n### Generating empty $@ ###\n"
