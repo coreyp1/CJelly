@@ -127,8 +127,6 @@ ifneq ($(CUTIL_NEED_FALLBACK),)
 CUTIL_CFLAGS := -I../cutil/include -I../cutil/build/$(firstword $(subst /, ,$(BUILD)))/include
 CUTIL_LIBS := -L../cutil/build/$(firstword $(subst /, ,$(BUILD)))/apps -l$(SUITE)-cutil$(BRANCH)
 endif
-CFLAGS += $(CUTIL_CFLAGS)
-LIB_CFLAGS += $(CUTIL_CFLAGS)
 LDFLAGS += $(CUTIL_LIBS)
 
 # The Ghoti.io Image library supplies every image codec CJelly can load (BMP,
@@ -154,8 +152,6 @@ LDFLAGS += -Wl,-rpath-link,../image/build/$(BUILD)/apps
 LDFLAGS += -Wl,-rpath-link,../compress/build/$(BUILD)/apps
 LDFLAGS += -Wl,-rpath-link,../cutil/build/$(firstword $(subst /, ,$(BUILD)))/apps
 endif
-CFLAGS += $(IMAGE_CFLAGS)
-LIB_CFLAGS += $(IMAGE_CFLAGS)
 LDFLAGS += $(IMAGE_LIBS)
 
 # Where the loader has to look when running the tests and the demo. When the
@@ -168,8 +164,11 @@ EMPTY :=
 SPACE := $(EMPTY) $(EMPTY)
 RUNTIME_LIB_PATH := $(subst $(SPACE),:,$(strip $(abspath $(RUNTIME_LIB_DIRS))))
 
-# The standard include directories for the project.
-INCLUDE := -I include/ -I $(GEN_DIR)/
+# The standard include directories for the project, plus the dependencies'.
+# These belong here rather than in CFLAGS because every compile rule uses
+# INCLUDE - the test rule among them, through TEST_INCLUDE - and a test that
+# cannot include a dependency's header cannot test code that uses it.
+INCLUDE := -I include/ -I $(GEN_DIR)/ $(CUTIL_CFLAGS) $(IMAGE_CFLAGS)
 
 # Automatically collect all .c source files under the src directory.
 SOURCES := $(shell find src -type f -name '*.c')

@@ -14,9 +14,14 @@
  * Copyright (C) 2025 Ghoti.io
  */
 
+// cjelly/macros.h, reached through application.h, defines _POSIX_C_SOURCE.
+// It has to be seen before any system header is pulled in, so the CJelly
+// includes come first and everything else follows.
 #include <cjelly/application.h>
 #include <cjelly/cj_window.h>
 #include <cjelly/window_internal.h>
+
+#include <cutil/hash.h>
 
 #include <assert.h>
 #include <stdint.h>
@@ -46,11 +51,39 @@
  */
 #define INITIAL_EXTENSION_CAPACITY 10
 
-// Handle map entry type (matches anonymous struct in application.h)
-typedef struct {
-  void* handle;
-  void* window;
-} HandleMapEntry;
+/**
+ * @brief Turn a platform window handle into a hash table key.
+ *
+ * GCU_Hash64 treats the key it is given as the identity of the entry, so two
+ * distinct handles must never produce the same key or one would silently
+ * displace the other and events would be routed to the wrong window. Both
+ * mixers below are bijections on their width, which rules that out by
+ * construction while still spreading the low bits - a raw pointer used as a
+ * key would land in one of a handful of buckets, because allocation
+ * alignment leaves its low bits zero.
+ */
+static size_t handle_hash(const void * handle) {
+  uintptr_t raw = (uintptr_t)handle;
+#if SIZE_MAX > 0xFFFFFFFFu
+  // splitmix64 finalizer.
+  uint64_t x = (uint64_t)raw;
+  x ^= x >> 30;
+  x *= 0xBF58476D1CE4E5B9ULL;
+  x ^= x >> 27;
+  x *= 0x94D049BB133111EBULL;
+  x ^= x >> 31;
+  return (size_t)x;
+#else
+  // 32-bit equivalent, for platforms where size_t cannot hold the 64-bit one.
+  uint32_t x = (uint32_t)raw;
+  x ^= x >> 16;
+  x *= 0x7FEB352DU;
+  x ^= x >> 15;
+  x *= 0x846CA68BU;
+  x ^= x >> 16;
+  return (size_t)x;
+#endif
+}
 
 
 /**
@@ -426,9 +459,7 @@ CJ_API CJellyApplicationError cjelly_application_create(
   newApp->windows = NULL;
   newApp->window_count = 0;
   newApp->window_capacity = 0;
-  newApp->handle_map = NULL;
-  newApp->handle_map_count = 0;
-  newApp->handle_map_capacity = 0;
+  newApp->handle_map = NULL;  // Created on the first window registration.
 
   // Initialize signal handling fields
   newApp->shutdown_requested = 0;
@@ -957,7 +988,7 @@ CJ_API void cjelly_application_destroy(CJellyApplication * app) {
     app->windows = NULL;
   }
   if (app->handle_map) {
-    free(app->handle_map);
+    gcu_hash64_destroy((GCU_Hash64 *)app->handle_map);
     app->handle_map = NULL;
   }
 
@@ -1185,13 +1216,9 @@ CJ_API void* cjelly_application_find_window_by_handle(CJellyApplication * app, v
   if (!app || !handle || !app->handle_map)
     return NULL;
 
-  HandleMapEntry* map = (HandleMapEntry*)app->handle_map;
-  for (uint32_t i = 0; i < app->handle_map_count; i++) {
-    if (map[i].handle == handle) {
-      return map[i].window;
-    }
-  }
-  return NULL;
+  GCU_Hash64_Value found =
+      gcu_hash64_get((GCU_Hash64 *)app->handle_map, handle_hash(handle));
+  return found.exists ? found.value.p : NULL;
 }
 
 // Global current application pointer (similar to engine)
@@ -1210,7 +1237,9 @@ static bool add_window_to_application(CJellyApplication * app, void* window, voi
   if (!app || !window || !handle)
     return false;
 
-  // Add to window list
+  // Reserve room in the window list first, but do not commit the count yet.
+  // If the handle map insertion then fails, the list is simply left with
+  // spare capacity, so there is nothing to roll back.
   if (app->window_count >= app->window_capacity) {
     uint32_t new_capacity = (app->window_capacity == 0) ? 4 : app->window_capacity * 2;
     void** new_windows = realloc(app->windows, sizeof(void*) * new_capacity);
@@ -1220,22 +1249,15 @@ static bool add_window_to_application(CJellyApplication * app, void* window, voi
     app->window_capacity = new_capacity;
   }
 
-  // Add to handle map BEFORE adding to window list, so we can rollback if handle map fails
-  if (app->handle_map_count >= app->handle_map_capacity) {
-    uint32_t new_capacity = (app->handle_map_capacity == 0) ? 4 : app->handle_map_capacity * 2;
-    HandleMapEntry* new_map = realloc(app->handle_map, sizeof(HandleMapEntry) * new_capacity);
-    if (!new_map)
+  if (!app->handle_map) {
+    app->handle_map = gcu_hash64_create(0);
+    if (!app->handle_map)
       return false;  // Out of memory - handle map allocation failed
-    // Cast through void* to work around anonymous struct type mismatch
-    app->handle_map = (void*)new_map;
-    app->handle_map_capacity = new_capacity;
   }
 
-  // Both allocations succeeded, now add to both structures atomically
-  HandleMapEntry* map = (HandleMapEntry*)app->handle_map;
-  map[app->handle_map_count].handle = handle;
-  map[app->handle_map_count].window = window;
-  app->handle_map_count++;
+  if (!gcu_hash64_set((GCU_Hash64 *)app->handle_map, handle_hash(handle),
+          GCU_TYPE64_P(window)))
+    return false;  // Out of memory - handle map insertion failed
 
   app->windows[app->window_count++] = window;
 
@@ -1259,17 +1281,8 @@ static void remove_window_from_application(CJellyApplication * app, void* window
 
   // Remove from handle map
   if (handle && app->handle_map) {
-    HandleMapEntry* map = (HandleMapEntry*)app->handle_map;
-    for (uint32_t i = 0; i < app->handle_map_count; i++) {
-      if (map[i].handle == handle) {
-        // Move last element to this position and clear it
-        map[i] = map[app->handle_map_count - 1];
-        map[app->handle_map_count - 1].handle = NULL;
-        map[app->handle_map_count - 1].window = NULL;
-        app->handle_map_count--;
-        break;
-      }
-    }
+    (void)gcu_hash64_remove(
+        (GCU_Hash64 *)app->handle_map, handle_hash(handle));
   }
 }
 

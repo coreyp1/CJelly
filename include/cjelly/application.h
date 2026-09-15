@@ -230,13 +230,11 @@ struct CJellyApplication {
   uint32_t window_count;
   uint32_t window_capacity;
 
-  // Handle mapping for event routing
-  struct {
-    void* handle;  // HWND or Window (cast to void*)
-    void* window;  // Opaque pointer to cj_window_t*
-  }* handle_map;  // Array of handle->window mappings
-  uint32_t handle_map_count;
-  uint32_t handle_map_capacity;
+  // Handle mapping for event routing: platform handle (HWND, X11 Window) ->
+  // cj_window_t*. A cutil GCU_Hash64, held as void* so this header does not
+  // pull in cutil's; it was an array searched linearly, which meant every
+  // arriving event walked every open window.
+  void* handle_map;
 
   // Signal handling
   volatile sig_atomic_t shutdown_requested;  // Flag indicating shutdown was requested
