@@ -136,7 +136,7 @@ layers report the mistakes that do not show up on screen, and a captured frame
 settles the ones that do.
 
 ```bash
-sudo apt install vulkan-validationlayers xvfb netpbm
+sudo apt install vulkan-validationlayers xvfb
 
 Xvfb :99 -screen 0 1600x1200x24 &
 
@@ -145,20 +145,25 @@ DISPLAY=:99 \
   LD_LIBRARY_PATH="$(cd ../../../..; pwd)/build/linux/release/apps:..." \
   VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.json \
   VK_LOADER_LAYERS_ENABLE=VK_LAYER_KHRONOS_validation \
+  CJELLY_DEMO_CAPTURE=/tmp/shots \
   ./main /path/to/model.obj
-
-DISPLAY=:99 xwd -name "CJelly Window 4 (Model)" -out win4.xwd
-xwdtopnm win4.xwd | pnmtopng > win4.png
 ```
+
+The demo renders a few frames, writes each window to `/tmp/shots/windowN.png`
+through `cj_window_capture()`, and exits.
+
+The pixels come from the swapchain, not from the screen, which is what makes
+this workable: no screenshot tool, no window manager, and an obscured or
+partly off-screen window captures correctly - none of which was true of the
+`xwd` route this replaced.
 
 `VK_DRIVER_FILES` points at lavapipe because Xvfb has no DRI3 and the hardware
 driver cannot present to it. Software rendering is slow, and it will not catch
 a fault specific to a real driver, but for correctness it is the better test:
-lavapipe is strict where a vendor driver is often forgiving.
-
-Two details that cost time the first time round. Without a window manager, an
-obscured window captures as black - there is nothing to repaint what is
-underneath it - so spread the demo's windows out with
-`CJELLY_DEMO_WINDOW_OFFSET=820` before capturing more than one. And the
+lavapipe is strict where a vendor driver is often forgiving. The
 validation layers need `VK_LAYER_PATH` set if they are not in the loader's
 default search path.
+
+`CJELLY_DEMO_WINDOW_OFFSET` spreads the demo's cascade out. It is no longer
+needed for capturing - reading the swapchain does not care what is in front of
+the window - but it remains useful when watching the demo on a real display.

@@ -21,6 +21,24 @@ extern "C" {
 void cj_window_close_with_callback(cj_window_t* window, bool cancellable);
 
 /** Internal helper used by the framework event loop to run a window's per-frame callback. */
+/** What a frame capture needs from a window, without exposing the platform
+ *  window structure, which is private to window.c.
+ */
+typedef struct cj_window_frame_source_t {
+  VkImage image;       /**< The swapchain image last presented. */
+  VkFormat format;     /**< Its format. */
+  VkExtent2D extent;   /**< Its size in pixels. */
+} cj_window_frame_source_t;
+
+/** Describe the frame the user is currently looking at.
+ *
+ *  @param window The window.
+ *  @param out_source Receives the description on success.
+ *  @return true when a frame has been presented and can be read back.
+ */
+bool cj_window__last_presented_frame(
+    const cj_window_t* window, cj_window_frame_source_t* out_source);
+
 cj_frame_result_t cj_window__dispatch_frame_callback(cj_window_t* window,
                                                     const cj_frame_info_t* frame_info);
 

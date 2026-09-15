@@ -59,6 +59,12 @@ typedef struct CJPlatformWindow {
   VkSemaphore renderFinishedSemaphore;
   VkFence inFlightFence;
   VkExtent2D swapChainExtent;
+  VkFormat swapChainFormat;
+  /* Which swapchain image was last handed to the presentation engine, and
+   * whether anything has been presented yet. A capture reads that image: it
+   * is the one the user is actually looking at. */
+  uint32_t lastPresentedImage;
+  bool hasPresentedImage;
   int width;
   int height;
   int updateMode;
@@ -1354,7 +1360,18 @@ static void plat_createSwapChainForWindow(CJPlatformWindow * win) {
 
   win->swapChainExtent.width = physical_width;
   win->swapChainExtent.height = physical_height;
-  VkSwapchainCreateInfoKHR ci = {0}; ci.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR; ci.surface = win->surface; ci.minImageCount = caps.minImageCount; ci.imageFormat = VK_FORMAT_B8G8R8A8_SRGB; ci.imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR; ci.imageExtent = win->swapChainExtent; ci.imageArrayLayers = 1; ci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT; ci.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR; ci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR; ci.presentMode = VK_PRESENT_MODE_FIFO_KHR; ci.clipped = VK_TRUE;
+  win->swapChainFormat = VK_FORMAT_B8G8R8A8_SRGB;
+
+  /* Reading a frame back needs the swapchain images usable as a transfer
+   * source. Every implementation worth the name supports it, but it is
+   * optional, so ask only when the surface says yes - requesting an
+   * unsupported usage fails swapchain creation outright, and a window that
+   * will not open is a bad trade for a capture that may never be taken. */
+  VkImageUsageFlags transfer_src_usage =
+      (caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT)
+      ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT
+      : 0;
+  VkSwapchainCreateInfoKHR ci = {0}; ci.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR; ci.surface = win->surface; ci.minImageCount = caps.minImageCount; ci.imageFormat = VK_FORMAT_B8G8R8A8_SRGB; ci.imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR; ci.imageExtent = win->swapChainExtent; ci.imageArrayLayers = 1; ci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | transfer_src_usage; ci.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR; ci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR; ci.presentMode = VK_PRESENT_MODE_FIFO_KHR; ci.clipped = VK_TRUE;
   /* Ensure we do not reference an invalid oldSwapchain */
   ci.oldSwapchain = VK_NULL_HANDLE;
   vkCreateSwapchainKHR(cj_engine_device(cj_engine_get_current()), &ci, NULL, &win->swapChain);
@@ -1418,8 +1435,24 @@ static void plat_recreateSwapChainForWindow(CJPlatformWindow * win) {
   if (physical_height < caps.minImageExtent.height) physical_height = caps.minImageExtent.height;
   if (physical_height > caps.maxImageExtent.height) physical_height = caps.maxImageExtent.height;
 
+  /* Same as on first creation: the surface knows the drawable size, and the
+   * requested size does not account for window chrome the same way on every
+   * platform. */
+  if (caps.currentExtent.width != 0xFFFFFFFFu) {
+    physical_width = caps.currentExtent.width;
+    physical_height = caps.currentExtent.height;
+  }
+
   win->swapChainExtent.width = physical_width;
   win->swapChainExtent.height = physical_height;
+  win->swapChainFormat = VK_FORMAT_B8G8R8A8_SRGB;
+
+  /* A recreated swapchain has to stay readable, or a capture would work until
+   * the first resize and then stop. */
+  VkImageUsageFlags transfer_src_usage =
+      (caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT)
+      ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT
+      : 0;
 
   /* Create new swapchain with old swapchain reference */
   VkSwapchainCreateInfoKHR ci = {0};
@@ -1430,7 +1463,7 @@ static void plat_recreateSwapChainForWindow(CJPlatformWindow * win) {
   ci.imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
   ci.imageExtent = win->swapChainExtent;
   ci.imageArrayLayers = 1;
-  ci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+  ci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | transfer_src_usage;
   ci.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
   ci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
   ci.presentMode = VK_PRESENT_MODE_FIFO_KHR;
@@ -1558,6 +1591,8 @@ static void plat_drawFrameForWindow(CJPlatformWindow * win) {
   VkSubmitInfo si = {0}; si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO; si.waitSemaphoreCount = 1; si.pWaitSemaphores = waitS; si.pWaitDstStageMask = stages; si.commandBufferCount = 1; si.pCommandBuffers = &win->commandBuffers[imageIndex]; VkSemaphore sigS[] = { win->renderFinishedSemaphore }; si.signalSemaphoreCount = 1; si.pSignalSemaphores = sigS;
   vkQueueSubmit(cj_engine_graphics_queue(cj_engine_get_current()), 1, &si, win->inFlightFence);
   VkPresentInfoKHR pi = {0}; pi.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR; pi.waitSemaphoreCount = 1; pi.pWaitSemaphores = sigS; pi.swapchainCount = 1; pi.pSwapchains = &win->swapChain; pi.pImageIndices = &imageIndex; vkQueuePresentKHR(cj_engine_present_queue(cj_engine_get_current()), &pi);
+  win->lastPresentedImage = imageIndex;
+  win->hasPresentedImage = true;
 }
 
 static void plat_cleanupWindow(CJPlatformWindow * win) {
@@ -1826,6 +1861,19 @@ static uint64_t cj_window_now_ms(void) {
 #endif
 }
 
+bool cj_window__last_presented_frame(
+    const cj_window_t* window, cj_window_frame_source_t* out_source) {
+  if (!window || !out_source || !window->plat) return false;
+  const CJPlatformWindow* plat = window->plat;
+  if (!plat->hasPresentedImage || !plat->swapChainImages) return false;
+  if (plat->lastPresentedImage >= plat->swapChainImageCount) return false;
+
+  out_source->image = plat->swapChainImages[plat->lastPresentedImage];
+  out_source->format = plat->swapChainFormat;
+  out_source->extent = plat->swapChainExtent;
+  return out_source->image != VK_NULL_HANDLE;
+}
+
 CJ_API cj_result_t cj_window_execute(cj_window_t* win) {
   if (!win || win->is_destroyed || !win->plat) return CJ_E_INVALID_ARGUMENT;
 
@@ -1943,6 +1991,8 @@ CJ_API cj_result_t cj_window_execute(cj_window_t* win) {
         pi.pSwapchains = &win->plat->swapChain;
         pi.pImageIndices = &imageIndex;
         vkQueuePresentKHR(cj_engine_present_queue(cj_engine_get_current()), &pi);
+        win->plat->lastPresentedImage = imageIndex;
+        win->plat->hasPresentedImage = true;
       }
     } else {
       /* Fall back to legacy drawing if no command buffers available */

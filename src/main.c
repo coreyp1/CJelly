@@ -9,6 +9,7 @@
 #include <cjelly/application.h>
 #include <cjelly/macros.h>
 
+#include <cjelly/cj_capture.h>
 #include <cjelly/format/3d/mesh.h>
 #include <cjelly/format/image.h>
 
@@ -107,6 +108,51 @@ static cj_frame_result_t window3_on_frame(GCJ_MAYBE_UNUSED(cj_window_t* window),
 
   // Window is set to CJ_REDRAW_ALWAYS, so it will always render
   // No need to mark dirty - framework handles rendering every frame
+  return CJ_FRAME_CONTINUE;
+}
+
+/* Capturing the demo's windows, for verification without a person looking.
+ *
+ * Set CJELLY_DEMO_CAPTURE to a directory: the demo renders a few frames, writes
+ * each window to a PNG in it, and exits. That is what makes the render path
+ * testable on a machine with no display - there is no screenshot tool in the
+ * loop, and no window manager needed, because the pixels come from the
+ * swapchain rather than from the screen. */
+typedef struct CaptureContext {
+  const char* directory;
+  CJellyApplication* app;
+  cj_window_t* windows[4];
+  int frames_remaining;
+} CaptureContext;
+
+static cj_frame_result_t capture_on_frame(GCJ_MAYBE_UNUSED(cj_window_t* window),
+                                          GCJ_MAYBE_UNUSED(const cj_frame_info_t* frame),
+                                          void* user_data) {
+  CaptureContext* ctx = (CaptureContext*)user_data;
+  if (!ctx || !ctx->directory) return CJ_FRAME_CONTINUE;
+
+  /* Let a few frames go by first: the first present of a window is not
+   * necessarily the one with everything drawn into it. */
+  if (--ctx->frames_remaining > 0) return CJ_FRAME_CONTINUE;
+
+  for (int i = 0; i < 4; i++) {
+    if (!ctx->windows[i]) continue;
+    char path[512];
+    snprintf(path, sizeof(path), "%s/window%d.png", ctx->directory, i + 1);
+
+    cj_capture_t capture = {0};
+    cj_result_t r = cj_window_capture(ctx->windows[i], &capture);
+    if (r != CJ_SUCCESS) {
+      printf("capture: window %d could not be read (%d)\n", i + 1, (int)r);
+      continue;
+    }
+    r = cj_capture_write_png(&capture, path);
+    printf("capture: window %d %ux%u -> %s%s\n", i + 1, capture.width,
+           capture.height, path, r == CJ_SUCCESS ? "" : " (write failed)");
+    cj_capture_free(&capture);
+  }
+
+  if (ctx->app) ctx->app->shutdown_requested = 1;
   return CJ_FRAME_CONTINUE;
 }
 
@@ -587,6 +633,14 @@ int main(int argc, char ** argv) {
   cj_window_on_resize(win2, window2_on_resize, NULL);
   cj_window_on_resize(win3, window3_on_resize, NULL);
   cj_window_on_resize(win4, window3_on_resize, NULL);
+
+  CaptureContext capture_ctx = {getenv("CJELLY_DEMO_CAPTURE"), app,
+                                {win1, win2, win3, win4}, 30};
+  if (capture_ctx.directory) {
+    printf("Capturing to %s after %d frames, then exiting.\n",
+           capture_ctx.directory, capture_ctx.frames_remaining);
+    cj_window_on_frame(win4, capture_on_frame, &capture_ctx);
+  }
 
   // Register keyboard callback for window 1 (test input handling)
   cj_window_on_key(win1, window1_on_key, NULL);
