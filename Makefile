@@ -485,9 +485,9 @@ endif
 	#
 	# Copied recursively: a flat glob of include/cjelly/*.h left out the whole
 	# format/ tree, so an installed CJelly could not compile anything that
-	# included cjelly/format/image.h or cjelly/format/3d/obj.h. The generated
-	# directory holds shaders rather than headers, and a glob over it failed
-	# the install outright when it matched nothing.
+	# included cjelly/format/image.h. The generated directory holds shaders
+	# rather than headers, and a glob over it failed the install outright when
+	# it matched nothing.
 	@mkdir -p $(INCLUDE_INSTALL_PATH)/$(SUITE)/$(PROJECT)$(BRANCH)
 	@cd include && find . -name "*.h" -exec cp --parents '{}' $(INCLUDE_INSTALL_PATH)/$(SUITE)/$(PROJECT)$(BRANCH)/ \;
 	@if [ -d "$(GEN_DIR)" ]; then \
