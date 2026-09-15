@@ -30,19 +30,23 @@ typedef enum {
 typedef enum {
   CJELLY_FORMAT_IMAGE_UNKNOWN, /**< Unknown image format */
   CJELLY_FORMAT_IMAGE_BMP,     /**< BMP image format */
+  CJELLY_FORMAT_IMAGE_PNG,     /**< PNG image format (including APNG) */
+  CJELLY_FORMAT_IMAGE_JPEG,    /**< JPEG image format */
 } CJellyFormatImageType;
 
 /**
  * @brief Represents a generic image.
  *
- * This structure holds general image properties such as dimensions,
- * bit depth, and a pointer to the actual pixel data.
+ * Pixels are always tightly packed 8-bit RGBA with no row padding, whatever
+ * the source file contained, so the buffer can be handed to Vulkan as
+ * VK_FORMAT_R8G8B8A8_UNORM directly.  `channels` is therefore always 4 and
+ * `bitdepth` always 32; both are kept for clarity at call sites.
  */
 typedef struct CJellyFormatImageRaw {
     int width;                /**< The width of the image in pixels. */
     int height;               /**< The height of the image in pixels. */
-    int channels;             /**< The number of color channels. */
-    size_t bitdepth;          /**< The bit depth of the image. */
+    int channels;             /**< The number of color channels; always 4. */
+    size_t bitdepth;          /**< Bits per pixel; always 32. */
     size_t data_size;         /**< The size of the pixel data in bytes. */
     unsigned char * data;     /**< The raw pixel data. */
 } CJellyFormatImageRaw;
@@ -62,8 +66,9 @@ typedef struct CJellyFormatImage {
 /**
  * @brief Loads an image from file.
  *
- * This function examines the provided file (by extension or header inspection)
- * and calls the appropriate format-specific loader.
+ * The file is identified by its signature and decoded by the Ghoti.io Image
+ * library, so every format that library has a codec for is accepted: BMP,
+ * PNG, and JPEG.
  *
  * @param filename Path to the image file.
  * @param out_image Output pointer that will point to the allocated CJellyFormatImage on success.

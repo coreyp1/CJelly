@@ -116,6 +116,43 @@ else
 
 endif
 
+# The Ghoti.io Image library supplies every image codec CJelly can load (BMP,
+# PNG, JPEG). Prefer the installed package; fall back to a sibling checkout so
+# the suite still builds from a fresh clone before anything is installed.
+#
+# Installed .pc files carry the branch suffix (ghoti.io-image-dev.pc), so the
+# name asked for here has to carry it too.
+IMAGE_PC ?= $(SUITE)-image$(BRANCH)
+IMAGE_CFLAGS := $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --cflags $(IMAGE_PC) 2>/dev/null)
+IMAGE_LIBS := $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --libs $(IMAGE_PC) 2>/dev/null)
+# Fall back when pkg-config produced nothing, or echoed an unsubstituted
+# placeholder (a literal "(" is the tell).
+IMAGE_PLACEHOLDER := (
+IMAGE_NEED_FALLBACK := $(or $(findstring $(IMAGE_PLACEHOLDER),$(IMAGE_CFLAGS)),$(if $(IMAGE_CFLAGS),,y))
+ifneq ($(IMAGE_NEED_FALLBACK),)
+IMAGE_CFLAGS := -I../image/include
+IMAGE_LIBS := -L../image/build/$(BUILD)/apps -l$(SUITE)-image$(BRANCH)
+# image depends on compress, which depends on cutil; the linker needs to be
+# able to resolve both NEEDED entries. cutil's build tree is one level
+# shallower (build/<os>/apps), hence just the leading OS component of BUILD.
+LDFLAGS += -Wl,-rpath-link,../image/build/$(BUILD)/apps
+LDFLAGS += -Wl,-rpath-link,../compress/build/$(BUILD)/apps
+LDFLAGS += -Wl,-rpath-link,../cutil/build/$(firstword $(subst /, ,$(BUILD)))/apps
+endif
+CFLAGS += $(IMAGE_CFLAGS)
+LIB_CFLAGS += $(IMAGE_CFLAGS)
+LDFLAGS += $(IMAGE_LIBS)
+
+# Where the loader has to look when running the tests and the demo. When the
+# libraries are installed the loader finds them through ld.so.conf and these
+# extra entries are simply unused; when building against sibling checkouts
+# they are what makes the binaries runnable at all.
+RUNTIME_LIB_DIRS := $(APP_DIR) ../image/build/$(BUILD)/apps ../compress/build/$(BUILD)/apps ../cutil/build/$(firstword $(subst /, ,$(BUILD)))/apps
+# Absolute, so a recipe that cd's elsewhere first still resolves them.
+EMPTY :=
+SPACE := $(EMPTY) $(EMPTY)
+RUNTIME_LIB_PATH := $(subst $(SPACE),:,$(strip $(abspath $(RUNTIME_LIB_DIRS))))
+
 # The standard include directories for the project.
 INCLUDE := -I include/ -I $(GEN_DIR)/
 
@@ -372,7 +409,7 @@ test: \
 		printf "### Running %s\n" "$$test_name"; \
 		printf "############################\n"; \
 		printf "\033[0m\n"; \
-		LD_LIBRARY_PATH="$(APP_DIR)" CJELLY_TEST_DIR="$(CURDIR)/test" \
+		LD_LIBRARY_PATH="$(RUNTIME_LIB_PATH)" CJELLY_TEST_DIR="$(CURDIR)/test" \
 			$$test_exe --gtest_brief=1 || exit 1; \
 	done
 
@@ -386,7 +423,7 @@ demo: \
 	@printf "### Running the demo     ###\n"
 	@printf "############################\n"
 	@printf "\033[0m\n"
-	cd $(APP_DIR) && LD_LIBRARY_PATH="./" $(ENV_VARS) ./main$(EXE_EXTENSION)
+	cd $(APP_DIR) && LD_LIBRARY_PATH="$(RUNTIME_LIB_PATH)" $(ENV_VARS) ./main$(EXE_EXTENSION)
 
 clean: ## Remove all contents of the build directories.
 	-@rm -rvf $(BUILD_DIR)

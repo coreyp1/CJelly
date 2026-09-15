@@ -12,7 +12,6 @@
 // #include <cjelly/format/3d/obj.h>
 // #include <cjelly/format/3d/mtl.h>
 #include <cjelly/format/image.h>
-#include <cjelly/format/image/bmp.h>
 
 
 #ifdef _WIN32

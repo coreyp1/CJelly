@@ -1,14 +1,20 @@
 /**
  * @file test_image.cpp
  *
- * Unit tests for the image dispatch layer and the BMP loader.
+ * Unit tests for the image adapter.
+ *
+ * Decoding itself belongs to the Ghoti.io Image library and is covered by
+ * that library's own suite, which goes far deeper into each format than
+ * would be useful to repeat here.  What these tests pin down is the contract
+ * CJelly depends on: which formats are accepted, that the pixels arrive
+ * tightly packed as RGBA8 ready for Vulkan, that the reported type and name
+ * are right, and that bad input is refused rather than half-loaded.
  *
  * Copyright 2026 by Corey Pennycuff
  */
 
 #include "test_helpers.h"
 #include <cjelly/format/image.h>
-#include <cjelly/format/image/bmp.h>
 #include <gtest/gtest.h>
 #include <string>
 #include <vector>
@@ -81,6 +87,22 @@ TEST(ImageDetect, RecognisesBmp) {
                 asset("images/bmp/tang.bmp").c_str(), &type),
       CJELLY_FORMAT_IMAGE_SUCCESS);
   EXPECT_EQ(type, CJELLY_FORMAT_IMAGE_BMP);
+}
+
+TEST(ImageDetect, RecognisesPng) {
+  CJellyFormatImageType type = CJELLY_FORMAT_IMAGE_UNKNOWN;
+  ASSERT_EQ(cjelly_format_image_detect_type(
+                asset("images/png/pattern.png").c_str(), &type),
+      CJELLY_FORMAT_IMAGE_SUCCESS);
+  EXPECT_EQ(type, CJELLY_FORMAT_IMAGE_PNG);
+}
+
+TEST(ImageDetect, RecognisesJpeg) {
+  CJellyFormatImageType type = CJELLY_FORMAT_IMAGE_UNKNOWN;
+  ASSERT_EQ(cjelly_format_image_detect_type(
+                asset("images/jpeg/flat.jpg").c_str(), &type),
+      CJELLY_FORMAT_IMAGE_SUCCESS);
+  EXPECT_EQ(type, CJELLY_FORMAT_IMAGE_JPEG);
 }
 
 TEST(ImageDetect, MissingFileReportsNotFound) {
@@ -162,30 +184,24 @@ TEST(ImageLoad, MissingFileReportsNotFound) {
 }
 
 //
-// BMP loader
+// Formats
 //
 
-TEST(BmpLoad, MissingFileReportsNotFound) {
-  CJellyFormatImage * image = nullptr;
-  EXPECT_EQ(cjelly_format_image_bmp_load(cjtest::missing_path(), &image),
-      CJELLY_FORMAT_IMAGE_ERR_FILE_NOT_FOUND);
-}
-
-TEST(BmpLoad, NotABmpRejected) {
+TEST(ImageLoad, NotABitmapRejected) {
   TempFile f("XX not a bitmap header", ".bmp");
   CJellyFormatImage * image = nullptr;
-  EXPECT_NE(cjelly_format_image_bmp_load(f.path(), &image),
+  EXPECT_NE(cjelly_format_image_load(f.path(), &image),
       CJELLY_FORMAT_IMAGE_SUCCESS);
 }
 
 // A header claiming more pixel data than the file holds must be rejected,
 // not trusted into an over-long read.
-TEST(BmpLoad, TruncatedPixelDataRejected) {
+TEST(ImageLoad, TruncatedPixelDataRejected) {
   std::string bmp = make_bmp24(8, 8, 1, 2, 3);
   bmp.resize(bmp.size() / 2);
   TempFile f(bmp, ".bmp");
   CJellyFormatImage * image = nullptr;
-  CJellyFormatImageError err = cjelly_format_image_bmp_load(f.path(), &image);
+  CJellyFormatImageError err = cjelly_format_image_load(f.path(), &image);
   EXPECT_NE(err, CJELLY_FORMAT_IMAGE_SUCCESS)
       << "header promised more pixel data than the file contains";
   if (err == CJELLY_FORMAT_IMAGE_SUCCESS) {
@@ -193,54 +209,42 @@ TEST(BmpLoad, TruncatedPixelDataRejected) {
   }
 }
 
-TEST(BmpLoad, HeaderOnlyRejected) {
+TEST(ImageLoad, HeaderOnlyRejected) {
   std::string bmp = make_bmp24(4, 4, 0, 0, 0);
   bmp.resize(14 + 40);
   TempFile f(bmp, ".bmp");
   CJellyFormatImage * image = nullptr;
-  CJellyFormatImageError err = cjelly_format_image_bmp_load(f.path(), &image);
+  CJellyFormatImageError err = cjelly_format_image_load(f.path(), &image);
   EXPECT_NE(err, CJELLY_FORMAT_IMAGE_SUCCESS);
   if (err == CJELLY_FORMAT_IMAGE_SUCCESS) {
     cjelly_format_image_free(image);
   }
 }
 
-TEST(BmpLoad, Synthetic24BitImage) {
+TEST(ImageLoad, Synthetic24BitBmp) {
+  // The source is 24-bit BGR; what comes back must be RGBA in channel order,
+  // with the blue and red the file stored swapped back into place.
   std::string bmp = make_bmp24(3, 2, 0x10, 0x20, 0x30);
   TempFile f(bmp, ".bmp");
   CJellyFormatImage * image = nullptr;
-  ASSERT_EQ(cjelly_format_image_bmp_load(f.path(), &image),
+  ASSERT_EQ(cjelly_format_image_load(f.path(), &image),
       CJELLY_FORMAT_IMAGE_SUCCESS);
   ASSERT_NE(image, nullptr);
   ASSERT_NE(image->raw, nullptr);
   EXPECT_EQ(image->raw->width, 3);
   EXPECT_EQ(image->raw->height, 2);
-  EXPECT_GT(image->raw->channels, 0);
-  EXPECT_GT(image->raw->data_size, 0u);
   ASSERT_NE(image->raw->data, nullptr);
-  // The decoded buffer must be large enough for the dimensions it reports.
-  EXPECT_GE(image->raw->data_size,
-      (size_t)(image->raw->width * image->raw->height * image->raw->channels));
+
+  EXPECT_EQ(image->raw->data[0], 0x30) << "red";
+  EXPECT_EQ(image->raw->data[1], 0x20) << "green";
+  EXPECT_EQ(image->raw->data[2], 0x10) << "blue";
+  EXPECT_EQ(image->raw->data[3], 0xFF) << "opaque alpha";
   cjelly_format_image_free(image);
 }
 
-TEST(BmpFixture, Loads24BitImage) {
+TEST(ImageLoad, Loads4BitPalettedBmp) {
   CJellyFormatImage * image = nullptr;
-  ASSERT_EQ(cjelly_format_image_bmp_load(
-                asset("images/bmp/tang.bmp").c_str(), &image),
-      CJELLY_FORMAT_IMAGE_SUCCESS);
-  ASSERT_NE(image, nullptr);
-  ASSERT_NE(image->raw, nullptr);
-  EXPECT_EQ(image->raw->width, 1024);
-  EXPECT_EQ(image->raw->height, 1024);
-  EXPECT_GE(image->raw->data_size,
-      (size_t)(image->raw->width * image->raw->height * image->raw->channels));
-  cjelly_format_image_free(image);
-}
-
-TEST(BmpFixture, Loads4BitPalettedImage) {
-  CJellyFormatImage * image = nullptr;
-  CJellyFormatImageError err = cjelly_format_image_bmp_load(
+  CJellyFormatImageError err = cjelly_format_image_load(
       asset("images/bmp/16Color.bmp").c_str(), &image);
   ASSERT_EQ(err, CJELLY_FORMAT_IMAGE_SUCCESS)
       << cjelly_format_image_strerror(err);
@@ -248,9 +252,88 @@ TEST(BmpFixture, Loads4BitPalettedImage) {
   ASSERT_NE(image->raw, nullptr);
   EXPECT_EQ(image->raw->width, 2);
   EXPECT_EQ(image->raw->height, 2);
-  EXPECT_GE(image->raw->data_size,
-      (size_t)(image->raw->width * image->raw->height * image->raw->channels));
   cjelly_format_image_free(image);
+}
+
+// PNG and JPEG came with the move to the shared image library; before it,
+// only BMP loaded at all.
+TEST(ImageLoad, LoadsPng) {
+  CJellyFormatImage * image = nullptr;
+  std::string path = asset("images/png/pattern.png");
+  CJellyFormatImageError err = cjelly_format_image_load(path.c_str(), &image);
+  ASSERT_EQ(err, CJELLY_FORMAT_IMAGE_SUCCESS)
+      << cjelly_format_image_strerror(err);
+  ASSERT_NE(image, nullptr);
+  EXPECT_EQ(image->type, CJELLY_FORMAT_IMAGE_PNG);
+  ASSERT_NE(image->raw, nullptr);
+  EXPECT_EQ(image->raw->width, 8);
+  EXPECT_EQ(image->raw->height, 4);
+
+  // The asset encodes (x*30, y*60, (x+y)*20).
+  for (int y = 0; y < 4; y++) {
+    for (int x = 0; x < 8; x++) {
+      const unsigned char * px =
+          image->raw->data + (((size_t)y * 8u + (size_t)x) * 4u);
+      EXPECT_EQ(px[0], (unsigned char)(x * 30)) << "red at " << x << "," << y;
+      EXPECT_EQ(px[1], (unsigned char)(y * 60)) << "green at " << x << "," << y;
+      EXPECT_EQ(px[2], (unsigned char)((x + y) * 20))
+          << "blue at " << x << "," << y;
+      EXPECT_EQ(px[3], 0xFF) << "alpha at " << x << "," << y;
+    }
+  }
+  cjelly_format_image_free(image);
+}
+
+TEST(ImageLoad, LoadsJpeg) {
+  CJellyFormatImage * image = nullptr;
+  std::string path = asset("images/jpeg/flat.jpg");
+  CJellyFormatImageError err = cjelly_format_image_load(path.c_str(), &image);
+  ASSERT_EQ(err, CJELLY_FORMAT_IMAGE_SUCCESS)
+      << cjelly_format_image_strerror(err);
+  ASSERT_NE(image, nullptr);
+  EXPECT_EQ(image->type, CJELLY_FORMAT_IMAGE_JPEG);
+  ASSERT_NE(image->raw, nullptr);
+  EXPECT_EQ(image->raw->width, 8);
+  EXPECT_EQ(image->raw->height, 4);
+
+  // A flat colour, so lossy compression cannot move it far.
+  const unsigned char * px = image->raw->data;
+  EXPECT_NEAR(px[0], 128, 4);
+  EXPECT_NEAR(px[1], 64, 4);
+  EXPECT_NEAR(px[2], 32, 4);
+  EXPECT_EQ(px[3], 0xFF);
+  cjelly_format_image_free(image);
+}
+
+//
+// Pixel layout contract
+//
+
+TEST(ImageLoad, PixelsAreTightlyPackedRgba) {
+  // Widths that are not a multiple of four are where a decoder's row padding
+  // would leak through; the adapter has to strip it.
+  for (int width = 1; width <= 5; width++) {
+    std::string bmp = make_bmp24(width, 3, 0x11, 0x22, 0x33);
+    TempFile f(bmp, ".bmp");
+    CJellyFormatImage * image = nullptr;
+    ASSERT_EQ(cjelly_format_image_load(f.path(), &image),
+        CJELLY_FORMAT_IMAGE_SUCCESS)
+        << "width " << width;
+    ASSERT_NE(image->raw, nullptr);
+    EXPECT_EQ(image->raw->channels, 4) << "width " << width;
+    EXPECT_EQ(image->raw->bitdepth, 32u) << "width " << width;
+    EXPECT_EQ(image->raw->data_size, (size_t)width * 3u * 4u)
+        << "no row padding, width " << width;
+
+    // Every pixel is the same colour, so any stride slip shows immediately.
+    for (size_t i = 0; i < image->raw->data_size; i += 4) {
+      ASSERT_EQ(image->raw->data[i + 0], 0x33) << "width " << width << " at " << i;
+      ASSERT_EQ(image->raw->data[i + 1], 0x22) << "width " << width << " at " << i;
+      ASSERT_EQ(image->raw->data[i + 2], 0x11) << "width " << width << " at " << i;
+      ASSERT_EQ(image->raw->data[i + 3], 0xFF) << "width " << width << " at " << i;
+    }
+    cjelly_format_image_free(image);
+  }
 }
 
 int main(int argc, char ** argv) {

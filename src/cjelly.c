@@ -2381,34 +2381,18 @@ static void createTextureImageCtx(const CJellyVulkanContext* ctx, const char * f
     exit(EXIT_FAILURE);
   }
 
-  // Convert RGB to RGBA.
   int texWidth = image->raw->width;
   int texHeight = image->raw->height;
-  unsigned char * pixelsRGB = image->raw->data;
-  if (!pixelsRGB) {
-    fprintf(stderr, "Failed to load BMP file: %s\n", filePath);
-    exit(EXIT_FAILURE);
-  }
-
-  // Convert RGB to RGBA.
-  size_t pixelCount = texWidth * texHeight;
-  size_t rgbaImageSize = pixelCount * 4; // 4 bytes per pixel.
-  unsigned char * pixels = malloc(rgbaImageSize);
+  unsigned char * pixels = image->raw->data;
   if (!pixels) {
-    fprintf(stderr, "Failed to allocate memory for RGBA image\n");
+    fprintf(stderr, "Failed to load image file: %s\n", filePath);
     exit(EXIT_FAILURE);
   }
-  for (size_t i = 0; i < pixelCount; ++i) {
-    pixels[i * 4 + 0] = pixelsRGB[i * 3 + 0];
-    pixels[i * 4 + 1] = pixelsRGB[i * 3 + 1];
-    pixels[i * 4 + 2] = pixelsRGB[i * 3 + 2];
-    pixels[i * 4 + 3] = 255; // Fully opaque.
-  }
 
-  // Clean up the original RGB image.
-  cjelly_format_image_free(image);
-
-  VkDeviceSize bufferSize = rgbaImageSize;
+  // The loader already hands back tightly packed RGBA8, which is exactly the
+  // VK_FORMAT_R8G8B8A8_UNORM layout used below, so there is nothing to
+  // convert and no second buffer to allocate.
+  VkDeviceSize bufferSize = image->raw->data_size;
 
   // Create a staging buffer to hold the pixel data.
   VkBuffer stagingBuffer;
@@ -2423,7 +2407,7 @@ static void createTextureImageCtx(const CJellyVulkanContext* ctx, const char * f
   vkMapMemory(ctx->device, stagingBufferMemory, 0, bufferSize, 0, &data);
   memcpy(data, pixels, (size_t)bufferSize);
   vkUnmapMemory(ctx->device, stagingBufferMemory);
-  free(pixels);
+  cjelly_format_image_free(image);
 
   // Create the Vulkan texture image.
   // We choose VK_FORMAT_R8G8B8A8_UNORM for the RGBA data.
@@ -3089,18 +3073,9 @@ uint32_t cjelly_atlas_add_texture(CJellyTextureAtlas * atlas, const char * fileP
   void * data;
   vkMapMemory(cur_device(), stagingBufferMemory, 0, imageSize, 0, &data);
 
-  // Convert RGB to RGBA and copy to staging buffer
-  uint8_t * pixels = (uint8_t *)data;
-  for (uint32_t y = 0; y < texHeight; y++) {
-    for (uint32_t x = 0; x < texWidth; x++) {
-      uint32_t srcIndex = (y * texWidth + x) * 3; // RGB
-      uint32_t dstIndex = (y * texWidth + x) * 4; // RGBA
-      pixels[dstIndex] = image->raw->data[srcIndex];     // R
-      pixels[dstIndex + 1] = image->raw->data[srcIndex + 1]; // G
-      pixels[dstIndex + 2] = image->raw->data[srcIndex + 2]; // B
-      pixels[dstIndex + 3] = 255; // A
-    }
-  }
+  // The loader hands back tightly packed RGBA8, the same layout the atlas
+  // image uses, so the pixels copy straight across.
+  memcpy(data, image->raw->data, (size_t)imageSize);
 
   vkUnmapMemory(cur_device(), stagingBufferMemory);
 
@@ -3199,18 +3174,9 @@ uint32_t cjelly_atlas_add_texture_ctx(CJellyTextureAtlas * atlas, const char * f
   void * data;
   vkMapMemory(ctx->device, stagingBufferMemory, 0, imageSize, 0, &data);
 
-  // Convert RGB to RGBA and copy to staging buffer
-  uint8_t * pixels = (uint8_t *)data;
-  for (uint32_t y = 0; y < texHeight; y++) {
-    for (uint32_t x = 0; x < texWidth; x++) {
-      uint32_t srcIndex = (y * texWidth + x) * 3; // RGB
-      uint32_t dstIndex = (y * texWidth + x) * 4; // RGBA
-      pixels[dstIndex] = image->raw->data[srcIndex];     // R
-      pixels[dstIndex + 1] = image->raw->data[srcIndex + 1]; // G
-      pixels[dstIndex + 2] = image->raw->data[srcIndex + 2]; // B
-      pixels[dstIndex + 3] = 255; // A
-    }
-  }
+  // The loader hands back tightly packed RGBA8, the same layout the atlas
+  // image uses, so the pixels copy straight across.
+  memcpy(data, image->raw->data, (size_t)imageSize);
 
   vkUnmapMemory(ctx->device, stagingBufferMemory);
 

@@ -1,153 +1,316 @@
-#include <string.h>
+/**
+ * @file
+ * Image loading for CJelly, backed by the Ghoti.io Image library.
+ *
+ * CJelly used to carry its own BMP reader.  That reader is now a codec in
+ * `image` alongside PNG and JPEG, so this file is a thin adapter: it reads a
+ * file into memory, hands it to the image library's codec registry, and
+ * copies the decoded RGBA8 pixels into the CJellyFormatImage shape the
+ * renderer expects.  Supporting PNG and JPEG came along with the move.
+ *
+ * Pixels always arrive as tightly packed RGBA8, four channels, no row
+ * padding, regardless of what the file contained.  Callers upload them to
+ * Vulkan as VK_FORMAT_R8G8B8A8_UNORM without converting anything.
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+
+#include <ghoti.io/image/codec.h>
+#include <ghoti.io/image/core.h>
+#include <ghoti.io/image/doc.h>
+#include <ghoti.io/image/raster.h>
+#include <ghoti.io/image/stream.h>
 
 #include <cjelly/format/image.h>
-#include <cjelly/format/image/bmp.h>
 
-CJellyFormatImageError cjelly_format_image_load(const char * filename, CJellyFormatImage * * out_image) {
-  *out_image = NULL;
-
-  // Detect the image type so that we can call the appropriate loader.
-  CJellyFormatImageType type;
-  CJellyFormatImageError err = cjelly_format_image_detect_type(filename, &type);
-  if (err != CJELLY_FORMAT_IMAGE_SUCCESS) return err;
-
-  // Load the image based on the detected type.
-  switch (type) {
-    case CJELLY_FORMAT_IMAGE_BMP:
-      err = cjelly_format_image_bmp_load(filename, out_image);
-      break;
+/** Translate an image library result into the CJelly error enum. */
+static CJellyFormatImageError from_gimg(GIMG_Result r) {
+  switch (r) {
+    case GIMG_OK:
+      return CJELLY_FORMAT_IMAGE_SUCCESS;
+    case GIMG_ERR_IO:
+      return CJELLY_FORMAT_IMAGE_ERR_IO;
+    case GIMG_ERR_OOM:
+      return CJELLY_FORMAT_IMAGE_ERR_OUT_OF_MEMORY;
+    case GIMG_ERR_FORMAT:
+    case GIMG_ERR_UNSUPPORTED:
+    case GIMG_ERR_CORRUPT:
+      return CJELLY_FORMAT_IMAGE_ERR_INVALID_FORMAT;
+    case GIMG_ERR_LIMIT:
+      return CJELLY_FORMAT_IMAGE_ERR_OUT_OF_MEMORY;
     default:
-      err = CJELLY_FORMAT_IMAGE_ERR_INVALID_FORMAT;
-      goto ERROR_IMAGE_CLEANUP;
-  }
-  if (err != CJELLY_FORMAT_IMAGE_SUCCESS) return err;
-
-  // Lastly, opy the filename.
-  size_t len = strlen(filename);
-  (*out_image)->name = (unsigned char *)malloc(len + 1);
-  if (!(*out_image)->name) goto ERROR_IMAGE_CLEANUP;
-  memcpy((*out_image)->name, filename, len + 1);
-
-  return CJELLY_FORMAT_IMAGE_SUCCESS;
-
-ERROR_IMAGE_CLEANUP:
-  if (err == CJELLY_FORMAT_IMAGE_SUCCESS) {
-    err = CJELLY_FORMAT_IMAGE_ERR_OUT_OF_MEMORY;
-  }
-  return err;
-}
-
-
-void cjelly_format_image_free(CJellyFormatImage * image) {
-  if (!image) return;
-  switch (image->type) {
-    case CJELLY_FORMAT_IMAGE_BMP:
-      cjelly_format_image_bmp_free((CJellyFormatImageBMP *)image);
-      break;
-    default:
-      break;
-  }
-  if (image->raw) {
-    if (image->raw->data) {
-      free(image->raw->data);
-      image->raw->data = NULL;
-      image->raw->data_size = 0;
-    }
-    free(image->raw);
-    image->raw = NULL;
-  }
-  if (image->name) {
-    free(image->name);
-    image->name = NULL;
-  }
-  image->type = CJELLY_FORMAT_IMAGE_UNKNOWN;
-  free(image);
-}
-
-
-/**
- * @brief Structure for holding image signature information.
- *
- * This structure is a helper struct that is only used in the
- * cjelly_format_image_detect_type function.
- */
-typedef struct {
-  CJellyFormatImageType type;      /**< The image type associated with the signature */
-  const unsigned char * signature; /**< Pointer to the signature bytes */
-  size_t length;                   /**< Number of bytes in the signature */
-} ImageSignature;
-
-
-// Define known image signatures.
-static const unsigned char signature_bmp[] = {'B', 'M'};
-// static const unsigned char signature_png[] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
-// static const unsigned char signature_jpg[] = {0xFF, 0xD8, 0xFF};
-
-
-static ImageSignature signatures[] = {
-  { CJELLY_FORMAT_IMAGE_BMP, signature_bmp, sizeof(signature_bmp) },
-  // { CJELLY_FORMAT_IMAGE_PNG, signature_png, sizeof(signature_png) },
-  // { CJELLY_FORMAT_IMAGE_JPG, signature_jpg, sizeof(signature_jpg) },
-};
-
-CJellyFormatImageError cjelly_format_image_detect_type(const char * path, CJellyFormatImageType * out_type) {
-  // Validate before writing: the assignment used to come first, so passing a
-  // NULL out_type crashed instead of returning the error it checks for.
-  if (!path || !out_type) {
-      // Invalid arguments; for simplicity, return an invalid format error.
       return CJELLY_FORMAT_IMAGE_ERR_INVALID_FORMAT;
   }
+}
 
-  *out_type = CJELLY_FORMAT_IMAGE_UNKNOWN;
+/** Map a codec name from the registry onto the CJelly type enum. */
+static CJellyFormatImageType type_from_codec_name(const char * name) {
+  if (!name) {
+    return CJELLY_FORMAT_IMAGE_UNKNOWN;
+  }
+  if (!strcmp(name, "bmp")) {
+    return CJELLY_FORMAT_IMAGE_BMP;
+  }
+  if (!strcmp(name, "png")) {
+    return CJELLY_FORMAT_IMAGE_PNG;
+  }
+  if (!strcmp(name, "jpeg")) {
+    return CJELLY_FORMAT_IMAGE_JPEG;
+  }
+  return CJELLY_FORMAT_IMAGE_UNKNOWN;
+}
 
-  FILE *fp = fopen(path, "rb");
+/**
+ * Read a whole file into a freshly allocated buffer.
+ *
+ * The image library works from memory streams, and these are texture assets
+ * rather than arbitrary user input, so reading the file whole keeps the
+ * adapter simple.
+ */
+static CJellyFormatImageError read_file(
+    const char * path, unsigned char ** out_data, size_t * out_size) {
+  *out_data = NULL;
+  *out_size = 0;
+
+  FILE * fp = fopen(path, "rb");
   if (!fp) {
     return CJELLY_FORMAT_IMAGE_ERR_FILE_NOT_FOUND;
   }
 
-  // Determine the maximum signature length required.
-  size_t max_sig_length = 0;
-  size_t num_signatures = sizeof(signatures) / sizeof(signatures[0]);
-  for (size_t i = 0; i < num_signatures; i++) {
-    if (signatures[i].length > max_sig_length) {
-      max_sig_length = signatures[i].length;
-    }
+  if (fseek(fp, 0, SEEK_END) != 0) {
+    fclose(fp);
+    return CJELLY_FORMAT_IMAGE_ERR_IO;
+  }
+  long length = ftell(fp);
+  if (length < 0) {
+    fclose(fp);
+    return CJELLY_FORMAT_IMAGE_ERR_IO;
+  }
+  if (fseek(fp, 0, SEEK_SET) != 0) {
+    fclose(fp);
+    return CJELLY_FORMAT_IMAGE_ERR_IO;
+  }
+  if (length == 0) {
+    fclose(fp);
+    return CJELLY_FORMAT_IMAGE_ERR_INVALID_FORMAT;
   }
 
-  // Allocate a buffer to read the header.
-  unsigned char * buffer = (unsigned char *)malloc(max_sig_length);
-  if (!buffer) {
+  unsigned char * data = (unsigned char *)malloc((size_t)length);
+  if (!data) {
     fclose(fp);
     return CJELLY_FORMAT_IMAGE_ERR_OUT_OF_MEMORY;
   }
 
-  // Read the required number of bytes.
-  size_t bytes_read = fread(buffer, sizeof(unsigned char), max_sig_length, fp);
+  size_t read = fread(data, 1, (size_t)length, fp);
   fclose(fp);
-  if (bytes_read) {
-    // Iterate over each known signature and check for a match.
-    for (size_t i = 0; i < num_signatures; i++) {
-      if ((bytes_read >= signatures[i].length) && !memcmp(buffer, signatures[i].signature, signatures[i].length)) {
-        *out_type = signatures[i].type;
-        free(buffer);
-        return CJELLY_FORMAT_IMAGE_SUCCESS;
-      }
-    }
+  if (read != (size_t)length) {
+    free(data);
+    return CJELLY_FORMAT_IMAGE_ERR_IO;
   }
 
-  free(buffer);
-  return CJELLY_FORMAT_IMAGE_ERR_INVALID_FORMAT;
+  *out_data = data;
+  *out_size = (size_t)length;
+  return CJELLY_FORMAT_IMAGE_SUCCESS;
 }
 
+/** Copy a decoded raster into a newly allocated tightly packed RGBA buffer. */
+static CJellyFormatImageError pack_raster(
+    const GIMG_Raster * raster, CJellyFormatImageRaw * raw) {
+  uint32_t width = gimg_raster_width(raster);
+  uint32_t height = gimg_raster_height(raster);
+  const GIMG_Pixel_Format * format = gimg_raster_format(raster);
+
+  if (!format || format->channel_model != GIMG_CHANNEL_RGBA ||
+      format->channel_count != 4 || format->bits_per_channel[0] != 8) {
+    // Every codec in the library decodes color images to RGBA8; anything else
+    // would silently produce garbage if copied blindly.
+    return CJELLY_FORMAT_IMAGE_ERR_INVALID_FORMAT;
+  }
+
+  size_t row_bytes = (size_t)width * 4u;
+  size_t total = row_bytes * (size_t)height;
+  if (!width || !height || total / 4u / (size_t)width != (size_t)height) {
+    return CJELLY_FORMAT_IMAGE_ERR_INVALID_FORMAT;
+  }
+
+  unsigned char * data = (unsigned char *)malloc(total);
+  if (!data) {
+    return CJELLY_FORMAT_IMAGE_ERR_OUT_OF_MEMORY;
+  }
+
+  // The raster may carry row padding; the CJelly buffer never does.
+  const unsigned char * src =
+      (const unsigned char *)gimg_raster_pixels_const(raster);
+  size_t src_stride = gimg_raster_stride_bytes(raster);
+  for (uint32_t y = 0; y < height; y++) {
+    memcpy(data + ((size_t)y * row_bytes), src + ((size_t)y * src_stride),
+        row_bytes);
+  }
+
+  raw->width = (int)width;
+  raw->height = (int)height;
+  raw->channels = 4;
+  raw->bitdepth = 32;
+  raw->data = data;
+  raw->data_size = total;
+  return CJELLY_FORMAT_IMAGE_SUCCESS;
+}
+
+CJellyFormatImageError cjelly_format_image_load(
+    const char * filename, CJellyFormatImage ** out_image) {
+  if (!filename || !out_image) {
+    return CJELLY_FORMAT_IMAGE_ERR_INVALID_FORMAT;
+  }
+  *out_image = NULL;
+
+  unsigned char * file_data = NULL;
+  size_t file_size = 0;
+  CJellyFormatImageError err = read_file(filename, &file_data, &file_size);
+  if (err != CJELLY_FORMAT_IMAGE_SUCCESS) {
+    return err;
+  }
+
+  GIMG_Stream * stream = NULL;
+  GIMG_Doc * doc = NULL;
+  GIMG_Raster * raster = NULL;
+  CJellyFormatImage * image = NULL;
+
+  GIMG_Result r = gimg_stream_create_memory(file_data, file_size, &stream);
+  if (r != GIMG_OK) {
+    err = from_gimg(r);
+    goto cleanup;
+  }
+
+  // Identify the format before loading so the type can be reported even
+  // though the codec registry is what actually dispatches.
+  GIMG_Probe_Result probe = {NULL, 0, {0, 0, 0, 0}};
+  CJellyFormatImageType type = CJELLY_FORMAT_IMAGE_UNKNOWN;
+  if (gimg_probe(stream, &probe) == GIMG_OK) {
+    type = type_from_codec_name(probe.format_name);
+  }
+
+  r = gimg_doc_load(stream, NULL, NULL, &doc);
+  if (r != GIMG_OK) {
+    err = from_gimg(r);
+    goto cleanup;
+  }
+
+  GIMG_Item * item = gimg_doc_item(doc, 0);
+  if (!item) {
+    err = CJELLY_FORMAT_IMAGE_ERR_INVALID_FORMAT;
+    goto cleanup;
+  }
+  r = gimg_item_decode(item, NULL, &raster);
+  if (r != GIMG_OK) {
+    err = from_gimg(r);
+    goto cleanup;
+  }
+
+  image = (CJellyFormatImage *)calloc(1, sizeof(CJellyFormatImage));
+  if (!image) {
+    err = CJELLY_FORMAT_IMAGE_ERR_OUT_OF_MEMORY;
+    goto cleanup;
+  }
+  image->raw = (CJellyFormatImageRaw *)calloc(1, sizeof(CJellyFormatImageRaw));
+  if (!image->raw) {
+    err = CJELLY_FORMAT_IMAGE_ERR_OUT_OF_MEMORY;
+    goto cleanup;
+  }
+  image->type = type;
+
+  err = pack_raster(raster, image->raw);
+  if (err != CJELLY_FORMAT_IMAGE_SUCCESS) {
+    goto cleanup;
+  }
+
+  size_t name_len = strlen(filename);
+  image->name = (unsigned char *)malloc(name_len + 1);
+  if (!image->name) {
+    err = CJELLY_FORMAT_IMAGE_ERR_OUT_OF_MEMORY;
+    goto cleanup;
+  }
+  memcpy(image->name, filename, name_len + 1);
+
+  *out_image = image;
+  image = NULL;
+  err = CJELLY_FORMAT_IMAGE_SUCCESS;
+
+cleanup:
+  cjelly_format_image_free(image);
+  if (raster) {
+    gimg_raster_destroy(raster);
+  }
+  if (doc) {
+    gimg_doc_destroy(doc);
+  }
+  if (stream) {
+    gimg_stream_destroy(stream);
+  }
+  free(file_data);
+  return err;
+}
+
+void cjelly_format_image_free(CJellyFormatImage * image) {
+  if (!image) {
+    return;
+  }
+  if (image->raw) {
+    free(image->raw->data);
+    image->raw->data = NULL;
+    image->raw->data_size = 0;
+    free(image->raw);
+    image->raw = NULL;
+  }
+  free(image->name);
+  image->name = NULL;
+  image->type = CJELLY_FORMAT_IMAGE_UNKNOWN;
+  free(image);
+}
+
+CJellyFormatImageError cjelly_format_image_detect_type(
+    const char * path, CJellyFormatImageType * out_type) {
+  // Validate before writing: the assignment used to come first, so passing a
+  // NULL out_type crashed instead of returning the error it checks for.
+  if (!path || !out_type) {
+    return CJELLY_FORMAT_IMAGE_ERR_INVALID_FORMAT;
+  }
+  *out_type = CJELLY_FORMAT_IMAGE_UNKNOWN;
+
+  unsigned char * file_data = NULL;
+  size_t file_size = 0;
+  CJellyFormatImageError err = read_file(path, &file_data, &file_size);
+  if (err != CJELLY_FORMAT_IMAGE_SUCCESS) {
+    return err;
+  }
+
+  GIMG_Stream * stream = NULL;
+  if (gimg_stream_create_memory(file_data, file_size, &stream) != GIMG_OK) {
+    free(file_data);
+    return CJELLY_FORMAT_IMAGE_ERR_OUT_OF_MEMORY;
+  }
+
+  GIMG_Probe_Result probe = {NULL, 0, {0, 0, 0, 0}};
+  GIMG_Result r = gimg_probe(stream, &probe);
+  if (r == GIMG_OK && probe.format_name) {
+    *out_type = type_from_codec_name(probe.format_name);
+  }
+
+  gimg_stream_destroy(stream);
+  free(file_data);
+
+  return *out_type == CJELLY_FORMAT_IMAGE_UNKNOWN
+      ? CJELLY_FORMAT_IMAGE_ERR_INVALID_FORMAT
+      : CJELLY_FORMAT_IMAGE_SUCCESS;
+}
 
 const char * cjelly_format_image_strerror(CJellyFormatImageError err) {
   switch (err) {
     case CJELLY_FORMAT_IMAGE_SUCCESS:
       return "No error";
     case CJELLY_FORMAT_IMAGE_ERR_FILE_NOT_FOUND:
-      return "OBJ file not found";
+      return "Image file not found";
     case CJELLY_FORMAT_IMAGE_ERR_OUT_OF_MEMORY:
       return "Out of memory";
     case CJELLY_FORMAT_IMAGE_ERR_INVALID_FORMAT:
