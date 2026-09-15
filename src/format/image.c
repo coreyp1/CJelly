@@ -93,12 +93,14 @@ static ImageSignature signatures[] = {
 };
 
 CJellyFormatImageError cjelly_format_image_detect_type(const char * path, CJellyFormatImageType * out_type) {
-  *out_type = CJELLY_FORMAT_IMAGE_UNKNOWN;
-
+  // Validate before writing: the assignment used to come first, so passing a
+  // NULL out_type crashed instead of returning the error it checks for.
   if (!path || !out_type) {
       // Invalid arguments; for simplicity, return an invalid format error.
       return CJELLY_FORMAT_IMAGE_ERR_INVALID_FORMAT;
   }
+
+  *out_type = CJELLY_FORMAT_IMAGE_UNKNOWN;
 
   FILE *fp = fopen(path, "rb");
   if (!fp) {

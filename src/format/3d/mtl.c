@@ -116,6 +116,12 @@ ERROR_CLOSE_FILE:
 
 
 void cjelly_format_3d_mtl_free(CJellyFormat3dMtl * materials) {
+  // Tolerate NULL, as cjelly_format_3d_obj_free() and
+  // cjelly_format_image_free() already do. Without this a caller unwinding
+  // from a failed load - the case the free path exists for - crashes.
+  if (!materials) {
+    return;
+  }
   free(materials->materials);
   materials->materials = NULL;
   materials->material_count = 0;
