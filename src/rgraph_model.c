@@ -524,12 +524,10 @@ int cj_rgraph_model_create(cj_engine_t * engine,
   model->base_color[3] = 1.0f;
   model->rotation_speed = 0.6f;
 
-  // Frame the camera from the mesh's own bounds, so a model of any scale
-  // fills the view. The offscreen target is square, hence an aspect of 1.
+  // Keep the mesh's bounds; the camera distance follows from them and from
+  // the window's aspect ratio, worked out per frame.
   memcpy(model->center, mesh->center, sizeof(model->center));
-  float radius = mesh->radius > 1e-6f ? mesh->radius : 1.0f;
-  model->camera_distance =
-      cjelly_camera_distance_for_sphere(radius, 0.7853981634f, 1.0f) * 1.15f;
+  model->radius = mesh->radius > 1e-6f ? mesh->radius : 1.0f;
 
   VkFormat depth_format = choose_depth_format(physical_device);
   if (depth_format == VK_FORMAT_UNDEFINED) {
@@ -746,8 +744,8 @@ void cj_rgraph_model_destroy(
   model->index_count = 0;
 }
 
-int cj_rgraph_model_prepass(
-    cj_rgraph_model_node_t * model, VkCommandBuffer cmd, uint64_t now_ms) {
+int cj_rgraph_model_prepass(cj_rgraph_model_node_t * model,
+    VkCommandBuffer cmd, uint64_t now_ms, float aspect) {
   if (!model || cmd == VK_NULL_HANDLE
       || model->render_pass == VK_NULL_HANDLE
       || model->pipeline == VK_NULL_HANDLE || model->index_count == 0) {
@@ -804,12 +802,29 @@ int cj_rgraph_model_prepass(
   CJellyMat4 world =
       cjelly_mat4_multiply(tilt, cjelly_mat4_multiply(spin, recentre));
 
-  const float eye[3] = {0.0f, 0.0f, model->camera_distance};
+  // The projection is built for the window's shape, not the target's. The
+  // target is square and gets stretched to fill the window, so projecting for
+  // the window pre-distorts the image by exactly the amount that stretch
+  // undoes. Projecting for the square instead leaves the model squashed by
+  // the window's aspect ratio - which is also why this cannot be a constant:
+  // the same window description produces different client areas on different
+  // platforms.
+  if (!(aspect > 0.0f)) {
+    aspect = 1.0f;
+  }
+  const float fovy = 0.7853981634f;
+
+  // Reframe for that aspect too, so the model still fits along whichever axis
+  // is the tighter one.
+  float distance =
+      cjelly_camera_distance_for_sphere(model->radius, fovy, aspect) * 1.15f;
+
+  const float eye[3] = {0.0f, 0.0f, distance};
   const float target[3] = {0.0f, 0.0f, 0.0f};
   const float up[3] = {0.0f, 1.0f, 0.0f};
   CJellyMat4 view = cjelly_mat4_look_at(eye, target, up);
-  CJellyMat4 projection = cjelly_mat4_perspective(0.7853981634f, 1.0f,
-      model->camera_distance * 0.01f, model->camera_distance * 4.0f);
+  CJellyMat4 projection = cjelly_mat4_perspective(
+      fovy, aspect, distance * 0.01f, distance * 4.0f);
 
   CJellyMat4 mvp = cjelly_mat4_multiply(
       projection, cjelly_mat4_multiply(view, world));

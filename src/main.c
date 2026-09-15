@@ -443,8 +443,11 @@ int main(int argc, char ** argv) {
   cj_window_desc_t wdesc4 = wdesc1;
   wdesc4.title.ptr = "CJelly Window 4 (Model)";
   wdesc4.title.len = strlen(wdesc4.title.ptr);
-  wdesc4.width = 640;
-  wdesc4.height = 640;
+  /* Deliberately not square. The model renders into a square offscreen
+   * target that is stretched to fill the window, so a square window would
+   * hide any mistake in the aspect handling. */
+  wdesc4.width = 800;
+  wdesc4.height = 600;
   wdesc4.x = base_x + window_offset * 3;
   wdesc4.y = base_y + window_offset * 3;
 

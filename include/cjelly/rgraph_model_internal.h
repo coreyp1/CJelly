@@ -72,7 +72,10 @@ typedef struct cj_rgraph_model_node_t {
 
   /* What is being drawn, and where the camera sits to see it. */
   float center[3];
-  float camera_distance;
+  /* Radius of the mesh's bounding sphere. The camera distance follows from it
+   * and from the window's aspect ratio, so it is worked out per frame rather
+   * than stored. */
+  float radius;
   float base_color[4];
   float rotation;       /**< Radians about Y, advanced each frame. */
   float rotation_speed; /**< Radians per second. */
@@ -110,10 +113,14 @@ void cj_rgraph_model_destroy(
  * @param model The node data.
  * @param cmd The command buffer.
  * @param now_ms Current time, for the rotation.
+ * @param aspect Width divided by height of the window the target will be
+ *   stretched to fill. The projection is built for that shape rather than for
+ *   the square target, so the stretch cancels out instead of squashing the
+ *   model.
  * @return Non-zero on success.
  */
-int cj_rgraph_model_prepass(
-    cj_rgraph_model_node_t * model, VkCommandBuffer cmd, uint64_t now_ms);
+int cj_rgraph_model_prepass(cj_rgraph_model_node_t * model,
+    VkCommandBuffer cmd, uint64_t now_ms, float aspect);
 
 /**
  * @brief Composite the offscreen target into the window.

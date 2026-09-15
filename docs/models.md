@@ -56,11 +56,21 @@ with a render pass of its own, and composites the result into the window as a
 textured quad.
 
 That is purely additive: nothing that already renders changes. The costs are
-one full-screen blit per frame, and an offscreen target of a fixed
-1024×1024 rather than the window's size, so a window with a very different
-aspect ratio stretches the image. Moving to a shared depth attachment would
+one full-screen blit per frame, and an offscreen target of a fixed 1024×1024
+rather than the window's size. Moving to a shared depth attachment would
 remove both, and is the right change to make once there is a second consumer
 for it.
+
+The fixed square target does not distort the model, because the projection is
+built for the **window's** aspect ratio rather than the target's. Projecting
+for the window pre-distorts the image by exactly the amount that stretching
+the square target to fill the window undoes. What the fixed size does cost is
+resolution: a window much larger than 1024 pixels in either direction is
+showing a magnified image.
+
+This is also why the demo's model window is deliberately not square. A square
+window cannot show an aspect-handling mistake, so it would let one back in
+unnoticed.
 
 ## The frame, in order
 
@@ -90,6 +100,23 @@ pointing down.
 Both are in `cjelly/mat4.h` and both are tested, which matters more than it
 looks: a sign error in a projection does not fail, it renders the model upside
 down or not at all, and there is no way to tell which from reading the code.
+
+## A cross-platform trap worth knowing about
+
+`Win32`'s `CreateWindowEx` sizes the **whole frame** and fits the client area
+inside it. X11's `XCreateSimpleWindow` sizes the **client area** and the window
+manager hangs its decoration outside. So the same `cj_window_desc_t` produces a
+smaller drawable on Windows than on Linux - by the height of a title bar and
+the width of two borders.
+
+That does not reach the rendering, because the swapchain is sized from
+`VkSurfaceCapabilitiesKHR::currentExtent`, which reports the drawable area on
+both platforms. It does reach anything that reasons about `desc->width` and
+`desc->height`, including where a cascade of windows lands.
+
+The size a caller asks for should mean the same thing everywhere. Making it so
+means calling `AdjustWindowRectEx()` on the Win32 path to grow the requested
+size by the frame it will acquire.
 
 ## Limitations
 

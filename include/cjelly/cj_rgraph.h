@@ -110,9 +110,11 @@ CJ_API cj_result_t  cj_rgraph_add_model_node(cj_rgraph_t* graph, const char* nam
  *  @param graph The render graph.
  *  @param cmd Command buffer, with no render pass active.
  *  @param now_ms Current time in milliseconds, for time-based animation.
+ *  @param extent The window's extent, for nodes whose output is stretched to
+ *    fill it and which therefore have to know its shape.
  *  @return CJ_SUCCESS on success, or an error code.
  */
-CJ_API cj_result_t  cj_rgraph_execute_prepass(cj_rgraph_t* graph, VkCommandBuffer cmd, uint64_t now_ms);
+CJ_API cj_result_t  cj_rgraph_execute_prepass(cj_rgraph_t* graph, VkCommandBuffer cmd, uint64_t now_ms, VkExtent2D extent);
 
 /** Execute the render graph with the given command buffer and extent.
  *  @param graph The render graph to execute.

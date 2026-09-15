@@ -374,12 +374,16 @@ CJ_API cj_result_t cj_rgraph_add_model_node(cj_rgraph_t* graph, const char* name
 }
 
 /* Run whatever has to happen before the window's render pass begins. */
-CJ_API cj_result_t cj_rgraph_execute_prepass(cj_rgraph_t* graph, VkCommandBuffer cmd, uint64_t now_ms) {
+CJ_API cj_result_t cj_rgraph_execute_prepass(cj_rgraph_t* graph, VkCommandBuffer cmd, uint64_t now_ms, VkExtent2D extent) {
     if (!graph || !cmd) return CJ_E_INVALID_ARGUMENT;
+
+    float aspect = (extent.height > 0)
+        ? (float)extent.width / (float)extent.height
+        : 1.0f;
 
     for (cj_rgraph_node_t* node = graph->nodes; node; node = node->next) {
         if (node->type == CJ_RGRAPH_NODE_MODEL && node->data.model) {
-            if (!cj_rgraph_model_prepass(node->data.model, cmd, now_ms)) {
+            if (!cj_rgraph_model_prepass(node->data.model, cmd, now_ms, aspect)) {
                 return CJ_E_UNKNOWN;
             }
         }

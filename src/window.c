@@ -1323,6 +1323,22 @@ static void plat_createSwapChainForWindow(CJPlatformWindow * win) {
   uint32_t physical_width = (uint32_t)logical_to_physical((int32_t)win->width, win->dpi_scale);
   uint32_t physical_height = (uint32_t)logical_to_physical((int32_t)win->height, win->dpi_scale);
 
+  /* Prefer what the surface says it is, which is the drawable area rather
+   * than the size that was asked for. The two differ: Win32's CreateWindowEx
+   * sizes the whole frame and fits the client area inside it, while X11 sizes
+   * the client area and the window manager hangs the decoration outside, so
+   * the same window description produces a smaller drawable on Windows than
+   * on Linux. 0xFFFFFFFF means the surface has no opinion and the size is
+   * ours to choose.
+   *
+   * The clamp below happened to correct this, because drivers normally report
+   * minImageExtent == maxImageExtent == currentExtent for a windowed surface.
+   * Depending on that is depending on a coincidence. */
+  if (caps.currentExtent.width != 0xFFFFFFFFu) {
+    physical_width = caps.currentExtent.width;
+    physical_height = caps.currentExtent.height;
+  }
+
   /* Clamp to surface capabilities */
   if (physical_width < caps.minImageExtent.width) physical_width = caps.minImageExtent.width;
   if (physical_width > caps.maxImageExtent.width) physical_width = caps.maxImageExtent.width;
@@ -1852,7 +1868,7 @@ CJ_API cj_result_t cj_window_execute(cj_window_t* win) {
       /* Anything that renders into its own target has to be recorded before
        * the window's render pass begins, because a render pass cannot be
        * nested inside another. A graph with no such nodes records nothing. */
-      cj_rgraph_execute_prepass(win->render_graph, cmd, cj_window_now_ms());
+      cj_rgraph_execute_prepass(win->render_graph, cmd, cj_window_now_ms(), extent);
 
       /* Begin render pass for render graph */
       VkRenderPassBeginInfo renderPassInfo = {0};
