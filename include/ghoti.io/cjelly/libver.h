@@ -21,27 +21,35 @@
 /** Helper.  Concatenation needs two levels of expansion. */
 #define GHOTIIO_CJELLY_RENAME(a, b) GHOTIIO_CJELLY_RENAME_INNER(a, b)
 
+//-----------------------------------------------------------------------------
+// The Vulkan boundary
+//-----------------------------------------------------------------------------
+//
+// These three exist solely to fill in VkApplicationInfo. Everything else uses
+// CJ_VERSION_NUMBER below. They carry VK in the name because the difference
+// matters: this packing is not the suite's.
+
 /**
- * Pack a version the way Vulkan does, for the Vulkan boundary only.
+ * Pack a version the way Vulkan does.
  *
- * Everything else in the suite uses CJ_MAKE_VERSION below, which is one byte
- * per component. This one exists because VkApplicationInfo::engineVersion is
- * decoded by the loader and by tools such as vulkaninfo and RenderDoc with
- * VK_VERSION_MAJOR and friends, so it has to be in their layout to display
- * correctly. Do not use it for anything else.
+ * VkApplicationInfo::engineVersion is decoded by the loader and by tools such
+ * as vulkaninfo and RenderDoc with VK_VERSION_MAJOR and friends, so it has to
+ * be in their layout to display correctly. Use CJ_MAKE_VERSION for anything
+ * that is not handed to Vulkan.
  *
  * The numbers come from libver_gen.h, not from here.
  */
-#define CJELLY_MAKE_VERSION(major, minor, patch)                               \
+#define CJ_VK_MAKE_VERSION(major, minor, patch)                                \
   ((((uint32_t)(major)) << 22) | (((uint32_t)(minor)) << 12) |                 \
       ((uint32_t)(patch)))
 
-/** This build's version, packed for VkApplicationInfo::engineVersion. */
-#define CJELLY_VERSION_UINT32                                                  \
-  CJELLY_MAKE_VERSION(GHOTIIO_CJELLY_VERSION_MAJOR,                            \
+/** This build's version, for VkApplicationInfo::engineVersion. */
+#define CJ_VK_ENGINE_VERSION                                                   \
+  CJ_VK_MAKE_VERSION(GHOTIIO_CJELLY_VERSION_MAJOR,                             \
       GHOTIIO_CJELLY_VERSION_MINOR, GHOTIIO_CJELLY_VERSION_PATCH)
 
-#define CJELLY_ENGINE_NAME "Ghoti.io CJelly"
+/** This engine's name, for VkApplicationInfo::pEngineName. */
+#define CJ_VK_ENGINE_NAME "Ghoti.io CJelly"
 
 
 //-----------------------------------------------------------------------------

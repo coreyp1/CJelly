@@ -624,8 +624,8 @@ CJ_API CJellyApplicationError cjelly_application_init(CJellyApplication * app) {
   appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
   appInfo.pApplicationName = app->appName;
   appInfo.applicationVersion = app->appVersion;
-  appInfo.pEngineName = CJELLY_ENGINE_NAME;
-  appInfo.engineVersion = CJELLY_VERSION_UINT32;
+  appInfo.pEngineName = CJ_VK_ENGINE_NAME;
+  appInfo.engineVersion = CJ_VK_ENGINE_VERSION;
   appInfo.apiVersion = app->options.requiredVulkanVersion;
 
   VkInstanceCreateInfo instanceCreateInfo = {0};
