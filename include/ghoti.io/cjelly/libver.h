@@ -21,12 +21,24 @@
 /** Helper.  Concatenation needs two levels of expansion. */
 #define GHOTIIO_CJELLY_RENAME(a, b) GHOTIIO_CJELLY_RENAME_INNER(a, b)
 
+/**
+ * Pack a version into the single integer Vulkan expects.
+ *
+ * This is the encoder only; the numbers come from libver_gen.h, which the
+ * Makefile writes from MAJOR_VERSION and MINOR_VERSION.  They used to be
+ * written out here as CJELLY_MAKE_VERSION(0, 0, 0), which was correct only for
+ * as long as nobody bumped the Makefile: the soname, the .pc Version and the
+ * install directory would all have moved while Vulkan kept being told 0.0.0.
+ */
 #define CJELLY_MAKE_VERSION(major, minor, patch)                               \
   ((((uint32_t)(major)) << 22) | (((uint32_t)(minor)) << 12) |                 \
       ((uint32_t)(patch)))
 
-#define CJELLY_VERSION_STRING "0.0.0"
-#define CJELLY_VERSION_UINT32 CJELLY_MAKE_VERSION(0, 0, 0)
+/** This build's version, packed for VkApplicationInfo::engineVersion. */
+#define CJELLY_VERSION_UINT32                                                  \
+  CJELLY_MAKE_VERSION(GHOTIIO_CJELLY_VERSION_MAJOR,                            \
+      GHOTIIO_CJELLY_VERSION_MINOR, GHOTIIO_CJELLY_VERSION_PATCH)
+
 #define CJELLY_ENGINE_NAME "Ghoti.io CJelly"
 
 #endif // GHOTI_IO_CJ_LIBVER_H

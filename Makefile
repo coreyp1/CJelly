@@ -19,6 +19,13 @@ MINOR_VERSION := 0.0
 # Substituted into the .pc file; an empty Version: field makes every
 # pkg-config version constraint fail.
 VERSION := $(MAJOR_VERSION).$(MINOR_VERSION)
+# Vulkan wants the version as a packed integer, not a string, so the three
+# components have to be available separately. MINOR_VERSION carries the minor
+# and the patch as one dotted string, matching the other six libraries, so it
+# is split here rather than being stored as two variables that could disagree.
+# The patch defaults to 0 for a MINOR_VERSION written without one.
+VERSION_MINOR_ONLY := $(word 1,$(subst ., ,$(MINOR_VERSION)))
+VERSION_PATCH_ONLY := $(or $(word 2,$(subst ., ,$(MINOR_VERSION))),0)
 SO_NAME := $(BASE_NAME).$(MAJOR_VERSION)
 ENV_VARS :=
 
@@ -305,6 +312,14 @@ $(LIBVER_GEN): Makefile
 		'' \
 		'/** The symbol namespace for this build, from the Makefile'"'"'s BRANCH. */' \
 		'#define GHOTIIO_CJELLY_NAME $(LIBVER_SYMBOL)' \
+		'' \
+		'/** Human-readable version of this build. */' \
+		'#define GHOTIIO_CJELLY_VERSION "$(MAJOR_VERSION).$(MINOR_VERSION)$(BRANCH)"' \
+		'' \
+		'/** The same version as three integers, for Vulkan'"'"'s packed form. */' \
+		'#define GHOTIIO_CJELLY_VERSION_MAJOR $(MAJOR_VERSION)' \
+		'#define GHOTIIO_CJELLY_VERSION_MINOR $(VERSION_MINOR_ONLY)' \
+		'#define GHOTIIO_CJELLY_VERSION_PATCH $(VERSION_PATCH_ONLY)' \
 		'' \
 		'#endif // GHOTI_IO_CJ_LIBVER_GEN_H' > $@
 
