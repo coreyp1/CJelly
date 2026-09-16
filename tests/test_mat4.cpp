@@ -11,7 +11,7 @@
  * Copyright 2026 by Corey Pennycuff
  */
 
-#include <cjelly/mat4.h>
+#include <ghoti.io/cjelly/mat4.h>
 #include <gtest/gtest.h>
 
 #include <cmath>

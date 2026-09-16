@@ -9,7 +9,8 @@
 #include <math.h>
 #include <string.h>
 
-#include <cjelly/mat4.h>
+#include <ghoti.io/cjelly/macros.h>
+#include <ghoti.io/cjelly/mat4.h>
 
 /** Index of the element at (row, column) in column-major order. */
 #define AT(col, row) ((col) * 4 + (row))

@@ -17,11 +17,12 @@
 // cjelly/macros.h, reached through application.h, defines _POSIX_C_SOURCE.
 // It has to be seen before any system header is pulled in, so the CJelly
 // includes come first and everything else follows.
-#include <cjelly/application.h>
-#include <cjelly/cj_window.h>
-#include <cjelly/window_internal.h>
+#include <ghoti.io/cjelly/macros.h>
+#include <ghoti.io/cjelly/application.h>
+#include <ghoti.io/cjelly/cj_window.h>
+#include <ghoti.io/cjelly/window_internal.h>
 
-#include <cutil/hash.h>
+#include <ghoti.io/cutil/hash.h>
 
 #include <assert.h>
 #include <stdint.h>
@@ -100,10 +101,10 @@ static size_t handle_hash(const void * handle) {
  * @return VkBool32 Always returns VK_FALSE.
  */
 static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
-    GCJ_MAYBE_UNUSED(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity),
-    GCJ_MAYBE_UNUSED(VkDebugUtilsMessageTypeFlagsEXT messageTypes),
+    CJ_MAYBE_UNUSED(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity),
+    CJ_MAYBE_UNUSED(VkDebugUtilsMessageTypeFlagsEXT messageTypes),
     const VkDebugUtilsMessengerCallbackDataEXT * pCallbackData,
-    GCJ_MAYBE_UNUSED(void * pUserData)) {
+    CJ_MAYBE_UNUSED(void * pUserData)) {
   fprintf(stderr, "Validation layer: %s\n", pCallbackData->pMessage);
   return VK_FALSE;
 }
@@ -1437,7 +1438,7 @@ CJ_API CJellyApplicationError cjelly_application_create_command_pools(
  * We must NOT destroy windows or free memory here - that would race with
  * the main loop which may be in the middle of rendering.
  */
-static BOOL WINAPI console_ctrl_handler(GCJ_MAYBE_UNUSED(DWORD dwCtrlType)) {
+static BOOL WINAPI console_ctrl_handler(CJ_MAYBE_UNUSED(DWORD dwCtrlType)) {
   CJellyApplication* app = cjelly_application_get_current();
   if (!app)
     return FALSE;
@@ -1453,7 +1454,7 @@ static BOOL WINAPI console_ctrl_handler(GCJ_MAYBE_UNUSED(DWORD dwCtrlType)) {
  * The main thread could be in the middle of malloc(), a Vulkan call, or
  * any other non-reentrant operation. We can ONLY set a flag here.
  */
-static void default_signal_handler(GCJ_MAYBE_UNUSED(int sig)) {
+static void default_signal_handler(CJ_MAYBE_UNUSED(int sig)) {
   CJellyApplication* app = cjelly_application_get_current();
   if (!app)
     return;

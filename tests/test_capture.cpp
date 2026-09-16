@@ -12,7 +12,7 @@
  */
 
 #include "test_helpers.h"
-#include <cjelly/cj_capture.h>
+#include <ghoti.io/cjelly/cj_capture.h>
 #include <gtest/gtest.h>
 
 #include <ghoti.io/image/codec.h>

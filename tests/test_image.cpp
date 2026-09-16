@@ -14,7 +14,7 @@
  */
 
 #include "test_helpers.h"
-#include <cjelly/format/image.h>
+#include <ghoti.io/cjelly/format/image.h>
 #include <gtest/gtest.h>
 #include <string>
 #include <vector>

@@ -1,6 +1,7 @@
 #include <stdint.h>
-#include <cjelly/cj_result.h>
-#include <cjelly/cj_version.h>
+#include <ghoti.io/cjelly/macros.h>
+#include <ghoti.io/cjelly/cj_result.h>
+#include <ghoti.io/cjelly/cj_version.h>
 
 CJ_API const char* cj_result_str(cj_result_t r) {
   switch (r) {

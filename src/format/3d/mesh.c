@@ -10,9 +10,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <cutil/array.h>
+#include <ghoti.io/cutil/array.h>
 
-#include <cjelly/format/3d/mesh.h>
+#include <ghoti.io/cjelly/macros.h>
+#include <ghoti.io/cjelly/format/3d/mesh.h>
 
 /** One corner of a face, as the OBJ describes it. */
 typedef struct {

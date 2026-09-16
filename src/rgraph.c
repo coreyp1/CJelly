@@ -5,15 +5,16 @@
 #include <stdio.h>
 #include <math.h>
 
-#include <cjelly/cj_rgraph.h>
-#include <cjelly/cj_engine.h>
-#include <cjelly/cj_resources.h>
-#include <cjelly/cj_result.h>
-#include <cjelly/cj_types.h>
-#include <cjelly/engine_internal.h>
-#include <cjelly/rgraph_model_internal.h>
-#include <cjelly/textured_internal.h>
-#include <cjelly/bindless_internal.h>
+#include <ghoti.io/cjelly/macros.h>
+#include <ghoti.io/cjelly/cj_rgraph.h>
+#include <ghoti.io/cjelly/cj_engine.h>
+#include <ghoti.io/cjelly/cj_resources.h>
+#include <ghoti.io/cjelly/cj_result.h>
+#include <ghoti.io/cjelly/cj_types.h>
+#include <ghoti.io/cjelly/engine_internal.h>
+#include <ghoti.io/cjelly/rgraph_model_internal.h>
+#include <ghoti.io/cjelly/textured_internal.h>
+#include <ghoti.io/cjelly/bindless_internal.h>
 #include <shaders/blur.vert.h>
 #include <shaders/blur.frag.h>
 #include <shaders/textured.vert.h>

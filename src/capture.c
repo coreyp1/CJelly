@@ -20,9 +20,10 @@
 #include <vulkan/vulkan.h>
 #endif
 
-#include <cjelly/cj_capture.h>
-#include <cjelly/engine_internal.h>
-#include <cjelly/window_internal.h>
+#include <ghoti.io/cjelly/macros.h>
+#include <ghoti.io/cjelly/cj_capture.h>
+#include <ghoti.io/cjelly/engine_internal.h>
+#include <ghoti.io/cjelly/window_internal.h>
 
 #include <ghoti.io/image/codec.h>
 #include <ghoti.io/image/doc.h>

@@ -1,9 +1,10 @@
 #include <string.h>
-#include <cjelly/cj_resources.h>
-#include <cjelly/cj_types.h>
-#include <cjelly/cj_engine.h>
-#include <cjelly/engine_internal.h>
-#include <cjelly/resource_helpers_internal.h>
+#include <ghoti.io/cjelly/macros.h>
+#include <ghoti.io/cjelly/cj_resources.h>
+#include <ghoti.io/cjelly/cj_types.h>
+#include <ghoti.io/cjelly/cj_engine.h>
+#include <ghoti.io/cjelly/engine_internal.h>
+#include <ghoti.io/cjelly/resource_helpers_internal.h>
 
 static inline cj_handle_t make_handle_from_pair(uint32_t idx, uint32_t gen) { cj_handle_t out; out.idx = idx; out.gen = gen; return out; }
 

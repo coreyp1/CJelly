@@ -29,19 +29,19 @@
 #endif
 #endif
 
-#include <cjelly/cjelly.h>
-#include <cjelly/runtime.h>
-#include <cjelly/application.h>
-#include <cjelly/cj_window.h>
-#include <cjelly/window_internal.h>
-#include <cjelly/engine_internal.h>
-#include <cjelly/cj_input.h>
-#include <cjelly/bindless_internal.h>
-#include <cjelly/textured_internal.h>
-#include <cjelly/bindless_state_internal.h>
-#include <cjelly/basic_state_internal.h>
-#include <cjelly/format/image.h>
-#include <cjelly/macros.h>
+#include <ghoti.io/cjelly/cjelly.h>
+#include <ghoti.io/cjelly/runtime.h>
+#include <ghoti.io/cjelly/application.h>
+#include <ghoti.io/cjelly/cj_window.h>
+#include <ghoti.io/cjelly/window_internal.h>
+#include <ghoti.io/cjelly/engine_internal.h>
+#include <ghoti.io/cjelly/cj_input.h>
+#include <ghoti.io/cjelly/bindless_internal.h>
+#include <ghoti.io/cjelly/textured_internal.h>
+#include <ghoti.io/cjelly/bindless_state_internal.h>
+#include <ghoti.io/cjelly/basic_state_internal.h>
+#include <ghoti.io/cjelly/format/image.h>
+#include <ghoti.io/cjelly/macros.h>
 #ifdef _WIN32
 #include <windows.h>
 #include <vulkan/vulkan_win32.h>
@@ -870,10 +870,10 @@ uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
 
 // Debug callback function for validation layers.
 VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
-    GCJ_MAYBE_UNUSED(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity),
-    GCJ_MAYBE_UNUSED(VkDebugUtilsMessageTypeFlagsEXT messageTypes),
+    CJ_MAYBE_UNUSED(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity),
+    CJ_MAYBE_UNUSED(VkDebugUtilsMessageTypeFlagsEXT messageTypes),
     const VkDebugUtilsMessengerCallbackDataEXT * pCallbackData,
-    GCJ_MAYBE_UNUSED(void * pUserData)) {
+    CJ_MAYBE_UNUSED(void * pUserData)) {
 
   if (getenv("CJELLY_DEBUG")) fprintf(stderr, "Validation layer: %s\n", pCallbackData->pMessage);
   return VK_FALSE;
@@ -2617,7 +2617,7 @@ void endSingleTimeCommands(VkCommandBuffer commandBuffer) {
   vkFreeCommandBuffers(cur_device(), cur_cmd_pool(), 1, &commandBuffer);
 }
 
-void transitionImageLayout(VkImage image, GCJ_MAYBE_UNUSED(VkFormat format),
+void transitionImageLayout(VkImage image, CJ_MAYBE_UNUSED(VkFormat format),
     VkImageLayout oldLayout, VkImageLayout newLayout) {
   VkCommandBuffer commandBuffer = beginSingleTimeCommands();
 

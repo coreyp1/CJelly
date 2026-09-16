@@ -3,8 +3,8 @@
  * @brief Implementation of input-related utility functions.
  */
 
-#include <cjelly/cj_input.h>
-#include <cjelly/cj_macros.h>
+#include <ghoti.io/cjelly/cj_input.h>
+#include <ghoti.io/cjelly/macros.h>
 
 /** Convert a keycode to a human-readable string.
  *  @param keycode The keycode to convert.

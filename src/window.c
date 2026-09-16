@@ -27,16 +27,17 @@ extern Display* display; /* provided by main on Linux */
 #include <stdint.h>
 #include <time.h>
 #include <stdbool.h>
-#include <cjelly/cj_window.h>
-#include <cjelly/cj_platform.h>
-#include <cjelly/runtime.h>
-#include <cjelly/application.h>
-#include <cjelly/engine_internal.h>
-#include <cjelly/bindless_internal.h>
-#include <cjelly/textured_internal.h>
-#include <cjelly/cj_rgraph.h>
-#include <cjelly/window_internal.h>
-#include <cjelly/cj_input.h>
+#include <ghoti.io/cjelly/macros.h>
+#include <ghoti.io/cjelly/cj_window.h>
+#include <ghoti.io/cjelly/cj_platform.h>
+#include <ghoti.io/cjelly/runtime.h>
+#include <ghoti.io/cjelly/application.h>
+#include <ghoti.io/cjelly/engine_internal.h>
+#include <ghoti.io/cjelly/bindless_internal.h>
+#include <ghoti.io/cjelly/textured_internal.h>
+#include <ghoti.io/cjelly/cj_rgraph.h>
+#include <ghoti.io/cjelly/window_internal.h>
+#include <ghoti.io/cjelly/cj_input.h>
 
 /* Forward declarations */
 typedef struct CJPlatformWindow CJPlatformWindow;
@@ -1631,12 +1632,12 @@ static void plat_cleanupWindow(CJPlatformWindow * win) {
 #include <string.h>
 #include <stdint.h>
 #include <stdbool.h>
-#include <cjelly/cj_window.h>
-#include <cjelly/cj_platform.h>
-#include <cjelly/runtime.h>
-#include <cjelly/engine_internal.h>
-#include <cjelly/bindless_internal.h>
-#include <cjelly/textured_internal.h>
+#include <ghoti.io/cjelly/cj_window.h>
+#include <ghoti.io/cjelly/cj_platform.h>
+#include <ghoti.io/cjelly/runtime.h>
+#include <ghoti.io/cjelly/engine_internal.h>
+#include <ghoti.io/cjelly/bindless_internal.h>
+#include <ghoti.io/cjelly/textured_internal.h>
 
 /* textured pipeline helper (defined in cjelly.c) */
 void cjelly_init_textured_pipeline_ctx(const CJellyVulkanContext* ctx);

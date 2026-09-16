@@ -11,9 +11,10 @@
 #include <stdio.h>
 #include <string.h>
 
-#include <cjelly/engine_internal.h>
-#include <cjelly/mat4.h>
-#include <cjelly/rgraph_model_internal.h>
+#include <ghoti.io/cjelly/macros.h>
+#include <ghoti.io/cjelly/engine_internal.h>
+#include <ghoti.io/cjelly/mat4.h>
+#include <ghoti.io/cjelly/rgraph_model_internal.h>
 
 #include "shaders/model.vert.h"
 #include "shaders/model.frag.h"

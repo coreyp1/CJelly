@@ -6,12 +6,12 @@
 #include <time.h>
 #include <math.h>
 
-#include <cjelly/application.h>
-#include <cjelly/macros.h>
+#include <ghoti.io/cjelly/application.h>
+#include <ghoti.io/cjelly/macros.h>
 
-#include <cjelly/cj_capture.h>
-#include <cjelly/format/3d/mesh.h>
-#include <cjelly/format/image.h>
+#include <ghoti.io/cjelly/cj_capture.h>
+#include <ghoti.io/cjelly/format/3d/mesh.h>
+#include <ghoti.io/cjelly/format/image.h>
 
 
 #ifdef _WIN32
@@ -36,14 +36,14 @@ uint64_t getCurrentTimeInMilliseconds(void) {
 }
 #endif
 
-#include <cjelly/cjelly.h>
-#include <cjelly/runtime.h>
-#include <cjelly/cj_engine.h>
-#include <cjelly/cj_window.h>
-#include <cjelly/cj_rgraph.h>
-#include <cjelly/cj_input.h>
-#include <cjelly/engine_internal.h>
-#include <cjelly/bindless_internal.h>
+#include <ghoti.io/cjelly/cjelly.h>
+#include <ghoti.io/cjelly/runtime.h>
+#include <ghoti.io/cjelly/cj_engine.h>
+#include <ghoti.io/cjelly/cj_window.h>
+#include <ghoti.io/cjelly/cj_rgraph.h>
+#include <ghoti.io/cjelly/cj_input.h>
+#include <ghoti.io/cjelly/engine_internal.h>
+#include <ghoti.io/cjelly/bindless_internal.h>
 
 /* Demo uses window API now; per-window rendering is managed internally */
 
@@ -65,8 +65,8 @@ typedef struct Window3Context {
   uint64_t last_tick_ms;
 } Window3Context;
 
-static cj_frame_result_t window1_on_frame(GCJ_MAYBE_UNUSED(cj_window_t* window),
-                                          GCJ_MAYBE_UNUSED(const cj_frame_info_t* frame),
+static cj_frame_result_t window1_on_frame(CJ_MAYBE_UNUSED(cj_window_t* window),
+                                          CJ_MAYBE_UNUSED(const cj_frame_info_t* frame),
                                           void* user_data) {
   Window1Context* ctx = (Window1Context*)user_data;
   if (!ctx || !ctx->colorOnly) return CJ_FRAME_SKIP;
@@ -87,8 +87,8 @@ static cj_frame_result_t window1_on_frame(GCJ_MAYBE_UNUSED(cj_window_t* window),
   return CJ_FRAME_CONTINUE;
 }
 
-static cj_frame_result_t window3_on_frame(GCJ_MAYBE_UNUSED(cj_window_t* window),
-                                          GCJ_MAYBE_UNUSED(const cj_frame_info_t* frame),
+static cj_frame_result_t window3_on_frame(CJ_MAYBE_UNUSED(cj_window_t* window),
+                                          CJ_MAYBE_UNUSED(const cj_frame_info_t* frame),
                                           void* user_data) {
   Window3Context* ctx = (Window3Context*)user_data;
   if (!ctx || !ctx->graph3) return CJ_FRAME_SKIP;
@@ -125,8 +125,8 @@ typedef struct CaptureContext {
   int frames_remaining;
 } CaptureContext;
 
-static cj_frame_result_t capture_on_frame(GCJ_MAYBE_UNUSED(cj_window_t* window),
-                                          GCJ_MAYBE_UNUSED(const cj_frame_info_t* frame),
+static cj_frame_result_t capture_on_frame(CJ_MAYBE_UNUSED(cj_window_t* window),
+                                          CJ_MAYBE_UNUSED(const cj_frame_info_t* frame),
                                           void* user_data) {
   CaptureContext* ctx = (CaptureContext*)user_data;
   if (!ctx || !ctx->directory) return CJ_FRAME_CONTINUE;
@@ -157,7 +157,7 @@ static cj_frame_result_t capture_on_frame(GCJ_MAYBE_UNUSED(cj_window_t* window),
 }
 
 /* Resize callbacks for all three windows */
-static void window1_on_resize(cj_window_t* window, uint32_t new_width, uint32_t new_height, GCJ_MAYBE_UNUSED(void* user_data)) {
+static void window1_on_resize(cj_window_t* window, uint32_t new_width, uint32_t new_height, CJ_MAYBE_UNUSED(void* user_data)) {
   printf("Window 1 resized to %ux%u\n", new_width, new_height);
   /* Note: Swapchain recreation would happen here in a full implementation.
    * For now, we just notify. The viewport will update automatically when
@@ -166,17 +166,17 @@ static void window1_on_resize(cj_window_t* window, uint32_t new_width, uint32_t 
   (void)window;  /* Suppress unused warning */
 }
 
-static void window2_on_resize(cj_window_t* window, uint32_t new_width, uint32_t new_height, GCJ_MAYBE_UNUSED(void* user_data)) {
+static void window2_on_resize(cj_window_t* window, uint32_t new_width, uint32_t new_height, CJ_MAYBE_UNUSED(void* user_data)) {
   printf("Window 2 resized to %ux%u\n", new_width, new_height);
   (void)window;  /* Suppress unused warning */
 }
 
-static void window3_on_resize(cj_window_t* window, uint32_t new_width, uint32_t new_height, GCJ_MAYBE_UNUSED(void* user_data)) {
+static void window3_on_resize(cj_window_t* window, uint32_t new_width, uint32_t new_height, CJ_MAYBE_UNUSED(void* user_data)) {
   printf("Window 3 resized to %ux%u\n", new_width, new_height);
   (void)window;  /* Suppress unused warning */
 }
 
-static void window1_on_key(cj_window_t* window, const cj_key_event_t* event, GCJ_MAYBE_UNUSED(void* user_data)) {
+static void window1_on_key(cj_window_t* window, const cj_key_event_t* event, CJ_MAYBE_UNUSED(void* user_data)) {
   const char* action_str = (event->action == CJ_KEY_ACTION_DOWN) ? "DOWN" :
                            (event->action == CJ_KEY_ACTION_UP) ? "UP" : "REPEAT";
   const char* key_str = cj_keycode_to_string(event->keycode);
@@ -228,7 +228,7 @@ static void print_modifiers(cj_modifiers_t modifiers) {
   if (modifiers & CJ_MOD_NUM) { printf("%sNUM", first ? "" : "+"); first = false; }
 }
 
-static void window1_on_mouse(cj_window_t* window, const cj_mouse_event_t* event, GCJ_MAYBE_UNUSED(void* user_data)) {
+static void window1_on_mouse(cj_window_t* window, const cj_mouse_event_t* event, CJ_MAYBE_UNUSED(void* user_data)) {
   (void)window;  /* Suppress unused warning */
   const char* type_str = mouse_event_type_to_string(event->type);
 
@@ -252,7 +252,7 @@ static void window1_on_mouse(cj_window_t* window, const cj_mouse_event_t* event,
   }
 }
 
-static void window2_on_mouse(cj_window_t* window, const cj_mouse_event_t* event, GCJ_MAYBE_UNUSED(void* user_data)) {
+static void window2_on_mouse(cj_window_t* window, const cj_mouse_event_t* event, CJ_MAYBE_UNUSED(void* user_data)) {
   (void)window;  /* Suppress unused warning */
   const char* type_str = mouse_event_type_to_string(event->type);
 
@@ -276,7 +276,7 @@ static void window2_on_mouse(cj_window_t* window, const cj_mouse_event_t* event,
   }
 }
 
-static void window3_on_mouse(cj_window_t* window, const cj_mouse_event_t* event, GCJ_MAYBE_UNUSED(void* user_data)) {
+static void window3_on_mouse(cj_window_t* window, const cj_mouse_event_t* event, CJ_MAYBE_UNUSED(void* user_data)) {
   (void)window;  /* Suppress unused warning */
   const char* type_str = mouse_event_type_to_string(event->type);
 
@@ -300,19 +300,19 @@ static void window3_on_mouse(cj_window_t* window, const cj_mouse_event_t* event,
   }
 }
 
-static void window1_on_focus(cj_window_t* window, const cj_focus_event_t* event, GCJ_MAYBE_UNUSED(void* user_data)) {
+static void window1_on_focus(cj_window_t* window, const cj_focus_event_t* event, CJ_MAYBE_UNUSED(void* user_data)) {
   (void)window;  /* Suppress unused warning */
   const char* action_str = (event->action == CJ_FOCUS_GAINED) ? "GAINED" : "LOST";
   printf("Window 1: Focus %s\n", action_str);
 }
 
-static void window2_on_focus(cj_window_t* window, const cj_focus_event_t* event, GCJ_MAYBE_UNUSED(void* user_data)) {
+static void window2_on_focus(cj_window_t* window, const cj_focus_event_t* event, CJ_MAYBE_UNUSED(void* user_data)) {
   (void)window;  /* Suppress unused warning */
   const char* action_str = (event->action == CJ_FOCUS_GAINED) ? "GAINED" : "LOST";
   printf("Window 2: Focus %s\n", action_str);
 }
 
-static void window3_on_focus(cj_window_t* window, const cj_focus_event_t* event, GCJ_MAYBE_UNUSED(void* user_data)) {
+static void window3_on_focus(cj_window_t* window, const cj_focus_event_t* event, CJ_MAYBE_UNUSED(void* user_data)) {
   (void)window;  /* Suppress unused warning */
   const char* action_str = (event->action == CJ_FOCUS_GAINED) ? "GAINED" : "LOST";
   printf("Window 3: Focus %s\n", action_str);

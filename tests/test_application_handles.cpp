@@ -17,9 +17,9 @@
 // those names; the other way round the test does not compile.
 #include <gtest/gtest.h>
 
-#include <cjelly/application.h>
+#include <ghoti.io/cjelly/application.h>
 
-#include <cutil/hash.h>
+#include <ghoti.io/cutil/hash.h>
 #include <cstdint>
 #include <set>
 #include <vector>

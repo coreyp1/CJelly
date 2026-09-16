@@ -11,7 +11,7 @@
  */
 
 #include "test_helpers.h"
-#include <cjelly/format/3d/mesh.h>
+#include <ghoti.io/cjelly/format/3d/mesh.h>
 #include <gtest/gtest.h>
 
 #include <cmath>

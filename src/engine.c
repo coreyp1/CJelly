@@ -4,17 +4,18 @@
 #include <stdbool.h>
 #include <stdio.h>
 
-#include <cjelly/cj_engine.h>
-#include <cjelly/engine_internal.h>
-#include <cjelly/runtime.h>
+#include <ghoti.io/cjelly/macros.h>
+#include <ghoti.io/cjelly/cj_engine.h>
+#include <ghoti.io/cjelly/engine_internal.h>
+#include <ghoti.io/cjelly/runtime.h>
 #include <vulkan/vulkan.h>
-#include <cjelly/textured_internal.h>
-#include <cjelly/bindless_internal.h>
-#include <cjelly/bindless_state_internal.h>
-#include <cjelly/basic_state_internal.h>
-#include <cjelly/cj_handle.h>
-#include <cjelly/cj_resources.h>
-#include <cjelly/resource_helpers_internal.h>
+#include <ghoti.io/cjelly/textured_internal.h>
+#include <ghoti.io/cjelly/bindless_internal.h>
+#include <ghoti.io/cjelly/bindless_state_internal.h>
+#include <ghoti.io/cjelly/basic_state_internal.h>
+#include <ghoti.io/cjelly/cj_handle.h>
+#include <ghoti.io/cjelly/cj_resources.h>
+#include <ghoti.io/cjelly/resource_helpers_internal.h>
 
 // Generated shader headers - use extern declarations to avoid multiple definitions
 extern unsigned char color_vert_spv[];

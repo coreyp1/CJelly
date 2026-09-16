@@ -23,7 +23,8 @@
 #include <ghoti.io/image/raster.h>
 #include <ghoti.io/image/stream.h>
 
-#include <cjelly/format/image.h>
+#include <ghoti.io/cjelly/macros.h>
+#include <ghoti.io/cjelly/format/image.h>
 
 /** Translate an image library result into the CJelly error enum. */
 static CJellyFormatImageError from_gimg(GIMG_Result r) {

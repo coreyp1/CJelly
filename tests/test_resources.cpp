@@ -13,9 +13,9 @@
  */
 
 #include "test_helpers.h"
-#include <cjelly/cj_engine.h>
-#include <cjelly/cj_handle.h>
-#include <cjelly/engine_internal.h>
+#include <ghoti.io/cjelly/cj_engine.h>
+#include <ghoti.io/cjelly/cj_handle.h>
+#include <ghoti.io/cjelly/engine_internal.h>
 #include <gtest/gtest.h>
 #include <set>
 #include <vector>

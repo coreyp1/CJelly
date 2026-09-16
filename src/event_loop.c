@@ -6,11 +6,11 @@
 #endif
 #endif
 
-#include <cjelly/runtime.h>
-#include <cjelly/cj_window.h>
-#include <cjelly/application.h>
-#include <cjelly/window_internal.h>
-#include <cjelly/macros.h>
+#include <ghoti.io/cjelly/runtime.h>
+#include <ghoti.io/cjelly/cj_window.h>
+#include <ghoti.io/cjelly/application.h>
+#include <ghoti.io/cjelly/window_internal.h>
+#include <ghoti.io/cjelly/macros.h>
 
 #include <stdint.h>
 #include <stdlib.h>
