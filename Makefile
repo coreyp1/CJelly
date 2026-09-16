@@ -2,10 +2,41 @@ SUITE := ghoti.io
 PROJECT := cjelly
 
 BUILD ?= release
-BRANCH := -dev
-# If BUILD is debug, append -debug
+# The version of this library. MINOR_VERSION carries the minor and the patch as
+# one dotted string; the two are split out below for the places that need three
+# separate integers. See CONVENTIONS.md section 4.
+MAJOR_VERSION := 0
+MINOR_VERSION := 0.0
+VERSION_MINOR_ONLY := $(word 1,$(subst ., ,$(MINOR_VERSION)))
+VERSION_PATCH_ONLY := $(or $(word 2,$(subst ., ,$(MINOR_VERSION))),0)
+# Substituted into the .pc file; an empty Version: field makes every
+# pkg-config version constraint fail.
+VERSION := $(MAJOR_VERSION).$(MINOR_VERSION)
+
+# Names this build everywhere: the .pc file, the install directory, the soname
+# and the symbol token. It defaults to the major version, so an ordinary build
+# of 1.x is "-1" and two majors cannot be loaded into one process by mistake.
+# Override it for a build that wants its own identity:  make BRANCH=-dev
+BRANCH ?= -$(MAJOR_VERSION)
+
+# What the library reports as its version. The branch is appended only when it
+# is not the default, so an ordinary build says "1.2.3" and an overridden one
+# says "1.2.3-dev". Computed before BUILD=debug rewrites BRANCH below.
+ifeq ($(BRANCH),-$(MAJOR_VERSION))
+VERSION_STRING := $(VERSION)
+else
+VERSION_STRING := $(VERSION)$(BRANCH)
+endif
+
+# If BUILD is debug, append -debug.
+#
+# "override" because BRANCH may have come from the command line, and a
+# command-line variable otherwise wins over a plain assignment here: without it
+# `make BRANCH=-dev BUILD=debug` produced a debug build carrying the release
+# token, whose symbols collide with the release build's.
 ifeq ($(BUILD),debug)
-    BRANCH := $(BRANCH)-debug
+    override BRANCH := $(BRANCH)-debug
+    override VERSION_STRING := $(VERSION_STRING)-debug
 endif
 
 BASE_NAME := lib$(SUITE)-$(PROJECT)$(BRANCH).so
@@ -14,18 +45,6 @@ LIBVER_SYMBOL := $(shell echo "ghotiio_$(PROJECT)$(BRANCH)" | sed 's/[.-]/_/g')
 
 BASE_NAME_PREFIX := lib$(SUITE)-$(PROJECT)$(BRANCH)
 STATIC_TARGET := $(BASE_NAME_PREFIX).a
-MAJOR_VERSION := 0
-MINOR_VERSION := 0.0
-# Substituted into the .pc file; an empty Version: field makes every
-# pkg-config version constraint fail.
-VERSION := $(MAJOR_VERSION).$(MINOR_VERSION)
-# Vulkan wants the version as a packed integer, not a string, so the three
-# components have to be available separately. MINOR_VERSION carries the minor
-# and the patch as one dotted string, matching the other six libraries, so it
-# is split here rather than being stored as two variables that could disagree.
-# The patch defaults to 0 for a MINOR_VERSION written without one.
-VERSION_MINOR_ONLY := $(word 1,$(subst ., ,$(MINOR_VERSION)))
-VERSION_PATCH_ONLY := $(or $(word 2,$(subst ., ,$(MINOR_VERSION))),0)
 SO_NAME := $(BASE_NAME).$(MAJOR_VERSION)
 ENV_VARS :=
 
@@ -119,7 +138,6 @@ endif
 # root anyway. Everything built here carries an rpath to the prefix instead.
 LDCONF_INSTALL_PATH :=
 endif
-
 
 
 CXX := g++
@@ -300,7 +318,15 @@ DEPFILES := $(LIBOBJECTS:.o=.d)
 
 LIBVER_GEN := $(GEN_DIR)/ghoti.io/cjelly/libver_gen.h
 
-$(LIBVER_GEN): Makefile
+# libver_gen.h is regenerated on every build and rewritten only when its content
+# changes, so a variable given on the command line - make MAJOR_VERSION=2, or
+# make BRANCH=-dev - takes effect. Keying the rule on the Makefile's timestamp
+# alone left the previous token and version baked into the build, and nothing
+# said so.
+.PHONY: force-libver
+force-libver:
+
+$(LIBVER_GEN): force-libver
 	@if [ -z "$(LIBVER_SYMBOL)" ]; then \
 		printf "### LIBVER_SYMBOL is empty ###\n" >&2; exit 1; \
 	fi
@@ -314,14 +340,15 @@ $(LIBVER_GEN): Makefile
 		'#define GHOTIIO_CJELLY_NAME $(LIBVER_SYMBOL)' \
 		'' \
 		'/** Human-readable version of this build. */' \
-		'#define GHOTIIO_CJELLY_VERSION "$(MAJOR_VERSION).$(MINOR_VERSION)$(BRANCH)"' \
+		'#define GHOTIIO_CJELLY_VERSION "$(VERSION_STRING)"' \
 		'' \
-		'/** The same version as three integers, for Vulkan'"'"'s packed form. */' \
+		'/** The same version as three integers. */' \
 		'#define GHOTIIO_CJELLY_VERSION_MAJOR $(MAJOR_VERSION)' \
 		'#define GHOTIIO_CJELLY_VERSION_MINOR $(VERSION_MINOR_ONLY)' \
 		'#define GHOTIIO_CJELLY_VERSION_PATCH $(VERSION_PATCH_ONLY)' \
 		'' \
-		'#endif // GHOTI_IO_CJ_LIBVER_GEN_H' > $@
+		'#endif // GHOTI_IO_CJ_LIBVER_GEN_H' > $@.tmp
+	@if cmp -s $@.tmp $@; then rm -f $@.tmp; else mv $@.tmp $@; fi
 
 $(OBJ_DIR)/%.o: src/%.c | $(LIBVER_GEN)
 	@printf "\n### Compiling $@ ###\n"
@@ -632,6 +659,11 @@ clean: ## Remove all contents of the build directories.
 # system location, which is what an ordinary `sudo make install` uses.
 LDCONF_INSTALL_PATH ?= /etc/ld.so.conf.d
 
+# What goes in the .pc Requires: field. Built from the same variables the
+# compile uses, so a dependency on another branch cannot be named one way for
+# the build and another way for consumers.
+PC_REQUIRES := vulkan $(IMAGE_PC) $(MODEL_PC) $(CUTIL_PC)
+
 # Where this project's own .pc file is installed. Defaults to the directory
 # pkg-config is already being told to search, but separate from it so a
 # staged install can write somewhere else without also redirecting lookups.
@@ -644,6 +676,10 @@ PKGCONFIG_INSTALL_PATH ?= $(PKG_CONFIG_PATH)
 #   (SUITE)-(PROJECT)(BRANCH).pc created
 
 install: ## Install the library globally, requires sudo
+# Depends on all: install used to copy whatever happened to be in the build
+# directory, so it could install a stale artifact or fail outright on a clean
+# tree.
+install: all
 	# Installing the shared library.
 	@mkdir -p $(LIB_INSTALL_PATH)/$(SUITE)
 ifeq ($(OS_NAME), Linux)
@@ -679,7 +715,7 @@ endif
 	fi
 	# Installing the pkg-config files.
 	@mkdir -p $(PKGCONFIG_INSTALL_PATH)
-	@cat pkgconfig/$(SUITE)-$(PROJECT).pc | sed 's/(SUITE)/$(SUITE)/g; s/(PROJECT)/$(PROJECT)/g; s/(BRANCH)/$(BRANCH)/g; s/(VERSION)/$(VERSION)/g; s|(LIB)|$(LIB_INSTALL_PATH)|g; s|(INCLUDE)|$(INCLUDE_INSTALL_PATH)|g' > $(PKGCONFIG_INSTALL_PATH)/$(SUITE)-$(PROJECT)$(BRANCH).pc
+	@cat pkgconfig/$(SUITE)-$(PROJECT).pc | sed 's/(SUITE)/$(SUITE)/g; s/(PROJECT)/$(PROJECT)/g; s/(BRANCH)/$(BRANCH)/g; s/(VERSION)/$(VERSION)/g; s|(LIB)|$(LIB_INSTALL_PATH)|g; s|(INCLUDE)|$(INCLUDE_INSTALL_PATH)|g; s|(REQUIRES)|$(PC_REQUIRES)|g' > $(PKGCONFIG_INSTALL_PATH)/$(SUITE)-$(PROJECT)$(BRANCH).pc
 ifeq ($(OS_NAME), Linux)
 	# Running ldconfig.
 	@if [ -n "$(LDCONF_INSTALL_PATH)" ]; then ldconfig >> /dev/null 2>&1; fi
