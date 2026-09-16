@@ -25,7 +25,7 @@ Not here. OBJ and MTL parsing is
 [ghoti.io-model](https://github.com/Ghoti-io/model), a separate library with
 its own tests and fuzzers. What CJelly adds is the translation from what an
 OBJ file describes to what a GPU can draw, in
-`cjelly/format/3d/mesh.h`:
+`ghoti.io/cjelly/format/3d/mesh.h`:
 
 - **Triangulation.** A face of any number of corners becomes a fan of
   triangles. Correct for convex faces, which is what exporters emit.
@@ -97,7 +97,7 @@ angles - a viewport taller than it is wide is limited by its width, not its
 height. The projection is built for Vulkan's clip space: depth 0 to 1, and Y
 pointing down.
 
-Both are in `cjelly/mat4.h` and both are tested, which matters more than it
+Both are in `ghoti.io/cjelly/mat4.h` and both are tested, which matters more than it
 looks: a sign error in a projection does not fail, it renders the model upside
 down or not at all, and there is no way to tell which from reading the code.
 

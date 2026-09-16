@@ -358,7 +358,7 @@ built on it.
 
 ## Appendix: what exists so far
 
-`cj_window_capture()` (`cjelly/cj_capture.h`) reads the frame a window is
+`cj_window_capture()` (`ghoti.io/cjelly/cj_capture.h`) reads the frame a window is
 displaying into an RGBA8 buffer, with `cj_capture_write_png()` alongside it.
 That is the first piece of the harness described in section 2 - the part that
 lets a test make statements about what was drawn. It is a shipped API rather
