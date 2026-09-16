@@ -1,4 +1,6 @@
 #pragma once
+
+#include <cjelly/namespace.h>
 #include <cjelly/cj_resources.h>
 
 /* Forward declaration to avoid circular dependency */

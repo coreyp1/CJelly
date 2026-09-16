@@ -20,6 +20,8 @@
 #ifndef CJELLY_APPLICATION_H
 #define CJELLY_APPLICATION_H
 
+#include <cjelly/namespace.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus

@@ -7,6 +7,8 @@
  */
 #ifndef CJELLY_API_MACROS_H
 #define CJELLY_API_MACROS_H
+
+#include <cjelly/namespace.h>
 #ifdef __cplusplus
   #define CJ_EXTERN extern "C"
 #else

@@ -1,4 +1,6 @@
 #pragma once
+
+#include <cjelly/namespace.h>
 #include <cjelly/cj_types.h>
 
 typedef enum cj_handle_kind_t {

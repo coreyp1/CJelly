@@ -1,6 +1,8 @@
 /* CJelly public API umbrella (in transition). */
 #pragma once
 
+
+#include <cjelly/namespace.h>
 /* New public headers */
 #include "cj_macros.h"
 #include "cj_version.h"

@@ -1,4 +1,6 @@
 #pragma once
+
+#include <cjelly/namespace.h>
 #include <vulkan/vulkan.h>
 
 /* Internal-only basic pipeline state (migration) */

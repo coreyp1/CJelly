@@ -1,6 +1,8 @@
 #ifndef CJELLY_FORMAT_IMAGE_H
 #define CJELLY_FORMAT_IMAGE_H
 
+#include <cjelly/namespace.h>
+
 #include <cjelly/macros.h>
 
 

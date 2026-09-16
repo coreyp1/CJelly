@@ -7,6 +7,8 @@
  */
 #pragma once
 
+
+#include <cjelly/namespace.h>
 #include "cj_window.h"
 #include <stdbool.h>
 

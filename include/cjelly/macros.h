@@ -1,6 +1,8 @@
 #ifndef CJELLY_MACROS_H
 #define CJELLY_MACROS_H
 
+#include <cjelly/namespace.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus

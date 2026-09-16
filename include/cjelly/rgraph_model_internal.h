@@ -21,6 +21,8 @@
 #ifndef CJELLY_RGRAPH_MODEL_INTERNAL_H
 #define CJELLY_RGRAPH_MODEL_INTERNAL_H
 
+#include <cjelly/namespace.h>
+
 #include <vulkan/vulkan.h>
 
 #include <cjelly/format/3d/mesh.h>

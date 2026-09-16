@@ -1,4 +1,6 @@
 #pragma once
+
+#include <cjelly/namespace.h>
 #include <vulkan/vulkan.h>
 
 /* Forward declaration for atlas used by bindless resources */

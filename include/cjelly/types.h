@@ -19,6 +19,8 @@
 #ifndef CJELLY_TYPES_H
 #define CJELLY_TYPES_H
 
+#include <cjelly/namespace.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus

@@ -2,6 +2,8 @@
  * CJelly — reading a rendered frame back out of a window.
  */
 #pragma once
+
+#include <cjelly/namespace.h>
 #include <stdint.h>
 #include <stddef.h>
 #include "cj_macros.h"

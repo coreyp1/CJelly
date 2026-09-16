@@ -16,6 +16,8 @@
 #ifndef CJELLY_MAT4_H
 #define CJELLY_MAT4_H
 
+#include <cjelly/namespace.h>
+
 #include <cjelly/macros.h>
 
 #ifdef __cplusplus

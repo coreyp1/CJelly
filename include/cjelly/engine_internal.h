@@ -1,4 +1,6 @@
 #pragma once
+
+#include <cjelly/namespace.h>
 #include <vulkan/vulkan.h>
 #include <cjelly/cj_engine.h>
 #include <cjelly/runtime.h>

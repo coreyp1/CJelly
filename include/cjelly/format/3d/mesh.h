@@ -18,6 +18,8 @@
 #ifndef CJELLY_FORMAT_3D_MESH_H
 #define CJELLY_FORMAT_3D_MESH_H
 
+#include <cjelly/namespace.h>
+
 #include <stdint.h>
 
 #include <cjelly/macros.h>

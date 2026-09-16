@@ -6,6 +6,8 @@
  * Licensed under the MIT license for prototype purposes.
  */
 #pragma once
+
+#include <cjelly/namespace.h>
 #include "cj_macros.h"
 #include <stdint.h>
 

@@ -1,4 +1,6 @@
 #pragma once
+
+#include <cjelly/namespace.h>
 #include <vulkan/vulkan.h>
 
 /* Internal-only textured resources owned by the Engine during migration */

@@ -2,6 +2,8 @@
  *  @brief Runtime utilities: event loop, bindless helpers, and context management.
  */
 #pragma once
+
+#include <cjelly/namespace.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include "cj_macros.h"
