@@ -12,6 +12,9 @@ BASE_NAME := lib$(SUITE)-$(PROJECT)$(BRANCH).so
 BASE_NAME_PREFIX := lib$(SUITE)-$(PROJECT)$(BRANCH)
 MAJOR_VERSION := 0
 MINOR_VERSION := 0.0
+# Substituted into the .pc file; an empty Version: field makes every
+# pkg-config version constraint fail.
+VERSION := $(MAJOR_VERSION).$(MINOR_VERSION)
 SO_NAME := $(BASE_NAME).$(MAJOR_VERSION)
 ENV_VARS :=
 
@@ -78,6 +81,35 @@ else
 
 endif
 
+# ---------------------------------------------------------------------------
+# Installation prefix
+#
+# Defaults to the system location chosen above. Override it to install
+# somewhere else - the suite's bootstrap installs every library into a local
+# prefix so that each build resolves its dependencies through pkg-config,
+# exactly as a consumer would, rather than through a second code path that
+# only in-tree builds exercise. See CONVENTIONS.md section 1.
+#
+#     make install PREFIX=/path/to/prefix
+# ---------------------------------------------------------------------------
+ifdef PREFIX
+INCLUDE_INSTALL_PATH := $(PREFIX)/include
+LIB_INSTALL_PATH := $(PREFIX)/lib
+BIN_INSTALL_PATH := $(PREFIX)/bin
+PKG_CONFIG_PATH := $(PREFIX)/share/pkgconfig
+ifeq ($(OS_NAME), Windows)
+PC_INCLUDE_DIR = $(shell cygpath -m $(INCLUDE_INSTALL_PATH)/$(SUITE)/$(PROJECT)$(BRANCH))
+PC_LIB_DIR = $(shell cygpath -m $(LIB_INSTALL_PATH)/$(SUITE))
+else
+PC_INCLUDE_DIR := $(INCLUDE_INSTALL_PATH)/$(SUITE)/$(PROJECT)$(BRANCH)
+PC_LIB_DIR := $(LIB_INSTALL_PATH)/$(SUITE)
+endif
+# A non-system prefix has no /etc/ld.so.conf.d, and writing to it would need
+# root anyway. Everything built here carries an rpath to the prefix instead.
+LDCONF_INSTALL_PATH :=
+endif
+
+
 
 CXX := g++
 CXXFLAGS := -pedantic-errors -Wall -Wextra -Werror -Wno-error=unused-function -Wfatal-errors -std=c++20 -O1 -g $(EXTRA_CXXFLAGS)
@@ -87,6 +119,12 @@ CFLAGS := -pedantic-errors -Wall -Wextra -Werror -Wno-error=unused-function -Wfa
 LIB_CFLAGS := $(CFLAGS) -DCJELLY_BUILD $(EXTRA_CFLAGS)
 # -DGHOTIIO_CUTIL_ENABLE_MEMORY_DEBUG
 LDFLAGS := -L /usr/lib -lstdc++ -lm `PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --libs --cflags vulkan` $(EXTRA_LDFLAGS)
+ifdef PREFIX
+# So that a library, a test or an example finds its Ghoti.io dependencies in the
+# prefix at run time without LD_LIBRARY_PATH.
+LDFLAGS += -Wl,-rpath,$(LIB_INSTALL_PATH)/$(SUITE)
+endif
+
 BUILD_DIR := ./build/$(BUILD)
 OBJ_DIR := $(BUILD_DIR)/objects
 GEN_DIR := $(BUILD_DIR)/generated
@@ -121,11 +159,8 @@ endif
 CUTIL_PC ?= $(SUITE)-cutil$(BRANCH)
 CUTIL_CFLAGS := $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --cflags $(CUTIL_PC) 2>/dev/null)
 CUTIL_LIBS := $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --libs $(CUTIL_PC) 2>/dev/null)
-CUTIL_PLACEHOLDER := (
-CUTIL_NEED_FALLBACK := $(or $(findstring $(CUTIL_PLACEHOLDER),$(CUTIL_CFLAGS)),$(if $(CUTIL_CFLAGS),,y))
-ifneq ($(CUTIL_NEED_FALLBACK),)
-CUTIL_CFLAGS := -I../cutil/include -I../cutil/build/$(firstword $(subst /, ,$(BUILD)))/include
-CUTIL_LIBS := -L../cutil/build/$(firstword $(subst /, ,$(BUILD)))/apps -l$(SUITE)-cutil$(BRANCH)
+ifeq ($(strip $(CUTIL_CFLAGS)),)
+$(error ghoti.io-cutil was not found by pkg-config. Run ./bootstrap.sh in the parent folder to build and install the suite into a local prefix, then pass the same PREFIX here - or point PKG_CONFIG_PATH at the directory holding its .pc file. There is deliberately no sibling-checkout fallback: a second resolution path that only in-tree builds exercise is one that silently rots.)
 endif
 LDFLAGS += $(CUTIL_LIBS)
 
@@ -140,17 +175,8 @@ IMAGE_CFLAGS := $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --cflags $
 IMAGE_LIBS := $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --libs $(IMAGE_PC) 2>/dev/null)
 # Fall back when pkg-config produced nothing, or echoed an unsubstituted
 # placeholder (a literal "(" is the tell).
-IMAGE_PLACEHOLDER := (
-IMAGE_NEED_FALLBACK := $(or $(findstring $(IMAGE_PLACEHOLDER),$(IMAGE_CFLAGS)),$(if $(IMAGE_CFLAGS),,y))
-ifneq ($(IMAGE_NEED_FALLBACK),)
-IMAGE_CFLAGS := -I../image/include
-IMAGE_LIBS := -L../image/build/$(BUILD)/apps -l$(SUITE)-image$(BRANCH)
-# image depends on compress, which depends on cutil; the linker needs to be
-# able to resolve both NEEDED entries. cutil's build tree is one level
-# shallower (build/<os>/apps), hence just the leading OS component of BUILD.
-LDFLAGS += -Wl,-rpath-link,../image/build/$(BUILD)/apps
-LDFLAGS += -Wl,-rpath-link,../compress/build/$(BUILD)/apps
-LDFLAGS += -Wl,-rpath-link,../cutil/build/$(firstword $(subst /, ,$(BUILD)))/apps
+ifeq ($(strip $(IMAGE_CFLAGS)),)
+$(error ghoti.io-image was not found by pkg-config. Run ./bootstrap.sh in the parent folder to build and install the suite into a local prefix, then pass the same PREFIX here - or point PKG_CONFIG_PATH at the directory holding its .pc file. There is deliberately no sibling-checkout fallback: a second resolution path that only in-tree builds exercise is one that silently rots.)
 endif
 LDFLAGS += $(IMAGE_LIBS)
 
@@ -158,12 +184,8 @@ LDFLAGS += $(IMAGE_LIBS)
 MODEL_PC ?= $(SUITE)-model$(BRANCH)
 MODEL_CFLAGS := $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --cflags $(MODEL_PC) 2>/dev/null)
 MODEL_LIBS := $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --libs $(MODEL_PC) 2>/dev/null)
-MODEL_PLACEHOLDER := (
-MODEL_NEED_FALLBACK := $(or $(findstring $(MODEL_PLACEHOLDER),$(MODEL_CFLAGS)),$(if $(MODEL_CFLAGS),,y))
-ifneq ($(MODEL_NEED_FALLBACK),)
-MODEL_CFLAGS := -I../model/include
-MODEL_LIBS := -L../model/build/$(BUILD)/apps -l$(SUITE)-model$(BRANCH)
-LDFLAGS += -Wl,-rpath-link,../model/build/$(BUILD)/apps
+ifeq ($(strip $(MODEL_CFLAGS)),)
+$(error ghoti.io-model was not found by pkg-config. Run ./bootstrap.sh in the parent folder to build and install the suite into a local prefix, then pass the same PREFIX here - or point PKG_CONFIG_PATH at the directory holding its .pc file. There is deliberately no sibling-checkout fallback: a second resolution path that only in-tree builds exercise is one that silently rots.)
 endif
 LDFLAGS += $(MODEL_LIBS)
 
@@ -171,7 +193,7 @@ LDFLAGS += $(MODEL_LIBS)
 # libraries are installed the loader finds them through ld.so.conf and these
 # extra entries are simply unused; when building against sibling checkouts
 # they are what makes the binaries runnable at all.
-RUNTIME_LIB_DIRS := $(APP_DIR) ../image/build/$(BUILD)/apps ../model/build/$(BUILD)/apps ../compress/build/$(BUILD)/apps ../cutil/build/$(firstword $(subst /, ,$(BUILD)))/apps
+RUNTIME_LIB_DIRS := $(APP_DIR) $(LIB_INSTALL_PATH)/$(SUITE)
 # Absolute, so a recipe that cd's elsewhere first still resolves them.
 EMPTY :=
 SPACE := $(EMPTY) $(EMPTY)
@@ -499,8 +521,8 @@ ifeq ($(OS_NAME), Linux)
 	@ln -f -s $(TARGET) $(LIB_INSTALL_PATH)/$(SUITE)/$(SO_NAME)
 	@ln -f -s $(SO_NAME) $(LIB_INSTALL_PATH)/$(SUITE)/$(BASE_NAME)
 	# Installing the ld configuration file.
-	@mkdir -p $(LDCONF_INSTALL_PATH)
-	@echo "$(LIB_INSTALL_PATH)/$(SUITE)" > $(LDCONF_INSTALL_PATH)/$(SUITE)-$(PROJECT)$(BRANCH).conf
+	@if [ -n "$(LDCONF_INSTALL_PATH)" ]; then mkdir -p $(LDCONF_INSTALL_PATH); fi
+	@if [ -n "$(LDCONF_INSTALL_PATH)" ]; then echo "$(LIB_INSTALL_PATH)/$(SUITE)" > $(LDCONF_INSTALL_PATH)/$(SUITE)-$(PROJECT)$(BRANCH).conf; fi
 endif
 ifeq ($(OS_NAME), Windows)
 # The .dll file and the .dll.a file
@@ -525,7 +547,7 @@ endif
 	@cat pkgconfig/$(SUITE)-$(PROJECT).pc | sed 's/(SUITE)/$(SUITE)/g; s/(PROJECT)/$(PROJECT)/g; s/(BRANCH)/$(BRANCH)/g; s/(VERSION)/$(VERSION)/g; s|(LIB)|$(LIB_INSTALL_PATH)|g; s|(INCLUDE)|$(INCLUDE_INSTALL_PATH)|g' > $(PKGCONFIG_INSTALL_PATH)/$(SUITE)-$(PROJECT)$(BRANCH).pc
 ifeq ($(OS_NAME), Linux)
 	# Running ldconfig.
-	@ldconfig >> /dev/null 2>&1
+	@if [ -n "$(LDCONF_INSTALL_PATH)" ]; then ldconfig >> /dev/null 2>&1; fi
 endif
 	@echo "Ghoti.io $(PROJECT)$(BRANCH) installed"
 
@@ -549,7 +571,7 @@ endif
 	@rmdir --ignore-fail-on-non-empty $(LIB_INSTALL_PATH)/$(SUITE)
 ifeq ($(OS_NAME), Linux)
 	# Running ldconfig.
-	@ldconfig >> /dev/null 2>&1
+	@if [ -n "$(LDCONF_INSTALL_PATH)" ]; then ldconfig >> /dev/null 2>&1; fi
 endif
 	@echo "Ghoti.io $(PROJECT)$(BRANCH) has been uninstalled"
 
