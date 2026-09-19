@@ -249,6 +249,14 @@ LIBOBJECTS := $(patsubst src/%.c,$(OBJ_DIR)/%.o,$(SOURCES))
 
 TESTFLAGS := `PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --libs --cflags gtest`
 
+# The checks `make test` runs besides the tests themselves. Named in a
+# variable so that a build which cannot satisfy them can clear it: the
+# coverage target does, because --coverage links the gcov runtime, whose
+# mangle_path check-symbols is right to reject in a shipping library and
+# wrong to reject in an instrumented one. Spelled as text's TEST_GATES is.
+TEST_GATES ?= check-symbols
+
+
 
 # The static archive, not -l: a static link resolves hidden symbols. The
 # dependencies follow it, because an archive carries no DT_NEEDED of its own.
@@ -612,7 +620,7 @@ test: \
 		$(TEST_FILES) \
 		$(APP_DIR)/$(TARGET) \
 		$(UNIT_TEST_EXECUTABLES) \
-		check-symbols
+		$(TEST_GATES)
 	@for test_exe in $(UNIT_TEST_EXECUTABLES); do \
 		test_name=$$(basename $$test_exe $(EXE_EXTENSION)); \
 		printf "\033[0;32m\n"; \
@@ -781,12 +789,29 @@ coverage: ## Build instrumented, run the tests, and report line coverage
 # and leaving the tree cleaned would break any sibling project that links
 # this one. The cost is one extra build; coverage is not run often.
 	@$(MAKE) --no-print-directory clean > /dev/null
-	@$(MAKE) --no-print-directory test \
+# The instrumented build, the report and the restoration of the tree are one
+# shell command so that the cleanup runs whatever fails. Letting a failure
+# stop the recipe leaves the --coverage objects in build/, and the next
+# ordinary `make` links them into a library that needs the gcov runtime; every
+# later build then fails with undefined references to __gcov_init until
+# somebody works out why.
+#
+# TEST_GATES is cleared because --coverage links the gcov runtime, which
+# exports mangle_path. check-symbols is right to reject that in a shipping
+# build and wrong to reject it here, and it made this target fail before it
+# ever produced a report.
+	@status=0; \
+	$(MAKE) --no-print-directory test TEST_GATES= \
 		EXTRA_CFLAGS="--coverage -O0" \
-		EXTRA_LDFLAGS="--coverage" > /dev/null
-	@tools/coverage.sh $(OBJ_DIR)
-	@$(MAKE) --no-print-directory clean > /dev/null
-	@$(MAKE) --no-print-directory all > /dev/null
+		EXTRA_LDFLAGS="--coverage" > /dev/null || status=$$?; \
+	if [ $$status -eq 0 ]; then \
+		tools/coverage.sh $(OBJ_DIR) || status=$$?; \
+	else \
+		printf "coverage: the instrumented test run failed; no report\n" >&2; \
+	fi; \
+	$(MAKE) --no-print-directory clean > /dev/null; \
+	$(MAKE) --no-print-directory all > /dev/null; \
+	exit $$status
 
 help: ## Display this help
 # Scan only this makefile. $(MAKEFILE_LIST) grows to include every generated
