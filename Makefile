@@ -48,6 +48,11 @@ STATIC_TARGET := $(BASE_NAME_PREFIX).a
 SO_NAME := $(BASE_NAME).$(MAJOR_VERSION)
 ENV_VARS :=
 
+# PKG_CONFIG_PATH names where this project's own .pc file is installed, and the
+# platform block below overwrites it to say so. Remember what the environment
+# asked for first, so dependency lookup can still honour it further down.
+PKG_CONFIG_PATH_ENV := $(PKG_CONFIG_PATH)
+
 # Detect OS
 UNAME_S := $(shell uname -s)
 
@@ -139,18 +144,24 @@ endif
 LDCONF_INSTALL_PATH :=
 endif
 
+# Dependencies are looked up along the inherited PKG_CONFIG_PATH as well as the
+# install location chosen above, so that exporting PKG_CONFIG_PATH works as the
+# errors below say it does. The inherited value comes first: it is an explicit
+# request for this build, where the install location may be only a default.
+PKG_CONFIG_LOOKUP_PATH := $(if $(PKG_CONFIG_PATH_ENV),$(PKG_CONFIG_PATH_ENV):)$(PKG_CONFIG_PATH)
+
 
 CXX := g++
 CXXFLAGS := -pedantic-errors -Wall -Wextra -Werror -Wno-error=unused-function -Wfatal-errors -std=c++20 -O1 -g $(EXTRA_CXXFLAGS)
 CC := cc
-CFLAGS := -pedantic-errors -Wall -Wextra -Werror -Wno-error=unused-function -Wfatal-errors -std=c17 -O0 -g `PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --cflags vulkan` $(EXTRA_CFLAGS)
+CFLAGS := -pedantic-errors -Wall -Wextra -Werror -Wno-error=unused-function -Wfatal-errors -std=c17 -O0 -g `PKG_CONFIG_PATH=$(PKG_CONFIG_LOOKUP_PATH) pkg-config --cflags vulkan` $(EXTRA_CFLAGS)
 # Library-specific compile flags (export symbols on Windows, PIC on Linux)
 # The shipped library exports its public API and nothing else. Tests reach the
 # internals by linking the static archive, which a static link can do even for
 # hidden symbols.
 LIB_CFLAGS := $(CFLAGS) -fvisibility=hidden -DCJELLY_BUILD $(EXTRA_CFLAGS)
 # -DGHOTIIO_CUTIL_ENABLE_MEMORY_DEBUG
-LDFLAGS := -L /usr/lib -lstdc++ -lm `PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --libs --cflags vulkan` $(EXTRA_LDFLAGS)
+LDFLAGS := -L /usr/lib -lstdc++ -lm `PKG_CONFIG_PATH=$(PKG_CONFIG_LOOKUP_PATH) pkg-config --libs --cflags vulkan` $(EXTRA_LDFLAGS)
 ifdef PREFIX
 # So that a library, a test or an example finds its Ghoti.io dependencies in the
 # prefix at run time without LD_LIBRARY_PATH.
@@ -165,8 +176,8 @@ APP_DIR := $(BUILD_DIR)/apps
 
 # Add OS-specific flags
 ifeq ($(UNAME_S), Linux)
-	CFLAGS += `PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --cflags x11`
-	LDFLAGS += `PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --libs x11`
+	CFLAGS += `PKG_CONFIG_PATH=$(PKG_CONFIG_LOOKUP_PATH) pkg-config --cflags x11`
+	LDFLAGS += `PKG_CONFIG_PATH=$(PKG_CONFIG_LOOKUP_PATH) pkg-config --libs x11`
 	# XInput2 (libXi) is optional - if not available, we fall back to traditional events
 	# For now, we'll skip linking libXi and make XInput2 optional at runtime
 	# This avoids linker issues - XInput2 functions will be called only if available
@@ -189,8 +200,8 @@ endif
 # The Ghoti.io CUtil library supplies the generic container used by the format
 # parsers. Same install-then-sibling arrangement as image below.
 CUTIL_PC ?= $(SUITE)-cutil$(BRANCH)
-CUTIL_CFLAGS := $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --cflags $(CUTIL_PC) 2>/dev/null)
-CUTIL_LIBS := $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --libs $(CUTIL_PC) 2>/dev/null)
+CUTIL_CFLAGS := $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_LOOKUP_PATH) pkg-config --cflags $(CUTIL_PC) 2>/dev/null)
+CUTIL_LIBS := $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_LOOKUP_PATH) pkg-config --libs $(CUTIL_PC) 2>/dev/null)
 ifeq ($(strip $(CUTIL_CFLAGS)),)
 $(error ghoti.io-cutil was not found by pkg-config. Run ./bootstrap.sh in the parent folder to build and install the suite into a local prefix, then pass the same PREFIX here - or point PKG_CONFIG_PATH at the directory holding its .pc file. There is deliberately no sibling-checkout fallback: a second resolution path that only in-tree builds exercise is one that silently rots.)
 endif
@@ -203,8 +214,8 @@ LDFLAGS += $(CUTIL_LIBS)
 # Installed .pc files carry the branch suffix (ghoti.io-image-dev.pc), so the
 # name asked for here has to carry it too.
 IMAGE_PC ?= $(SUITE)-image$(BRANCH)
-IMAGE_CFLAGS := $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --cflags $(IMAGE_PC) 2>/dev/null)
-IMAGE_LIBS := $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --libs $(IMAGE_PC) 2>/dev/null)
+IMAGE_CFLAGS := $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_LOOKUP_PATH) pkg-config --cflags $(IMAGE_PC) 2>/dev/null)
+IMAGE_LIBS := $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_LOOKUP_PATH) pkg-config --libs $(IMAGE_PC) 2>/dev/null)
 # Fall back when pkg-config produced nothing, or echoed an unsubstituted
 # placeholder (a literal "(" is the tell).
 ifeq ($(strip $(IMAGE_CFLAGS)),)
@@ -214,8 +225,8 @@ LDFLAGS += $(IMAGE_LIBS)
 
 # ghoti.io-model, for the OBJ and MTL parsing behind the model render node.
 MODEL_PC ?= $(SUITE)-model$(BRANCH)
-MODEL_CFLAGS := $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --cflags $(MODEL_PC) 2>/dev/null)
-MODEL_LIBS := $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --libs $(MODEL_PC) 2>/dev/null)
+MODEL_CFLAGS := $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_LOOKUP_PATH) pkg-config --cflags $(MODEL_PC) 2>/dev/null)
+MODEL_LIBS := $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_LOOKUP_PATH) pkg-config --libs $(MODEL_PC) 2>/dev/null)
 ifeq ($(strip $(MODEL_CFLAGS)),)
 $(error ghoti.io-model was not found by pkg-config. Run ./bootstrap.sh in the parent folder to build and install the suite into a local prefix, then pass the same PREFIX here - or point PKG_CONFIG_PATH at the directory holding its .pc file. There is deliberately no sibling-checkout fallback: a second resolution path that only in-tree builds exercise is one that silently rots.)
 endif
@@ -247,7 +258,7 @@ SOURCES := $(shell find src -type f -name '*.c' ! -name 'main.c')
 LIBOBJECTS := $(patsubst src/%.c,$(OBJ_DIR)/%.o,$(SOURCES))
 
 
-TESTFLAGS := `PKG_CONFIG_PATH=$(PKG_CONFIG_PATH) pkg-config --libs --cflags gtest`
+TESTFLAGS := `PKG_CONFIG_PATH=$(PKG_CONFIG_LOOKUP_PATH) pkg-config --libs --cflags gtest`
 
 # The checks `make test` runs besides the tests themselves. Named in a
 # variable so that a build which cannot satisfy them can clear it: the
