@@ -1,8 +1,25 @@
 /*
- * CJelly — Input handling API
- * Copyright (c) 2025
+ * SPDX-License-Identifier: LGPL-3.0-only
  *
- * Licensed under the MIT license for prototype purposes.
+ * Copyright (C) 2025-2026 Corey Pennycuff
+ *
+ * This file is part of Ghoti.io CJelly.
+ *
+ * Ghoti.io CJelly is free software: you can redistribute it and/or modify it
+ * under the terms of the GNU Lesser General Public License version 3 as
+ * published by the Free Software Foundation.
+ *
+ * Ghoti.io CJelly is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+ * or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU Lesser General Public
+ * License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+/*
+ * CJelly — Input handling API
  */
 #pragma once
 

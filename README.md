@@ -49,3 +49,12 @@ to use your own:
 
 See [docs/models.md](docs/models.md) for how that is put together, and what it
 does not do yet.
+
+## License
+
+LGPL-3.0-only. See [COPYING.LESSER](COPYING.LESSER) for the license, and
+[COPYING](COPYING) for the GPL text it is written as additional permissions
+on top of.
+
+Contributions are not being accepted at this time; see
+[CONTRIBUTING.md](CONTRIBUTING.md) for what is useful instead.

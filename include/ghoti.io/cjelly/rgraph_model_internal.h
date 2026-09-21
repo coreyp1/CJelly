@@ -1,3 +1,23 @@
+/*
+ * SPDX-License-Identifier: LGPL-3.0-only
+ *
+ * Copyright (C) 2025-2026 Corey Pennycuff
+ *
+ * This file is part of Ghoti.io CJelly.
+ *
+ * Ghoti.io CJelly is free software: you can redistribute it and/or modify it
+ * under the terms of the GNU Lesser General Public License version 3 as
+ * published by the Free Software Foundation.
+ *
+ * Ghoti.io CJelly is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+ * or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU Lesser General Public
+ * License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 /**
  * @file rgraph_model_internal.h
  * @brief The render-graph node that draws a 3D model. Internal.
@@ -14,8 +34,6 @@
  * into the window as a textured quad. That is purely additive: nothing that
  * already renders changes. The cost is one extra full-screen blit per frame,
  * and the offscreen target is a fixed size rather than the window's.
- *
- * Copyright 2026 by Corey Pennycuff
  */
 
 #ifndef GHOTI_IO_CJ_RGRAPH_MODEL_INTERNAL_H

@@ -1,3 +1,23 @@
+/*
+ * SPDX-License-Identifier: LGPL-3.0-only
+ *
+ * Copyright (C) 2025-2026 Corey Pennycuff
+ *
+ * This file is part of Ghoti.io CJelly.
+ *
+ * Ghoti.io CJelly is free software: you can redistribute it and/or modify it
+ * under the terms of the GNU Lesser General Public License version 3 as
+ * published by the Free Software Foundation.
+ *
+ * Ghoti.io CJelly is distributed in the hope that it will be useful, but
+ * WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY
+ * or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU Lesser General Public
+ * License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
 /**
  * @file mat4.h
  * @brief 4x4 matrix helpers for placing a model in front of a camera.
@@ -9,8 +29,6 @@
  * runs 0 to 1 instead of -1 to 1, and Y points down. Getting either wrong
  * produces a picture rather than an error - an upside-down model, or one
  * clipped away entirely - so both are tested.
- *
- * Copyright 2026 by Corey Pennycuff
  */
 
 #ifndef GHOTI_IO_CJ_MAT4_H
