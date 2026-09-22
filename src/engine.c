@@ -46,6 +46,12 @@ extern unsigned int color_frag_spv_len;
 
 /* Internal definition of the opaque engine type */
 struct cj_engine_t {
+  /* The allocator from cj_engine_desc_t, resolved once at creation so that
+   * every later use is a plain pointer rather than another NULL check.  The
+   * descriptor has offered this field since the API was laid out; until now
+   * nothing read it and every allocation went to malloc(). */
+  const cj_allocator_t * allocator;
+
   uint32_t selected_device_index;
   uint32_t flags;
 
@@ -233,9 +239,13 @@ static int eng_ensure_bindless_descriptors(cj_engine_t* e) {
 }
 
 CJ_API cj_engine_t* cj_engine_create(const cj_engine_desc_t* desc) {
-  cj_engine_t* engine = (cj_engine_t*)malloc(sizeof(*engine));
+  const cj_allocator_t* allocator =
+      (desc && desc->allocator) ? desc->allocator : cj_allocator_default();
+  cj_engine_t* engine =
+      (cj_engine_t*)gcu_allocator_malloc(allocator, sizeof(*engine));
   if (!engine) return NULL;
   memset(engine, 0, sizeof(*engine));
+  engine->allocator = allocator;
   engine->flags = desc ? desc->flags : 0u;
   if (desc && desc->device_select == CJ_DEVICE_SELECT_INDEX) {
     engine->selected_device_index = desc->requested_device_index;
@@ -248,7 +258,12 @@ CJ_API cj_engine_t* cj_engine_create(const cj_engine_desc_t* desc) {
 CJ_API void cj_engine_shutdown(cj_engine_t* engine) {
   if (!engine) return;
   if (g_current_engine == engine) g_current_engine = NULL;
-  free(engine);
+  gcu_allocator_free(engine->allocator, engine);
+}
+
+CJ_API const cj_allocator_t* cj_engine_allocator(const cj_engine_t* engine) {
+  return (engine && engine->allocator) ? engine->allocator
+                                       : cj_allocator_default();
 }
 
 CJ_API void cj_engine_wait_idle(cj_engine_t* engine) {

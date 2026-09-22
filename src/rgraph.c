@@ -347,7 +347,10 @@ CJ_API cj_result_t cj_rgraph_add_model_node(cj_rgraph_t* graph, const char* name
     if (!graph || !name || !obj_path) return CJ_E_INVALID_ARGUMENT;
 
     CJellyModelMesh* mesh = NULL;
-    CJellyModelMeshError mesh_err = cjelly_model_mesh_load(obj_path, NULL, &mesh);
+    /* The graph knows its engine, so the mesh and the OBJ parse behind it
+     * come from whatever allocator the engine was created with. */
+    CJellyModelMeshError mesh_err = cjelly_model_mesh_load(
+        obj_path, cj_engine_allocator(graph->engine), &mesh);
     if (mesh_err != CJELLY_MODEL_MESH_SUCCESS) {
         fprintf(stderr, "cj_rgraph_add_model_node: %s: %s\n", obj_path,
                 cjelly_model_mesh_strerror(mesh_err));

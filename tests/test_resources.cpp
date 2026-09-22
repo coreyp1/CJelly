@@ -266,6 +266,39 @@ TEST(HandleApi, PacksIndexAndGeneration) {
   EXPECT_EQ(cj_engine_res_slot(e.get(), CJ_RES_TEX, rebuilt), slot);
 }
 
+//
+// The engine's allocator
+//
+
+// cj_engine_desc_t has offered an `allocator` field since the API was laid
+// out, and for all that time nothing read it: a caller could supply one and
+// every allocation still went to malloc().  These assert the counters moved.
+TEST(EngineAllocator, TheDescriptorsAllocatorIsActuallyUsed) {
+  cjtest::CountingAllocator alloc;
+  cj_engine_desc_t desc = {};
+  desc.allocator = alloc.get();
+
+  cj_engine_t * e = cj_engine_create(&desc);
+  ASSERT_NE(e, nullptr);
+  EXPECT_GT(alloc.allocations(), 0u)
+      << "the engine was built without asking the descriptor's allocator";
+  EXPECT_EQ(cj_engine_allocator(e), alloc.get());
+
+  cj_engine_shutdown(e);
+  EXPECT_EQ(alloc.live(), 0) << "shutdown freed through a different allocator";
+}
+
+// A caller who supplies nothing still gets a usable answer rather than NULL,
+// so call sites can pass it straight on without checking.
+TEST(EngineAllocator, DefaultsWhenNoneIsSupplied) {
+  EXPECT_EQ(cj_engine_allocator(nullptr), cj_allocator_default());
+
+  cj_engine_t * e = cj_engine_create(nullptr);
+  ASSERT_NE(e, nullptr);
+  EXPECT_EQ(cj_engine_allocator(e), cj_allocator_default());
+  cj_engine_shutdown(e);
+}
+
 int main(int argc, char ** argv) {
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();

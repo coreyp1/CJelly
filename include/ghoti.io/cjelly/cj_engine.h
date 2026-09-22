@@ -83,6 +83,18 @@ CJ_API cj_engine_t* cj_engine_create(const cj_engine_desc_t* desc);
  */
 CJ_API void cj_engine_shutdown(cj_engine_t* engine);
 
+/** The allocator this engine was created with.
+ *
+ *  Everything the engine and the objects under it allocate goes through it,
+ *  so a caller that supplied one in ::cj_engine_desc_t can account for the
+ *  library's memory. Never NULL: an engine created without one reports
+ *  ::cj_allocator_default(), and so does a NULL engine.
+ *
+ *  @param engine The engine, or NULL.
+ *  @return The allocator. Never NULL.
+ */
+CJ_API const cj_allocator_t* cj_engine_allocator(const cj_engine_t* engine);
+
 /** Block until the device is idle.
  *  This waits for all pending GPU operations to complete.
  *  @param engine The engine to wait for.
