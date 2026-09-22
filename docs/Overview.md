@@ -7,7 +7,7 @@
 (MoltenVK path handled by contributors)\
 **Rendering:** Vulkan-first (bindless), configurable CPU fallback\
 **Language/Std:** C17\
-**License:** MIT (no GPL/AGPL dependencies)
+**License:** LGPL-3.0-only (no GPL/AGPL dependencies)
 
 ------------------------------------------------------------------------
 
@@ -203,8 +203,8 @@ post tasks).
 ## 13. Dependencies & Licensing
 
 -   **Allowed (baseline):** Vulkan SDK/loader, platform SDKs, **ICU**.\
--   **Discouraged:** Any copyleft (GPL/AGPL).\
--   **Project license:** **MIT**.
+-   **Discouraged:** Any copyleft (GPL/AGPL) **dependency**.\
+-   **Project license:** **LGPL-3.0-only**.
 
 ------------------------------------------------------------------------
 

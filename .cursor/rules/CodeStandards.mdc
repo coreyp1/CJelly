@@ -38,8 +38,12 @@ alwaysApply: true
 
 ## Dependencies
 - Minimize external dependencies (only Vulkan SDK, platform SDKs, ICU allowed)
-- Avoid GPL/AGPL dependencies
-- Use MIT license for all contributions
+- Avoid GPL/AGPL dependencies. The library is LGPL-3.0-only; a GPL or AGPL
+  dependency would pull the whole of it to GPL and make a commercial licence
+  impossible to grant, which is the opposite of what the licence is for.
+- New source files under src/ and include/ carry the SPDX identifier and the
+  LGPL-3.0-only notice; copy the block from any existing file. Outside
+  contributions are not being accepted at this time - see CONTRIBUTING.md.
 
 ## Examples
 
@@ -110,8 +114,12 @@ CJellyApplicationError cjelly_application_create(
 
 ## Dependencies
 - Minimize external dependencies (only Vulkan SDK, platform SDKs, ICU allowed)
-- Avoid GPL/AGPL dependencies
-- Use MIT license for all contributions
+- Avoid GPL/AGPL dependencies. The library is LGPL-3.0-only; a GPL or AGPL
+  dependency would pull the whole of it to GPL and make a commercial licence
+  impossible to grant, which is the opposite of what the licence is for.
+- New source files under src/ and include/ carry the SPDX identifier and the
+  LGPL-3.0-only notice; copy the block from any existing file. Outside
+  contributions are not being accepted at this time - see CONTRIBUTING.md.
 
 ## Examples
 
