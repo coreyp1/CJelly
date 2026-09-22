@@ -249,107 +249,6 @@ static cj_modifiers_t get_windows_modifiers(void) {
   if (GetKeyState(VK_NUMLOCK) & 0x0001) mods |= CJ_MOD_NUM;  /* Num Lock (toggle state) */
   return mods;
 }
-#else
-/* Linux/X11 keycode mapping */
-#include <X11/keysym.h>
-
-/* Map X11 keysym to cj_keycode_t */
-static cj_keycode_t map_x11_keysym(KeySym keysym) {
-  /* Letters */
-  if (keysym >= XK_a && keysym <= XK_z) return (cj_keycode_t)(CJ_KEY_A + (keysym - XK_a));
-  if (keysym >= XK_A && keysym <= XK_Z) return (cj_keycode_t)(CJ_KEY_A + (keysym - XK_A));
-  /* Numbers */
-  if (keysym >= XK_0 && keysym <= XK_9) return (cj_keycode_t)(CJ_KEY_0 + (keysym - XK_0));
-
-  switch (keysym) {
-    case XK_F1: return CJ_KEY_F1;
-    case XK_F2: return CJ_KEY_F2;
-    case XK_F3: return CJ_KEY_F3;
-    case XK_F4: return CJ_KEY_F4;
-    case XK_F5: return CJ_KEY_F5;
-    case XK_F6: return CJ_KEY_F6;
-    case XK_F7: return CJ_KEY_F7;
-    case XK_F8: return CJ_KEY_F8;
-    case XK_F9: return CJ_KEY_F9;
-    case XK_F10: return CJ_KEY_F10;
-    case XK_F11: return CJ_KEY_F11;
-    case XK_F12: return CJ_KEY_F12;
-
-    case XK_Up: return CJ_KEY_UP;
-    case XK_Down: return CJ_KEY_DOWN;
-    case XK_Left: return CJ_KEY_LEFT;
-    case XK_Right: return CJ_KEY_RIGHT;
-    case XK_Home: return CJ_KEY_HOME;
-    case XK_End: return CJ_KEY_END;
-    case XK_Page_Up: return CJ_KEY_PAGE_UP;
-    case XK_Page_Down: return CJ_KEY_PAGE_DOWN;
-
-    case XK_BackSpace: return CJ_KEY_BACKSPACE;
-    case XK_Delete: return CJ_KEY_DELETE;
-    case XK_Insert: return CJ_KEY_INSERT;
-    case XK_Return: return CJ_KEY_ENTER;
-    case XK_Tab: return CJ_KEY_TAB;
-    case XK_Escape: return CJ_KEY_ESCAPE;
-
-    case XK_Shift_L: return CJ_KEY_LEFT_SHIFT;
-    case XK_Shift_R: return CJ_KEY_RIGHT_SHIFT;
-    case XK_Control_L: return CJ_KEY_LEFT_CTRL;
-    case XK_Control_R: return CJ_KEY_RIGHT_CTRL;
-    case XK_Alt_L: return CJ_KEY_LEFT_ALT;
-    case XK_Alt_R: return CJ_KEY_RIGHT_ALT;
-    case XK_Super_L: return CJ_KEY_LEFT_META;  /* Left Super/Meta */
-    case XK_Super_R: return CJ_KEY_RIGHT_META; /* Right Super/Meta */
-
-    case XK_space: return CJ_KEY_SPACE;
-    case XK_minus: return CJ_KEY_MINUS;
-    case XK_equal: return CJ_KEY_EQUALS;
-    case XK_bracketleft: return CJ_KEY_BRACKET_LEFT;
-    case XK_bracketright: return CJ_KEY_BRACKET_RIGHT;
-    case XK_backslash: return CJ_KEY_BACKSLASH;
-    case XK_semicolon: return CJ_KEY_SEMICOLON;
-    case XK_apostrophe: return CJ_KEY_APOSTROPHE;
-    case XK_grave: return CJ_KEY_GRAVE;
-    case XK_comma: return CJ_KEY_COMMA;
-    case XK_period: return CJ_KEY_PERIOD;
-    case XK_slash: return CJ_KEY_SLASH;
-
-    case XK_KP_0: return CJ_KEY_NUMPAD_0;
-    case XK_KP_1: return CJ_KEY_NUMPAD_1;
-    case XK_KP_2: return CJ_KEY_NUMPAD_2;
-    case XK_KP_3: return CJ_KEY_NUMPAD_3;
-    case XK_KP_4: return CJ_KEY_NUMPAD_4;
-    case XK_KP_5: return CJ_KEY_NUMPAD_5;
-    case XK_KP_6: return CJ_KEY_NUMPAD_6;
-    case XK_KP_7: return CJ_KEY_NUMPAD_7;
-    case XK_KP_8: return CJ_KEY_NUMPAD_8;
-    case XK_KP_9: return CJ_KEY_NUMPAD_9;
-    case XK_KP_Add: return CJ_KEY_NUMPAD_ADD;
-    case XK_KP_Subtract: return CJ_KEY_NUMPAD_SUBTRACT;
-    case XK_KP_Multiply: return CJ_KEY_NUMPAD_MULTIPLY;
-    case XK_KP_Divide: return CJ_KEY_NUMPAD_DIVIDE;
-    case XK_KP_Decimal: return CJ_KEY_NUMPAD_DECIMAL;
-    case XK_KP_Enter: return CJ_KEY_NUMPAD_ENTER;
-
-    case XK_Caps_Lock: return CJ_KEY_CAPS_LOCK;
-    case XK_Num_Lock: return CJ_KEY_NUM_LOCK;
-    case XK_Scroll_Lock: return CJ_KEY_SCROLL_LOCK;
-    case XK_Print: return CJ_KEY_PRINT_SCREEN;
-    case XK_Pause: return CJ_KEY_PAUSE;
-
-    default: return CJ_KEY_UNKNOWN;
-  }
-}
-
-/* Get modifier flags from X11 event state */
-static cj_modifiers_t get_x11_modifiers(unsigned int state) {
-  cj_modifiers_t mods = CJ_MOD_NONE;
-  if (state & ShiftMask) mods |= CJ_MOD_SHIFT;
-  if (state & ControlMask) mods |= CJ_MOD_CTRL;
-  if (state & Mod1Mask) mods |= CJ_MOD_ALT;  /* Alt is typically Mod1 */
-  if (state & Mod4Mask) mods |= CJ_MOD_META;  /* Super/Meta is typically Mod4 */
-  /* Note: Caps Lock and Num Lock state would need to be queried separately */
-  return mods;
-}
 #endif
 
 #ifdef _WIN32
@@ -985,16 +884,6 @@ static LRESULT CALLBACK CjWndProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lP
  */
 static int32_t logical_to_physical(int32_t logical, float dpi_scale) {
   return (int32_t)(logical * dpi_scale + 0.5f);  // Round to nearest
-}
-
-/**
- * @brief Convert physical pixels to logical pixels
- * @param physical Physical pixel value
- * @param dpi_scale DPI scale factor
- * @return Logical pixel value
- */
-static int32_t physical_to_logical(int32_t physical, float dpi_scale) {
-  return (int32_t)(physical / dpi_scale + 0.5f);  // Round to nearest
 }
 
 #ifndef _WIN32

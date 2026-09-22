@@ -143,7 +143,6 @@ struct cj_rgraph_t {
 /* Forward declarations */
 static cj_rgraph_binding_t* find_binding(cj_rgraph_t* graph, const char* name);
 static cj_rgraph_param_t* find_param(cj_rgraph_t* graph, const char* name);
-static void add_default_node(cj_rgraph_t* graph);
 static int create_blur_node(cj_rgraph_t* graph, cj_rgraph_node_t* node);
 static void destroy_blur_node(cj_rgraph_t* graph, cj_rgraph_node_t* node);
 static int execute_blur_node(cj_rgraph_t* graph, cj_rgraph_node_t* node, VkCommandBuffer cmd, VkExtent2D extent);
@@ -1356,23 +1355,6 @@ static cj_rgraph_param_t* find_param(cj_rgraph_t* graph, const char* name) {
         }
     }
     return NULL;
-}
-
-/* Add a default pass-through node for basic rendering */
-static void add_default_node(cj_rgraph_t* graph) {
-    cj_rgraph_node_t* node = (cj_rgraph_node_t*)malloc(sizeof(cj_rgraph_node_t));
-    if (!node) {
-        fprintf(stderr, "add_default_node: failed to allocate node\n");
-        return;
-    }
-
-    memset(node, 0, sizeof(cj_rgraph_node_t));
-    strcpy(node->name, "default_pass");
-    node->type = CJ_RGRAPH_NODE_PASSTHROUGH;
-    node->next = graph->nodes;
-    graph->nodes = node;
-
-    // Added default pass-through node
 }
 
 /* Add a blur node to the render graph */
