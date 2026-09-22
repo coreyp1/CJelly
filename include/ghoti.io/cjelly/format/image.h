@@ -21,6 +21,8 @@
 #ifndef GHOTI_IO_CJ_FORMAT_IMAGE_H
 #define GHOTI_IO_CJ_FORMAT_IMAGE_H
 
+#include <stddef.h>
+
 #include <ghoti.io/cjelly/macros.h>
 
 
@@ -41,8 +43,28 @@ typedef enum {
   CJELLY_FORMAT_IMAGE_ERR_FILE_NOT_FOUND,  /**< Unable to open the file */
   CJELLY_FORMAT_IMAGE_ERR_OUT_OF_MEMORY,   /**< Memory allocation failure */
   CJELLY_FORMAT_IMAGE_ERR_INVALID_FORMAT,  /**< File contains an invalid format */
-  CJELLY_FORMAT_IMAGE_ERR_IO               /**< I/O error while reading/writing the file */
+  CJELLY_FORMAT_IMAGE_ERR_IO,              /**< I/O error while reading/writing the file */
+  CJELLY_FORMAT_IMAGE_ERR_LIMIT            /**< File is larger than ::CJELLY_FORMAT_IMAGE_MAX_FILE_BYTES */
 } CJellyFormatImageError;
+
+/**
+ * @brief The largest file ::cjelly_format_image_load() will read.
+ *
+ * The reader used to have no cap at all, on the reasoning that these are
+ * texture assets rather than arbitrary user input.  That is a statement about
+ * how the caller is expected to behave, not something this library can check,
+ * and the cost of being wrong is paid before anything has looked at the
+ * bytes: the file is in memory by the time the first header field is read.
+ *
+ * 256 MiB is an uncompressed 8192x8192 RGBA8 BMP exactly, which is the
+ * largest thing that is plausibly a texture in any format handled here.  A
+ * file past it yields ::CJELLY_FORMAT_IMAGE_ERR_LIMIT with nothing allocated;
+ * the limit is a promise and not a truncation.
+ *
+ * It is a constant because CJelly has no limits structure to hang it on yet.
+ * When it grows one, this becomes its default rather than the whole rule.
+ */
+#define CJELLY_FORMAT_IMAGE_MAX_FILE_BYTES ((size_t)256 * 1024 * 1024)
 
 /**
  * @brief Enumeration of supported image formats.

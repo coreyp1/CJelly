@@ -33,9 +33,11 @@
  * Vulkan as VK_FORMAT_R8G8B8A8_UNORM without converting anything.
  */
 
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include <ghoti.io/cutil/file.h>
+#include <ghoti.io/cutil/path.h>
 
 #include <ghoti.io/image/codec.h>
 #include <ghoti.io/image/core.h>
@@ -60,7 +62,11 @@ static CJellyFormatImageError from_gimg(GIMG_Result r) {
     case GIMG_ERR_CORRUPT:
       return CJELLY_FORMAT_IMAGE_ERR_INVALID_FORMAT;
     case GIMG_ERR_LIMIT:
-      return CJELLY_FORMAT_IMAGE_ERR_OUT_OF_MEMORY;
+      /* This used to answer OUT_OF_MEMORY, because there was no limit code to
+       * map onto and the two failures do look alike from here.  They are not
+       * alike to a caller: one says to retry with less running, the other
+       * says the file will never be accepted however much memory there is. */
+      return CJELLY_FORMAT_IMAGE_ERR_LIMIT;
     default:
       return CJELLY_FORMAT_IMAGE_ERR_INVALID_FORMAT;
   }
@@ -84,55 +90,81 @@ static CJellyFormatImageType type_from_codec_name(const char * name) {
 }
 
 /**
+ * Decide which failure a refused read was, once it has already failed.
+ *
+ * gcu_file_read() reports one GCU_FILE_ERR_IO for "could not open" and "could
+ * not read", but this library's callers have always been told the two apart:
+ * a wrong path is the caller's mistake and a failing disk is not.  Asking the
+ * filesystem afterwards is what keeps that promise without reintroducing the
+ * fopen() the conversion removed - gcu_path_canonicalize() is the
+ * cross-platform existence query, and it reports GCU_PATH_ERR_IO for a path
+ * that is not there.
+ *
+ * It runs only on a path that has already failed, so the window between the
+ * read and the query costs at worst the less useful of two error codes for a
+ * file that was deleted in between.
+ */
+static CJellyFormatImageError classify_read_failure(const char * path) {
+  char * resolved = NULL;
+  GCU_Path_Result r = gcu_path_canonicalize(path, NULL, &resolved);
+  if (r == GCU_PATH_OK) {
+    gcu_path_free(NULL, resolved);
+    return CJELLY_FORMAT_IMAGE_ERR_IO;
+  }
+  return r == GCU_PATH_ERR_IO ? CJELLY_FORMAT_IMAGE_ERR_FILE_NOT_FOUND
+                              : CJELLY_FORMAT_IMAGE_ERR_IO;
+}
+
+/**
  * Read a whole file into a freshly allocated buffer.
  *
- * The image library works from memory streams, and these are texture assets
- * rather than arbitrary user input, so reading the file whole keeps the
- * adapter simple.
+ * cutil owns whole-file reading for the suite, so this is the boundary
+ * between its result enum and ours rather than a sixth copy of the loop.
+ *
+ * What stood here sized the file with fseek() and ftell() and then read that
+ * many bytes, which reports an empty file for anything whose size the kernel
+ * does not know in advance - a pipe, a FIFO, /dev/stdin, anything under
+ * /proc.  Naming a texture that way is unusual but not forbidden, and the
+ * failure was silent in the worst direction: the read "succeeded" with
+ * nothing in it, and the caller reported a corrupt image.  cutil reads in
+ * chunks instead, and on Windows it opens through the wide entry point, which
+ * fopen() cannot do for a path whose bytes are UTF-8.
+ *
+ * It also gains the cap this reader never had.  See
+ * ::CJELLY_FORMAT_IMAGE_MAX_FILE_BYTES for why a texture asset is not the
+ * same thing as a trusted one.
  */
 static CJellyFormatImageError read_file(
     const char * path, unsigned char ** out_data, size_t * out_size) {
   *out_data = NULL;
   *out_size = 0;
 
-  FILE * fp = fopen(path, "rb");
-  if (!fp) {
-    return CJELLY_FORMAT_IMAGE_ERR_FILE_NOT_FOUND;
+  void * data = NULL;
+  size_t length = 0;
+  switch (gcu_file_read(
+      path, CJELLY_FORMAT_IMAGE_MAX_FILE_BYTES, NULL, &data, &length)) {
+    case GCU_FILE_OK:
+      break;
+    case GCU_FILE_ERR_OOM:
+      return CJELLY_FORMAT_IMAGE_ERR_OUT_OF_MEMORY;
+    case GCU_FILE_ERR_LIMIT:
+      return CJELLY_FORMAT_IMAGE_ERR_LIMIT;
+    case GCU_FILE_ERR_INVALID:
+      return CJELLY_FORMAT_IMAGE_ERR_INVALID_FORMAT;
+    case GCU_FILE_ERR_IO:
+    case GCU_FILE_RESULT_COUNT:
+      return classify_read_failure(path);
   }
 
-  if (fseek(fp, 0, SEEK_END) != 0) {
-    fclose(fp);
-    return CJELLY_FORMAT_IMAGE_ERR_IO;
-  }
-  long length = ftell(fp);
-  if (length < 0) {
-    fclose(fp);
-    return CJELLY_FORMAT_IMAGE_ERR_IO;
-  }
-  if (fseek(fp, 0, SEEK_SET) != 0) {
-    fclose(fp);
-    return CJELLY_FORMAT_IMAGE_ERR_IO;
-  }
+  /* An empty file is not a format this library has a codec for, and saying so
+   * here keeps the probe from having to describe zero bytes. */
   if (length == 0) {
-    fclose(fp);
+    gcu_file_free(NULL, data);
     return CJELLY_FORMAT_IMAGE_ERR_INVALID_FORMAT;
   }
 
-  unsigned char * data = (unsigned char *)malloc((size_t)length);
-  if (!data) {
-    fclose(fp);
-    return CJELLY_FORMAT_IMAGE_ERR_OUT_OF_MEMORY;
-  }
-
-  size_t read = fread(data, 1, (size_t)length, fp);
-  fclose(fp);
-  if (read != (size_t)length) {
-    free(data);
-    return CJELLY_FORMAT_IMAGE_ERR_IO;
-  }
-
-  *out_data = data;
-  *out_size = (size_t)length;
+  *out_data = (unsigned char *)data;
+  *out_size = length;
   return CJELLY_FORMAT_IMAGE_SUCCESS;
 }
 
@@ -269,7 +301,7 @@ cleanup:
   if (stream) {
     gimg_stream_destroy(stream);
   }
-  free(file_data);
+  gcu_file_free(NULL, file_data);
   return err;
 }
 
@@ -308,7 +340,7 @@ CJellyFormatImageError cjelly_format_image_detect_type(
 
   GIMG_Stream * stream = NULL;
   if (gimg_stream_create_memory(file_data, file_size, &stream) != GIMG_OK) {
-    free(file_data);
+    gcu_file_free(NULL, file_data);
     return CJELLY_FORMAT_IMAGE_ERR_OUT_OF_MEMORY;
   }
 
@@ -319,7 +351,7 @@ CJellyFormatImageError cjelly_format_image_detect_type(
   }
 
   gimg_stream_destroy(stream);
-  free(file_data);
+  gcu_file_free(NULL, file_data);
 
   return *out_type == CJELLY_FORMAT_IMAGE_UNKNOWN
       ? CJELLY_FORMAT_IMAGE_ERR_INVALID_FORMAT
@@ -338,6 +370,8 @@ const char * cjelly_format_image_strerror(CJellyFormatImageError err) {
       return "Invalid image file format";
     case CJELLY_FORMAT_IMAGE_ERR_IO:
       return "I/O error when reading/writing the image file";
+    case CJELLY_FORMAT_IMAGE_ERR_LIMIT:
+      return "Image file is larger than the reader's limit";
     default:
       return "Unknown error";
   }

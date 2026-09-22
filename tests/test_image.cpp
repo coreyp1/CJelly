@@ -19,6 +19,15 @@
 #include <string>
 #include <vector>
 
+#ifndef _WIN32
+#include <csignal>
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#endif
+
 using cjtest::asset;
 using cjtest::TempFile;
 
@@ -112,7 +121,7 @@ TEST(ImageDetect, MissingFileReportsNotFound) {
 }
 
 TEST(ImageDetect, UnknownSignatureIsUnknown) {
-  TempFile f("not an image at all, just text", ".dat");
+  TempFile f("not an image at all, just text");
   CJellyFormatImageType type = CJELLY_FORMAT_IMAGE_BMP;
   cjelly_format_image_detect_type(f.path(), &type);
   EXPECT_EQ(type, CJELLY_FORMAT_IMAGE_UNKNOWN);
@@ -120,7 +129,7 @@ TEST(ImageDetect, UnknownSignatureIsUnknown) {
 
 // A file shorter than the signature must not read past what it holds.
 TEST(ImageDetect, TruncatedFileIsUnknown) {
-  TempFile f("B", ".bmp");
+  TempFile f("B");
   CJellyFormatImageType type = CJELLY_FORMAT_IMAGE_BMP;
   cjelly_format_image_detect_type(f.path(), &type);
   EXPECT_EQ(type, CJELLY_FORMAT_IMAGE_UNKNOWN);
@@ -171,7 +180,7 @@ TEST(ImageLoad, LoadsBmpAndRecordsName) {
 }
 
 TEST(ImageLoad, UnknownFormatRejected) {
-  TempFile f("definitely not an image", ".dat");
+  TempFile f("definitely not an image");
   CJellyFormatImage * image = nullptr;
   EXPECT_EQ(cjelly_format_image_load(f.path(), &image),
       CJELLY_FORMAT_IMAGE_ERR_INVALID_FORMAT);
@@ -188,7 +197,7 @@ TEST(ImageLoad, MissingFileReportsNotFound) {
 //
 
 TEST(ImageLoad, NotABitmapRejected) {
-  TempFile f("XX not a bitmap header", ".bmp");
+  TempFile f("XX not a bitmap header");
   CJellyFormatImage * image = nullptr;
   EXPECT_NE(cjelly_format_image_load(f.path(), &image),
       CJELLY_FORMAT_IMAGE_SUCCESS);
@@ -199,7 +208,7 @@ TEST(ImageLoad, NotABitmapRejected) {
 TEST(ImageLoad, TruncatedPixelDataRejected) {
   std::string bmp = make_bmp24(8, 8, 1, 2, 3);
   bmp.resize(bmp.size() / 2);
-  TempFile f(bmp, ".bmp");
+  TempFile f(bmp);
   CJellyFormatImage * image = nullptr;
   CJellyFormatImageError err = cjelly_format_image_load(f.path(), &image);
   EXPECT_NE(err, CJELLY_FORMAT_IMAGE_SUCCESS)
@@ -212,7 +221,7 @@ TEST(ImageLoad, TruncatedPixelDataRejected) {
 TEST(ImageLoad, HeaderOnlyRejected) {
   std::string bmp = make_bmp24(4, 4, 0, 0, 0);
   bmp.resize(14 + 40);
-  TempFile f(bmp, ".bmp");
+  TempFile f(bmp);
   CJellyFormatImage * image = nullptr;
   CJellyFormatImageError err = cjelly_format_image_load(f.path(), &image);
   EXPECT_NE(err, CJELLY_FORMAT_IMAGE_SUCCESS);
@@ -225,7 +234,7 @@ TEST(ImageLoad, Synthetic24BitBmp) {
   // The source is 24-bit BGR; what comes back must be RGBA in channel order,
   // with the blue and red the file stored swapped back into place.
   std::string bmp = make_bmp24(3, 2, 0x10, 0x20, 0x30);
-  TempFile f(bmp, ".bmp");
+  TempFile f(bmp);
   CJellyFormatImage * image = nullptr;
   ASSERT_EQ(cjelly_format_image_load(f.path(), &image),
       CJELLY_FORMAT_IMAGE_SUCCESS);
@@ -314,7 +323,7 @@ TEST(ImageLoad, PixelsAreTightlyPackedRgba) {
   // would leak through; the adapter has to strip it.
   for (int width = 1; width <= 5; width++) {
     std::string bmp = make_bmp24(width, 3, 0x11, 0x22, 0x33);
-    TempFile f(bmp, ".bmp");
+    TempFile f(bmp);
     CJellyFormatImage * image = nullptr;
     ASSERT_EQ(cjelly_format_image_load(f.path(), &image),
         CJELLY_FORMAT_IMAGE_SUCCESS)
@@ -333,6 +342,171 @@ TEST(ImageLoad, PixelsAreTightlyPackedRgba) {
       ASSERT_EQ(image->raw->data[i + 3], 0xFF) << "width " << width << " at " << i;
     }
     cjelly_format_image_free(image);
+  }
+}
+
+//
+// Reading the file
+//
+// These cover the boundary onto cutil's whole-file reader rather than any
+// codec.  The reader here used to size the file with fseek/ftell and then
+// read that many bytes, which has two consequences the tests below name.
+//
+
+#ifndef _WIN32
+
+namespace {
+
+/**
+ * A named pipe in the system temporary directory, fed by a forked writer.
+ *
+ * A FIFO is the cheapest thing that reports no size and cannot be seeked,
+ * which is the shape the old reader could not handle.  The writer is a
+ * separate process so that the reader in this one can block on it.
+ */
+class Fifo {
+public:
+  explicit Fifo(std::string payload) : payload_(std::move(payload)) {
+    char * tmp = nullptr;
+    if (gcu_path_temp_dir(nullptr, &tmp) != GCU_PATH_OK) {
+      return;
+    }
+    char joined[1024];
+    std::string name = "cjelly_fifo_" + std::to_string((long)getpid());
+    GCU_Path_Result r = gcu_path_join(
+        GCU_PATH_NATIVE, tmp, name.c_str(), joined, sizeof(joined), nullptr);
+    gcu_path_free(nullptr, tmp);
+    if (r != GCU_PATH_OK || mkfifo(joined, 0600) != 0) {
+      return;
+    }
+    path_ = joined;
+    made_ = true;
+  }
+
+  /** Fork a writer.  Call immediately before the read that drains it. */
+  bool start() {
+    if (!made_) {
+      return false;
+    }
+    child_ = fork();
+    if (child_ < 0) {
+      return false;
+    }
+    if (child_ == 0) {
+      // Child: EPIPE is expected once the reader has had enough, and it must
+      // not raise a signal that the test runner would report.
+      signal(SIGPIPE, SIG_IGN);
+      int fd = open(path_.c_str(), O_WRONLY);
+      if (fd >= 0) {
+        size_t sent = 0;
+        while (sent < payload_.size()) {
+          ssize_t n = write(fd, payload_.data() + sent, payload_.size() - sent);
+          if (n <= 0) {
+            break;
+          }
+          sent += (size_t)n;
+        }
+        close(fd);
+      }
+      _exit(0);
+    }
+    return true;
+  }
+
+  Fifo(const Fifo &) = delete;
+  Fifo & operator=(const Fifo &) = delete;
+
+  ~Fifo() {
+    if (child_ > 0) {
+      int status = 0;
+      waitpid(child_, &status, 0);
+    }
+    if (made_) {
+      ::remove(path_.c_str());
+    }
+  }
+
+  const char * path() const { return path_.c_str(); }
+  bool valid() const { return made_; }
+
+private:
+  std::string payload_;
+  std::string path_;
+  bool made_ = false;
+  pid_t child_ = -1;
+};
+
+} // namespace
+
+// The reader sized the file before reading it, so anything whose size the
+// kernel does not know in advance - a pipe, a FIFO, /dev/stdin, anything
+// under /proc - was refused outright.  cutil reads in chunks instead.
+TEST(ImageRead, LoadsFromAnInputThatReportsNoSize) {
+  std::string bmp = make_bmp24(4, 4, 0x10, 0x20, 0x30);
+  Fifo fifo(bmp);
+  ASSERT_TRUE(fifo.valid());
+  ASSERT_TRUE(fifo.start());
+
+  CJellyFormatImage * image = nullptr;
+  ASSERT_EQ(cjelly_format_image_load(fifo.path(), &image),
+      CJELLY_FORMAT_IMAGE_SUCCESS)
+      << "a FIFO reports no size; the reader must not ask for one";
+  ASSERT_NE(image, nullptr);
+  EXPECT_EQ(image->type, CJELLY_FORMAT_IMAGE_BMP);
+  EXPECT_EQ(image->raw->width, 4);
+  EXPECT_EQ(image->raw->height, 4);
+  cjelly_format_image_free(image);
+}
+
+// The cap is a promise, so it is worth checking against the bound rather
+// than against a file that is merely enormous.  A FIFO carries the bytes
+// without any of them reaching a disk.
+TEST(ImageRead, RefusesAnInputLargerThanTheLimit) {
+  // One byte past the cap is the byte that proves the input is too big.
+  std::string payload(CJELLY_FORMAT_IMAGE_MAX_FILE_BYTES + 1, '\0');
+  Fifo fifo(std::move(payload));
+  ASSERT_TRUE(fifo.valid());
+  ASSERT_TRUE(fifo.start());
+
+  CJellyFormatImage * image = nullptr;
+  EXPECT_EQ(cjelly_format_image_load(fifo.path(), &image),
+      CJELLY_FORMAT_IMAGE_ERR_LIMIT);
+  EXPECT_EQ(image, nullptr) << "nothing is handed back to free";
+}
+
+#endif // _WIN32
+
+// cutil reports one error for "could not open" and "could not read", but
+// this library has always told a caller the two apart.  A directory exists
+// and is not readable as a file, so it is the case that separates them
+// without depending on the test not running as root.
+TEST(ImageRead, ReportsIoRatherThanNotFoundForSomethingThatExists) {
+  CJellyFormatImage * image = nullptr;
+  EXPECT_EQ(cjelly_format_image_load(cjtest::asset_dir().c_str(), &image),
+      CJELLY_FORMAT_IMAGE_ERR_IO);
+  EXPECT_EQ(image, nullptr);
+
+  CJellyFormatImageType type = CJELLY_FORMAT_IMAGE_UNKNOWN;
+  EXPECT_EQ(
+      cjelly_format_image_detect_type(cjtest::asset_dir().c_str(), &type),
+      CJELLY_FORMAT_IMAGE_ERR_IO);
+}
+
+// Every code the enum declares has a string, including the one added with
+// the limit.  A missing case would otherwise surface only in a log.
+TEST(ImageRead, NamesEveryErrorCode) {
+  const CJellyFormatImageError all[] = {
+      CJELLY_FORMAT_IMAGE_SUCCESS,
+      CJELLY_FORMAT_IMAGE_ERR_FILE_NOT_FOUND,
+      CJELLY_FORMAT_IMAGE_ERR_OUT_OF_MEMORY,
+      CJELLY_FORMAT_IMAGE_ERR_INVALID_FORMAT,
+      CJELLY_FORMAT_IMAGE_ERR_IO,
+      CJELLY_FORMAT_IMAGE_ERR_LIMIT,
+  };
+  for (CJellyFormatImageError err : all) {
+    const char * text = cjelly_format_image_strerror(err);
+    ASSERT_NE(text, nullptr);
+    EXPECT_STRNE(text, "Unknown error") << "code " << (int)err;
   }
 }
 

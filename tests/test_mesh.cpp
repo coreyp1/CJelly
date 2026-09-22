@@ -24,7 +24,7 @@ namespace {
 
 /** Build a mesh from an inline OBJ document, or fail the test. */
 CJellyModelMesh * build(const std::string & text) {
-  TempFile f(text, ".obj");
+  TempFile f(text);
   EXPECT_TRUE(f.valid());
   CJellyModelMesh * mesh = nullptr;
   CJellyModelMeshError err = cjelly_model_mesh_load(f.path(), &mesh);
@@ -35,7 +35,7 @@ CJellyModelMesh * build(const std::string & text) {
 
 /** Build from an inline document that is expected to fail. */
 CJellyModelMeshError build_expecting_failure(const std::string & text) {
-  TempFile f(text, ".obj");
+  TempFile f(text);
   EXPECT_TRUE(f.valid());
   CJellyModelMesh * mesh = nullptr;
   CJellyModelMeshError err = cjelly_model_mesh_load(f.path(), &mesh);

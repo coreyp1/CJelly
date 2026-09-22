@@ -22,7 +22,14 @@
 
 #include <cstdio>
 #include <cstring>
+#include <string>
 #include <vector>
+
+#ifndef _WIN32
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
+#endif
 
 using cjtest::TempFile;
 
@@ -138,7 +145,7 @@ TEST(CaptureWritePng, RoundTripsThroughTheImageLibrary) {
   const uint32_t kHeight = 9; // stride confusion between width and row bytes.
   SyntheticCapture synthetic(kWidth, kHeight);
 
-  TempFile out("", ".png");
+  TempFile out("");
   ASSERT_TRUE(out.valid());
   ASSERT_EQ(cj_capture_write_png(synthetic.get(), out.path()), CJ_SUCCESS);
 
@@ -191,6 +198,106 @@ TEST(CaptureWritePng, RoundTripsThroughTheImageLibrary) {
   gimg_raster_destroy(raster);
   gimg_doc_destroy(doc);
 }
+
+#ifndef _WIN32
+
+namespace {
+
+/** A directory in the system temporary area, removed with its contents. */
+class TempDir {
+public:
+  TempDir() {
+    char * tmp = nullptr;
+    if (gcu_path_temp_dir(nullptr, &tmp) != GCU_PATH_OK) {
+      return;
+    }
+    char joined[1024];
+    std::string name = "cjelly_capture_" + std::to_string((long)getpid());
+    GCU_Path_Result r = gcu_path_join(
+        GCU_PATH_NATIVE, tmp, name.c_str(), joined, sizeof(joined), nullptr);
+    gcu_path_free(nullptr, tmp);
+    if (r != GCU_PATH_OK || mkdir(joined, 0700) != 0) {
+      return;
+    }
+    path_ = joined;
+    made_ = true;
+  }
+
+  TempDir(const TempDir &) = delete;
+  TempDir & operator=(const TempDir &) = delete;
+
+  ~TempDir() {
+    if (!made_) {
+      return;
+    }
+    chmod(path_.c_str(), 0700);
+    ::remove(file("out.png").c_str());
+    rmdir(path_.c_str());
+  }
+
+  std::string file(const char * name) const {
+    char joined[1024];
+    if (gcu_path_join(GCU_PATH_NATIVE, path_.c_str(), name, joined,
+            sizeof(joined), nullptr)
+        != GCU_PATH_OK) {
+      return std::string();
+    }
+    return std::string(joined);
+  }
+
+  const char * path() const { return path_.c_str(); }
+  bool valid() const { return made_; }
+
+private:
+  std::string path_;
+  bool made_ = false;
+};
+
+} // namespace
+
+// The writer opened the destination directly, so it truncated whatever was
+// there before it knew whether the new image could be written at all - and
+// it never checked the close, which is the call that reports a full disk for
+// everything stdio still held.  Writing through a temporary and renaming
+// means the destination is either the old file or the whole new one.
+//
+// A directory the process may not write to is the deterministic way to make
+// the write fail: creating the temporary in it is refused, while opening an
+// existing writable file inside it is not, which is exactly the gap the old
+// code fell through.
+TEST(CaptureWritePng, LeavesTheExistingFileAloneWhenTheWriteFails) {
+  TempDir dir;
+  ASSERT_TRUE(dir.valid());
+  const std::string dest = dir.file("out.png");
+
+  const std::string sentinel = "this is not a png, and must survive";
+  FILE * f = fopen(dest.c_str(), "wb");
+  ASSERT_NE(f, nullptr);
+  ASSERT_EQ(fwrite(sentinel.data(), 1, sentinel.size(), f), sentinel.size());
+  ASSERT_EQ(fclose(f), 0);
+
+  // The file stays writable; only the directory is closed off.
+  ASSERT_EQ(chmod(dir.path(), 0500), 0);
+  SyntheticCapture synthetic(4, 4);
+  const cj_result_t result = cj_capture_write_png(synthetic.get(), dest.c_str());
+  ASSERT_EQ(chmod(dir.path(), 0700), 0);
+
+  EXPECT_NE(result, CJ_SUCCESS) << "the write could not have succeeded";
+
+  std::string after;
+  f = fopen(dest.c_str(), "rb");
+  ASSERT_NE(f, nullptr);
+  char chunk[256];
+  size_t got;
+  while ((got = fread(chunk, 1, sizeof(chunk), f)) > 0) {
+    after.append(chunk, got);
+  }
+  fclose(f);
+  EXPECT_EQ(after, sentinel)
+      << "a failed write must not destroy what was already there";
+}
+
+#endif // _WIN32
 
 int main(int argc, char ** argv) {
   ::testing::InitGoogleTest(&argc, argv);

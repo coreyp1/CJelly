@@ -38,6 +38,8 @@
 #include <vulkan/vulkan.h>
 #endif
 
+#include <ghoti.io/cutil/file.h>
+
 #include <ghoti.io/cjelly/macros.h>
 #include <ghoti.io/cjelly/cj_capture.h>
 #include <ghoti.io/cjelly/engine_internal.h>
@@ -334,7 +336,6 @@ CJ_API cj_result_t cj_capture_write_png(
   GIMG_Raster * raster = NULL;
   GIMG_Doc * doc = NULL;
   GIMG_Stream * stream = NULL;
-  FILE * file = NULL;
 
   /* Borrowed: the raster reads the capture's buffer and does not take it. */
   if (gimg_raster_create(capture->width, capture->height, &GIMG_PIXEL_RGBA8,
@@ -361,18 +362,34 @@ CJ_API cj_result_t cj_capture_write_png(
     goto done;
   }
 
-  file = fopen(path, "wb");
-  if (!file) {
-    result = CJ_E_INVALID_ARGUMENT;
-    goto done;
+  /*
+   * Written through cutil rather than fopen/fwrite/fclose.  Two things come
+   * with that.  The close was never checked, and it is the call that reports
+   * a full disk for everything stdio still had buffered - so a capture that
+   * did not reach the disk returned CJ_SUCCESS.  And the bytes went straight
+   * to their final name, so anything watching the directory could pick up a
+   * half-written PNG; gcu_file_write_atomic() writes a temporary beside it
+   * and renames, so the path either does not exist yet or is a whole image.
+   */
+  switch (gcu_file_write_atomic(
+      path, encoded, encoded_size, GCU_FILE_SYNC_FULL, NULL)) {
+    case GCU_FILE_OK:
+      result = CJ_SUCCESS;
+      break;
+    case GCU_FILE_ERR_INVALID:
+      result = CJ_E_INVALID_ARGUMENT;
+      break;
+    case GCU_FILE_ERR_OOM:
+      result = CJ_E_OUT_OF_MEMORY;
+      break;
+    case GCU_FILE_ERR_LIMIT:
+    case GCU_FILE_ERR_IO:
+    case GCU_FILE_RESULT_COUNT:
+      result = CJ_E_UNKNOWN;
+      break;
   }
-  if (fwrite(encoded, 1, encoded_size, file) != encoded_size) {
-    goto done;
-  }
-  result = CJ_SUCCESS;
 
 done:
-  if (file) fclose(file);
   gimg_stream_destroy(stream);
   gimg_doc_destroy(doc);
   gimg_raster_destroy(raster);

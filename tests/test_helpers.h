@@ -19,6 +19,9 @@
 #include <string>
 #include <gtest/gtest.h>
 
+#include <ghoti.io/cutil/file.h>
+#include <ghoti.io/cutil/path.h>
+
 namespace cjtest {
 
 /**
@@ -33,47 +36,73 @@ inline std::string asset_dir() {
 
 /** Path to a checked-in sample asset. */
 inline std::string asset(const std::string & relative) {
-  return asset_dir() + "/" + relative;
+  // Joined through cutil rather than with a literal '/': the separator is
+  // not the same everywhere, and the concatenation also doubled it whenever
+  // CJELLY_TEST_DIR was given with a trailing one.
+  char joined[1024];
+  if (gcu_path_join(GCU_PATH_NATIVE, asset_dir().c_str(), relative.c_str(),
+          joined, sizeof(joined), nullptr)
+      != GCU_PATH_OK) {
+    ADD_FAILURE() << "could not join asset path: " << relative;
+    return relative;
+  }
+  return std::string(joined);
 }
 
 /**
  * A file written to a temporary path and removed when the object goes out of
  * scope. Lets a test state its input inline rather than hiding it in a
  * fixture file, which matters most for the malformed cases.
+ *
+ * Created through cutil.  What stood here invented a name with mkstemp(),
+ * deleted it, and reopened it with an extension appended - so between the
+ * delete and the reopen the name was anybody's to take, and a symbolic link
+ * left there would have been followed.  It also wrote to /tmp whatever
+ * $TMPDIR said.  gcu_file_temp_create() chooses the name and creates the
+ * file in one step that fails if the name is taken, in whatever directory
+ * gcu_path_temp_dir() names.
+ *
+ * The decorative extension went with it: nothing in CJelly decides anything
+ * from a file's name.  Images are identified by signature and the mesh
+ * loader is handed a format, so a test that passes a `.bmp` name is
+ * describing its intent to the reader and nothing else.
  */
 class TempFile {
 public:
-  explicit TempFile(const std::string & contents, const char * suffix = ".tmp") {
-    char name[] = "/tmp/cjelly_test_XXXXXX";
-    int fd = mkstemp(name);
-    if (fd >= 0) {
-      close(fd);
-      ::remove(name);
+  explicit TempFile(const std::string & contents) {
+    if (gcu_file_temp_create(&temp_, nullptr, "cjelly_test", nullptr)
+        != GCU_FILE_OK) {
+      return;
     }
-    path_ = std::string(name) + suffix;
-    FILE * f = fopen(path_.c_str(), "wb");
-    if (f) {
-      if (!contents.empty()) {
-        fwrite(contents.data(), 1, contents.size(), f);
-      }
-      fclose(f);
-      valid_ = true;
+    path_ = gcu_file_temp_path(&temp_);
+
+    FILE * f = gcu_file_temp_stream(&temp_);
+    if (!contents.empty()
+        && fwrite(contents.data(), 1, contents.size(), f) != contents.size()) {
+      return;
     }
+    // The handle keeps the file open; the code under test opens it again by
+    // name, so what is buffered here has to have reached the file first.
+    if (fflush(f) != 0) {
+      return;
+    }
+    valid_ = true;
   }
 
   TempFile(const TempFile &) = delete;
   TempFile & operator=(const TempFile &) = delete;
 
   ~TempFile() {
-    if (valid_) {
-      ::remove(path_.c_str());
-    }
+    // Closes the stream and removes the file.  Accepts a zeroed handle, so
+    // it does not need to know whether the constructor got that far.
+    gcu_file_temp_abort(&temp_);
   }
 
   const char * path() const { return path_.c_str(); }
   bool valid() const { return valid_; }
 
 private:
+  GCU_File_Temp temp_ {};
   std::string path_;
   bool valid_ = false;
 };
