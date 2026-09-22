@@ -550,6 +550,7 @@ $(APP_DIR)/main$(EXE_EXTENSION): \
 
 # General commands
 .PHONY: clean cloc docs docs-pdf coverage
+.PHONY: fuzz fuzz-clean test-asan test-ubsan
 # Release build commands
 .PHONY: all demo install test test-watch uninstall watch check-symbols
 # Debug build commands
@@ -799,12 +800,98 @@ endif
 test-ubsan: ## Alias for test-asan (ASan and UBSan run together)
 test-ubsan: test-asan
 
+####################################################################
+# Fuzzing (libFuzzer)
+####################################################################
+#
+# Only the mesh post-processing is fuzzed, and only it is compiled here. The
+# rest of the library needs Vulkan and a display; none of it parses anything,
+# and building it under clang to reach code the harness never calls would buy
+# nothing but build time.
+#
+# The parse itself belongs to Ghoti.io Model and is fuzzed there. What these
+# harnesses cover is everything cjelly does afterwards - range checking face
+# indices, fan triangulation, generated normals, the V flip and the bounds -
+# which is cjelly's own code operating on numbers a file chose.
+#
+# The sources are rebuilt with -fsanitize=fuzzer-no-link rather than linked
+# from the ordinary library: libFuzzer steers by the coverage it observes, and
+# a harness over an uninstrumented library sees no branches and degenerates
+# into random input.
+FUZZ_CC ?= clang
+FUZZ_CXX ?= clang++
+FUZZ_CC_OK := $(shell which $(FUZZ_CC) 2>/dev/null)
+FUZZ_SAN := -fsanitize=address,$(UBSAN_CHECKS) \
+	-fno-sanitize-recover=$(UBSAN_CHECKS) -fno-omit-frame-pointer -g -O1
+FUZZ_LIB_FLAGS := $(FUZZ_SAN) -fsanitize=fuzzer-no-link
+FUZZ_BIN_FLAGS := $(FUZZ_SAN) -fsanitize=fuzzer
+FUZZ_DIR := $(BUILD_DIR)-fuzz
+FUZZ_OBJ_DIR := $(FUZZ_DIR)/objects
+FUZZ_APP_DIR := $(FUZZ_DIR)/apps
+# The tracked seeds, read only. libFuzzer writes what it discovers into a
+# working corpus under the build directory instead, because a campaign
+# adds thousands of machine-named files and a repository is the wrong
+# place for them: they would drown every later `git status`, and they are
+# reproducible from the seeds and the harness in the time it takes to
+# read them. Seeds here are hand-written and each one is a case worth
+# keeping - see tests/fuzz/README.md.
+FUZZ_CORPUS := tests/fuzz/corpus
+FUZZ_WORK := $(FUZZ_DIR)/corpus
+
+# What the harnesses actually reach: the mesh builder and the allocator it
+# asks for memory through.
+FUZZ_SOURCES := src/format/3d/mesh.c src/allocator.c
+FUZZ_OBJECTS := $(patsubst src/%.c,$(FUZZ_OBJ_DIR)/%.o,$(FUZZ_SOURCES))
+
+# A smoke-test length by default; for a real campaign: make fuzz FUZZ_TIME=3600
+FUZZ_TIME ?= 60
+
+$(FUZZ_OBJECTS): | $(LIBVER_GEN)
+
+$(FUZZ_OBJ_DIR)/%.o: src/%.c
+	@mkdir -p $(@D)
+	@$(FUZZ_CC) $(FUZZ_LIB_FLAGS) -std=c17 -w -DCJELLY_BUILD $(INCLUDE) -c $< -o $@
+
+# $1 = harness basename (fuzz_mesh), $2 = target suffix (mesh)
+define fuzz-rule
+fuzz-$2: ## Build the $2 fuzz harness (requires clang)
+fuzz-$2: $$(FUZZ_APP_DIR)/$1
+
+$$(FUZZ_APP_DIR)/$1: tests/fuzz/$1.cpp tests/fuzz/fuzz_mesh_invariants.h $$(FUZZ_OBJECTS)
+	@if [ -z "$$(FUZZ_CC_OK)" ]; then \
+		echo "fuzzing requires $$(FUZZ_CXX); install clang or set FUZZ_CC/FUZZ_CXX"; \
+		exit 1; \
+	fi
+	@mkdir -p $$(@D) $$(FUZZ_CORPUS)/$2
+	@printf "\n### Building fuzz harness: $1 ###\n"
+	$$(FUZZ_CXX) $$(FUZZ_BIN_FLAGS) -std=c++20 -w $$(INCLUDE) -I tests/fuzz \
+		-o $$@ $$< $$(FUZZ_OBJECTS) $$(MODEL_LIBS) $$(CUTIL_LIBS)
+
+fuzz-run-$2: ## Run the $2 fuzzer for $$(FUZZ_TIME) seconds
+fuzz-run-$2: $$(FUZZ_APP_DIR)/$1
+	@mkdir -p $$(FUZZ_WORK)/$2 $$(FUZZ_CORPUS)/$2
+	@printf "\n### Fuzzing $2 for $$(FUZZ_TIME)s ###\n"
+	@env -u LD_PRELOAD LD_LIBRARY_PATH="$$(RUNTIME_LIB_PATH)" \
+		$$(FUZZ_APP_DIR)/$1 $$(FUZZ_WORK)/$2 $$(FUZZ_CORPUS)/$2 \
+		-artifact_prefix=$$(FUZZ_DIR)/ \
+		-max_total_time=$$(FUZZ_TIME) -print_final_stats=1
+endef
+
+$(eval $(call fuzz-rule,fuzz_mesh,mesh))
+$(eval $(call fuzz-rule,fuzz_mesh_struct,mesh-struct))
+
+fuzz: ## Build and run every fuzzer for $(FUZZ_TIME) seconds each
+fuzz: fuzz-run-mesh fuzz-run-mesh-struct
+
+fuzz-clean: ## Remove the fuzz build (keeps the corpus)
+	-@rm -rf $(FUZZ_DIR)
+
 clean: ## Remove all contents of the build directories.
 # The sanitizer tree goes too. It is a sibling of the ordinary build
 # directory rather than a child, so a clean naming only the latter leaves
 # instrumented objects behind - and those are the worst kind to leave,
 # because they still run.
-	-@rm -rvf $(BUILD_DIR) $(ASAN_BUILD_DIR)
+	-@rm -rvf $(BUILD_DIR) $(ASAN_BUILD_DIR) $(FUZZ_DIR)
 
 # Files will be as follows:
 # /usr/local/lib/(SUITE)/
