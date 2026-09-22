@@ -138,21 +138,26 @@ TEST(ImageDetect, TruncatedFileIsUnknown) {
 TEST(ImageDetect, NullArgumentsRejected) {
   CJellyFormatImageType type = CJELLY_FORMAT_IMAGE_UNKNOWN;
   EXPECT_EQ(cjelly_format_image_detect_type(nullptr, &type),
-      CJELLY_FORMAT_IMAGE_ERR_INVALID_FORMAT);
+      CJELLY_FORMAT_IMAGE_ERR_INVALID_ARGUMENT);
   // Must report the error rather than writing through the null pointer.
   EXPECT_EQ(cjelly_format_image_detect_type("whatever.bmp", nullptr),
-      CJELLY_FORMAT_IMAGE_ERR_INVALID_FORMAT);
+      CJELLY_FORMAT_IMAGE_ERR_INVALID_ARGUMENT);
 }
 
 TEST(ImageStrerror, CoversEveryCode) {
   const CJellyFormatImageError codes[] = {CJELLY_FORMAT_IMAGE_SUCCESS,
       CJELLY_FORMAT_IMAGE_ERR_FILE_NOT_FOUND,
       CJELLY_FORMAT_IMAGE_ERR_OUT_OF_MEMORY,
-      CJELLY_FORMAT_IMAGE_ERR_INVALID_FORMAT, CJELLY_FORMAT_IMAGE_ERR_IO};
+      CJELLY_FORMAT_IMAGE_ERR_INVALID_FORMAT, CJELLY_FORMAT_IMAGE_ERR_IO,
+      CJELLY_FORMAT_IMAGE_ERR_LIMIT,
+      CJELLY_FORMAT_IMAGE_ERR_INVALID_ARGUMENT};
   for (CJellyFormatImageError c : codes) {
     const char * msg = cjelly_format_image_strerror(c);
     ASSERT_NE(msg, nullptr);
     EXPECT_GT(strlen(msg), 0u);
+    // The default arm answers "Unknown error", so a code with no case of its
+    // own passes a non-empty check while saying nothing.
+    EXPECT_STRNE(msg, "Unknown error") << "code " << (int)c;
   }
 }
 
@@ -490,24 +495,6 @@ TEST(ImageRead, ReportsIoRatherThanNotFoundForSomethingThatExists) {
   EXPECT_EQ(
       cjelly_format_image_detect_type(cjtest::asset_dir().c_str(), &type),
       CJELLY_FORMAT_IMAGE_ERR_IO);
-}
-
-// Every code the enum declares has a string, including the one added with
-// the limit.  A missing case would otherwise surface only in a log.
-TEST(ImageRead, NamesEveryErrorCode) {
-  const CJellyFormatImageError all[] = {
-      CJELLY_FORMAT_IMAGE_SUCCESS,
-      CJELLY_FORMAT_IMAGE_ERR_FILE_NOT_FOUND,
-      CJELLY_FORMAT_IMAGE_ERR_OUT_OF_MEMORY,
-      CJELLY_FORMAT_IMAGE_ERR_INVALID_FORMAT,
-      CJELLY_FORMAT_IMAGE_ERR_IO,
-      CJELLY_FORMAT_IMAGE_ERR_LIMIT,
-  };
-  for (CJellyFormatImageError err : all) {
-    const char * text = cjelly_format_image_strerror(err);
-    ASSERT_NE(text, nullptr);
-    EXPECT_STRNE(text, "Unknown error") << "code " << (int)err;
-  }
 }
 
 int main(int argc, char ** argv) {

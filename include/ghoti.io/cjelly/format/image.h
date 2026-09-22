@@ -44,7 +44,8 @@ typedef enum {
   CJELLY_FORMAT_IMAGE_ERR_OUT_OF_MEMORY,   /**< Memory allocation failure */
   CJELLY_FORMAT_IMAGE_ERR_INVALID_FORMAT,  /**< File contains an invalid format */
   CJELLY_FORMAT_IMAGE_ERR_IO,              /**< I/O error while reading/writing the file */
-  CJELLY_FORMAT_IMAGE_ERR_LIMIT            /**< File is larger than ::CJELLY_FORMAT_IMAGE_MAX_FILE_BYTES */
+  CJELLY_FORMAT_IMAGE_ERR_LIMIT,           /**< File is larger than ::CJELLY_FORMAT_IMAGE_MAX_FILE_BYTES */
+  CJELLY_FORMAT_IMAGE_ERR_INVALID_ARGUMENT /**< A caller-supplied argument is wrong */
 } CJellyFormatImageError;
 
 /**

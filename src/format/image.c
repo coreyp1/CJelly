@@ -37,7 +37,6 @@
 #include <string.h>
 
 #include <ghoti.io/cutil/file.h>
-#include <ghoti.io/cutil/path.h>
 
 #include <ghoti.io/image/codec.h>
 #include <ghoti.io/image/core.h>
@@ -90,32 +89,6 @@ static CJellyFormatImageType type_from_codec_name(const char * name) {
 }
 
 /**
- * Decide which failure a refused read was, once it has already failed.
- *
- * gcu_file_read() reports one GCU_FILE_ERR_IO for "could not open" and "could
- * not read", but this library's callers have always been told the two apart:
- * a wrong path is the caller's mistake and a failing disk is not.  Asking the
- * filesystem afterwards is what keeps that promise without reintroducing the
- * fopen() the conversion removed - gcu_path_canonicalize() is the
- * cross-platform existence query, and it reports GCU_PATH_ERR_IO for a path
- * that is not there.
- *
- * It runs only on a path that has already failed, so the window between the
- * read and the query costs at worst the less useful of two error codes for a
- * file that was deleted in between.
- */
-static CJellyFormatImageError classify_read_failure(const char * path) {
-  char * resolved = NULL;
-  GCU_Path_Result r = gcu_path_canonicalize(path, NULL, &resolved);
-  if (r == GCU_PATH_OK) {
-    gcu_path_free(NULL, resolved);
-    return CJELLY_FORMAT_IMAGE_ERR_IO;
-  }
-  return r == GCU_PATH_ERR_IO ? CJELLY_FORMAT_IMAGE_ERR_FILE_NOT_FOUND
-                              : CJELLY_FORMAT_IMAGE_ERR_IO;
-}
-
-/**
  * Read a whole file into a freshly allocated buffer.
  *
  * cutil owns whole-file reading for the suite, so this is the boundary
@@ -149,11 +122,22 @@ static CJellyFormatImageError read_file(
       return CJELLY_FORMAT_IMAGE_ERR_OUT_OF_MEMORY;
     case GCU_FILE_ERR_LIMIT:
       return CJELLY_FORMAT_IMAGE_ERR_LIMIT;
+    case GCU_FILE_ERR_NOT_FOUND:
+      return CJELLY_FORMAT_IMAGE_ERR_FILE_NOT_FOUND;
     case GCU_FILE_ERR_INVALID:
-      return CJELLY_FORMAT_IMAGE_ERR_INVALID_FORMAT;
+      /* ENAMETOOLONG lands here.  It says the path cannot name a file on this
+       * filesystem, which is a statement about the argument and not about any
+       * bytes - nothing was opened, so there is no format to call invalid. */
+      return CJELLY_FORMAT_IMAGE_ERR_INVALID_ARGUMENT;
+    case GCU_FILE_ERR_ACCESS:
+    case GCU_FILE_ERR_EXISTS:
+    case GCU_FILE_ERR_NOT_EMPTY:
     case GCU_FILE_ERR_IO:
     case GCU_FILE_RESULT_COUNT:
-      return classify_read_failure(path);
+      /* EXISTS and NOT_EMPTY cannot arise from a read; they are named so that
+       * this switch stays exhaustive and the next added code is a compile
+       * error here rather than a silent fall-through. */
+      return CJELLY_FORMAT_IMAGE_ERR_IO;
   }
 
   /* An empty file is not a format this library has a codec for, and saying so
@@ -214,7 +198,7 @@ static CJellyFormatImageError pack_raster(
 CJellyFormatImageError cjelly_format_image_load(
     const char * filename, CJellyFormatImage ** out_image) {
   if (!filename || !out_image) {
-    return CJELLY_FORMAT_IMAGE_ERR_INVALID_FORMAT;
+    return CJELLY_FORMAT_IMAGE_ERR_INVALID_ARGUMENT;
   }
   *out_image = NULL;
 
@@ -327,7 +311,7 @@ CJellyFormatImageError cjelly_format_image_detect_type(
   // Validate before writing: the assignment used to come first, so passing a
   // NULL out_type crashed instead of returning the error it checks for.
   if (!path || !out_type) {
-    return CJELLY_FORMAT_IMAGE_ERR_INVALID_FORMAT;
+    return CJELLY_FORMAT_IMAGE_ERR_INVALID_ARGUMENT;
   }
   *out_type = CJELLY_FORMAT_IMAGE_UNKNOWN;
 
@@ -372,6 +356,8 @@ const char * cjelly_format_image_strerror(CJellyFormatImageError err) {
       return "I/O error when reading/writing the image file";
     case CJELLY_FORMAT_IMAGE_ERR_LIMIT:
       return "Image file is larger than the reader's limit";
+    case CJELLY_FORMAT_IMAGE_ERR_INVALID_ARGUMENT:
+      return "Invalid argument";
     default:
       return "Unknown error";
   }

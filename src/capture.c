@@ -370,9 +370,16 @@ CJ_API cj_result_t cj_capture_write_png(
    * to their final name, so anything watching the directory could pick up a
    * half-written PNG; gcu_file_write_atomic() writes a temporary beside it
    * and renames, so the path either does not exist yet or is a whole image.
+   *
+   * PERMS_DEFAULT, not the PERMS_PRIVATE zero value: a capture is an output
+   * file the caller asked for, in a directory the caller named, and nothing
+   * in it is a secret.  The first version of this conversion had no such
+   * argument and inherited the temporary's 0600, which quietly made every
+   * screenshot more restrictive than the fopen() it replaced - that defect
+   * is why cutil grew the parameter.
    */
-  switch (gcu_file_write_atomic(
-      path, encoded, encoded_size, GCU_FILE_SYNC_FULL, NULL)) {
+  switch (gcu_file_write_atomic(path, encoded, encoded_size,
+      GCU_FILE_SYNC_FULL, GCU_FILE_PERMS_DEFAULT, NULL)) {
     case GCU_FILE_OK:
       result = CJ_SUCCESS;
       break;
@@ -382,7 +389,22 @@ CJ_API cj_result_t cj_capture_write_png(
     case GCU_FILE_ERR_OOM:
       result = CJ_E_OUT_OF_MEMORY;
       break;
+    case GCU_FILE_ERR_NOT_FOUND:
+      /* The destination's directory does not exist.  cutil does not create
+       * one, deliberately, so this is the caller naming somewhere that is
+       * not there rather than a failure to write. */
+      result = CJ_E_NOT_FOUND;
+      break;
+    case GCU_FILE_ERR_EXISTS:
+      result = CJ_E_ALREADY_EXISTS;
+      break;
+    case GCU_FILE_ERR_ACCESS:
+      /* cj_result_t has no permission code, so this is the honest floor.
+       * Worth a code of its own if anything ever needs to branch on it. */
+      result = CJ_E_UNKNOWN;
+      break;
     case GCU_FILE_ERR_LIMIT:
+    case GCU_FILE_ERR_NOT_EMPTY:
     case GCU_FILE_ERR_IO:
     case GCU_FILE_RESULT_COUNT:
       result = CJ_E_UNKNOWN;
