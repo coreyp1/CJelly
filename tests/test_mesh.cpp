@@ -18,6 +18,7 @@
 #include <string>
 
 using cjtest::asset;
+using cjtest::asset_dir;
 using cjtest::TempFile;
 using cjtest::CountingAllocator;
 
@@ -403,6 +404,36 @@ TEST(MeshAllocator, TheObjParseUsesItToo) {
   EXPECT_EQ(alloc.live(), 0);
   EXPECT_GT(with_parse, 1u)
       << "one allocation would mean only the mesh struct came from here";
+}
+
+//
+// The harness's own fixture lookup
+//
+// These guard the thing that decides whether any of the tests above are
+// reading the file they name. It used to fall back to a relative "test",
+// so a binary invoked from anywhere but the library directory failed with
+// an assertion about a file's contents rather than about the file.
+//
+
+TEST(Fixtures, TheAssetDirectoryIsAbsolute) {
+  // A relative answer is right only for whoever invoked the binary the way
+  // the Makefile does.
+  EXPECT_TRUE(gcu_path_is_absolute(GCU_PATH_NATIVE, asset_dir().c_str()))
+      << asset_dir();
+}
+
+TEST(Fixtures, ResolvingTheAssetDirectoryIsIdempotent) {
+  EXPECT_EQ(cjtest::resolve_asset_dir(asset_dir().c_str()), asset_dir());
+}
+
+TEST(Fixtures, ADirectoryThatIsNotThereIsRefused) {
+  EXPECT_TRUE(cjtest::resolve_asset_dir(cjtest::missing_path()).empty());
+}
+
+TEST(Fixtures, ADirectoryWithoutTheFixturesIsRefused) {
+  // test/models exists and holds files, but it is not the fixture root.
+  // Checking only that the directory is there would accept it.
+  EXPECT_TRUE(cjtest::resolve_asset_dir(asset("models").c_str()).empty());
 }
 
 int main(int argc, char ** argv) {

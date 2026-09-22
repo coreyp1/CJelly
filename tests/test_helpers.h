@@ -26,13 +26,94 @@
 namespace cjtest {
 
 /**
- * Directory holding the checked-in sample assets (test/ in the repository).
+ * Resolve @p base to the absolute path of the fixture directory, or return
+ * an empty string if it is not one.
+ *
+ * The lookup this replaces read CJELLY_TEST_DIR and fell back to the relative
+ * string `"test"`, which is right when the binary is invoked from the library
+ * directory - what `make test` does - and wrong everywhere else. A fixture
+ * that did not resolve was then nobody's problem until some test opened it,
+ * and the failure named that test's assertion about the contents of a file
+ * that had never been read. **The relative fallback is what made it silent:**
+ * an absolute one would have been wrong identically everywhere, which is a
+ * bug someone notices on the first day. A relative one misbehaves only for
+ * whoever is not using the blessed invocation, which is exactly the set of
+ * people already debugging something.
+ *
+ * Two questions are asked, because "a directory of that name exists" is the
+ * weaker one: the path has to resolve through the filesystem, and it has to
+ * contain a fixture we know belongs to this repository. Some other `test/`
+ * fails the second.
+ */
+inline std::string resolve_asset_dir(const char * base) {
+  // Canonicalize rather than make absolute: this one consults the
+  // filesystem, so a directory that is not there is a failure here instead
+  // of a surprise at the first fopen().
+  char * dir = nullptr;
+  if (gcu_path_canonicalize(base, nullptr, &dir) != GCU_PATH_OK) {
+    return std::string();
+  }
+  std::string resolved(dir);
+  gcu_path_free(nullptr, dir);
+
+  char sentinel[1024];
+  if (gcu_path_join(GCU_PATH_NATIVE, resolved.c_str(), "models/cube.obj",
+          sentinel, sizeof(sentinel), nullptr)
+      != GCU_PATH_OK) {
+    return std::string();
+  }
+
+  char * found = nullptr;
+  if (gcu_path_canonicalize(sentinel, nullptr, &found) != GCU_PATH_OK) {
+    return std::string();
+  }
+  gcu_path_free(nullptr, found);
+
+  return resolved;
+}
+
+/**
+ * Directory holding the checked-in sample assets (test/ in the repository),
+ * as an absolute path.
+ *
  * The Makefile passes it as CJELLY_TEST_DIR so the tests can be run from
- * anywhere; it falls back to the conventional relative path.
+ * anywhere; `test` relative to the working directory is tried when it is
+ * unset, so a binary invoked from the library directory still works. What
+ * does not happen any more is running without fixtures: an unresolvable
+ * directory stops the binary with a message about the directory, rather
+ * than letting every test that reads one fail on its own assertion.
  */
 inline std::string asset_dir() {
-  const char * env = std::getenv("CJELLY_TEST_DIR");
-  return env ? std::string(env) : std::string("test");
+  static const std::string dir = [] {
+    const char * env = std::getenv("CJELLY_TEST_DIR");
+    const char * base = env ? env : "test";
+    std::string resolved = resolve_asset_dir(base);
+    if (!resolved.empty()) {
+      return resolved;
+    }
+
+    // Lexical, because the whole problem is that this path does not resolve;
+    // it says what the relative string meant from here.
+    char * meant = nullptr;
+    if (gcu_path_absolute(base, nullptr, &meant) != GCU_PATH_OK) {
+      meant = nullptr;
+    }
+    std::fprintf(stderr,
+        "\n"
+        "This test binary cannot find its fixtures.\n"
+        "  looked in: %s%s\n"
+        "  meaning:   %s\n"
+        "\n"
+        "Set CJELLY_TEST_DIR to the test/ directory of the cjelly checkout,\n"
+        "or run `make test`, which sets it. Refusing to run: without the\n"
+        "fixtures every test that reads one fails on its own assertion, and\n"
+        "reads as a bug in the library rather than in the invocation.\n",
+        base, env ? "" : "  (the fallback; CJELLY_TEST_DIR is not set)",
+        meant ? meant : "(could not be resolved)");
+    gcu_path_free(nullptr, meant);
+    std::exit(1);
+  }();
+  return dir;
 }
 
 /** Path to a checked-in sample asset. */
