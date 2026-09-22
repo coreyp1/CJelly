@@ -19,6 +19,7 @@
 
 using cjtest::asset;
 using cjtest::TempFile;
+using cjtest::CountingAllocator;
 
 namespace {
 
@@ -27,7 +28,7 @@ CJellyModelMesh * build(const std::string & text) {
   TempFile f(text);
   EXPECT_TRUE(f.valid());
   CJellyModelMesh * mesh = nullptr;
-  CJellyModelMeshError err = cjelly_model_mesh_load(f.path(), &mesh);
+  CJellyModelMeshError err = cjelly_model_mesh_load(f.path(), nullptr, &mesh);
   EXPECT_EQ(err, CJELLY_MODEL_MESH_SUCCESS)
       << cjelly_model_mesh_strerror(err);
   return mesh;
@@ -38,7 +39,7 @@ CJellyModelMeshError build_expecting_failure(const std::string & text) {
   TempFile f(text);
   EXPECT_TRUE(f.valid());
   CJellyModelMesh * mesh = nullptr;
-  CJellyModelMeshError err = cjelly_model_mesh_load(f.path(), &mesh);
+  CJellyModelMeshError err = cjelly_model_mesh_load(f.path(), nullptr, &mesh);
   EXPECT_EQ(mesh, nullptr);
   cjelly_model_mesh_free(mesh);
   return err;
@@ -56,17 +57,17 @@ float length(const float * v) {
 
 TEST(MeshLoad, RejectsNullArguments) {
   CJellyModelMesh * mesh = nullptr;
-  EXPECT_EQ(cjelly_model_mesh_load(nullptr, &mesh),
+  EXPECT_EQ(cjelly_model_mesh_load(nullptr, nullptr, &mesh),
       CJELLY_MODEL_MESH_ERR_INVALID);
-  EXPECT_EQ(cjelly_model_mesh_load("x.obj", nullptr),
+  EXPECT_EQ(cjelly_model_mesh_load("x.obj", nullptr, nullptr),
       CJELLY_MODEL_MESH_ERR_INVALID);
-  EXPECT_EQ(cjelly_model_mesh_from_obj(nullptr, &mesh),
+  EXPECT_EQ(cjelly_model_mesh_from_obj(nullptr, nullptr, &mesh),
       CJELLY_MODEL_MESH_ERR_INVALID);
 }
 
 TEST(MeshLoad, MissingFileReportsLoadError) {
   CJellyModelMesh * mesh = nullptr;
-  EXPECT_EQ(cjelly_model_mesh_load(cjtest::missing_path(), &mesh),
+  EXPECT_EQ(cjelly_model_mesh_load(cjtest::missing_path(), nullptr, &mesh),
       CJELLY_MODEL_MESH_ERR_LOAD);
   EXPECT_EQ(mesh, nullptr);
 }
@@ -231,8 +232,7 @@ TEST(MeshBuild, NormalsAreGeneratedWhenTheFileHasNone) {
 
 TEST(MeshBuild, GeneratedNormalsAreSharedBetweenAdjacentFaces) {
   CJellyModelMesh * mesh = nullptr;
-  ASSERT_EQ(cjelly_model_mesh_load(
-                asset("models/triangle_no_normals.obj").c_str(), &mesh),
+  ASSERT_EQ(cjelly_model_mesh_load(asset("models/triangle_no_normals.obj").c_str(), nullptr, &mesh),
       CJELLY_MODEL_MESH_SUCCESS);
   ASSERT_NE(mesh, nullptr);
   EXPECT_EQ(mesh->generated_normals, 1);
@@ -318,7 +318,7 @@ TEST(MeshBuild, AnOffCentreModelReportsAnOffCentreCentre) {
 
 TEST(MeshFixture, LoadsTheCube) {
   CJellyModelMesh * mesh = nullptr;
-  ASSERT_EQ(cjelly_model_mesh_load(asset("models/cube.obj").c_str(), &mesh),
+  ASSERT_EQ(cjelly_model_mesh_load(asset("models/cube.obj").c_str(), nullptr, &mesh),
       CJELLY_MODEL_MESH_SUCCESS);
   ASSERT_NE(mesh, nullptr);
 
@@ -362,6 +362,47 @@ TEST(MeshFixture, TheCubeNamesAMaterialLibraryThatParses) {
   }
   gmdl_mtl_free(mtl);
   gmdl_obj_free(obj);
+}
+
+//
+// The allocator
+//
+
+TEST(MeshAllocator, LoadAndFreeGoThroughTheCallersAllocator) {
+  CountingAllocator alloc;
+  CJellyModelMesh * mesh = nullptr;
+  ASSERT_EQ(cjelly_model_mesh_load(
+                cjtest::asset("models/cube.obj").c_str(), alloc.get(), &mesh),
+      CJELLY_MODEL_MESH_SUCCESS);
+  ASSERT_NE(mesh, nullptr);
+
+  EXPECT_GT(alloc.allocations(), 0u)
+      << "the mesh was built without asking the allocator for anything";
+  EXPECT_GT(alloc.live(), 0);
+  EXPECT_EQ(mesh->allocator, alloc.get());
+
+  // The vertex and index arrays are stolen from a GCU_Array, so they only
+  // come back if that array was created with this allocator too.
+  const size_t after_load = alloc.allocations();
+  cjelly_model_mesh_free(mesh);
+  EXPECT_EQ(alloc.live(), 0)
+      << "a stolen array buffer was allocated somewhere else";
+  EXPECT_EQ(alloc.allocations(), after_load) << "free must not allocate";
+}
+
+// The OBJ parse happens inside the model library, which takes the same
+// allocator - so this covers the handoff between the two libraries.
+TEST(MeshAllocator, TheObjParseUsesItToo) {
+  CountingAllocator alloc;
+  CJellyModelMesh * mesh = nullptr;
+  TempFile f("v 0 0 0\nv 1 0 0\nv 0 1 0\nf 1 2 3\n");
+  ASSERT_EQ(cjelly_model_mesh_load(f.path(), alloc.get(), &mesh),
+      CJELLY_MODEL_MESH_SUCCESS);
+  const size_t with_parse = alloc.allocations();
+  cjelly_model_mesh_free(mesh);
+  EXPECT_EQ(alloc.live(), 0);
+  EXPECT_GT(with_parse, 1u)
+      << "one allocation would mean only the mesh struct came from here";
 }
 
 int main(int argc, char ** argv) {

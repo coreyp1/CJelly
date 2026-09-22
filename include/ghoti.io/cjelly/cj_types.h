@@ -48,7 +48,6 @@ typedef struct cj_window_t      cj_window_t;
 typedef struct cj_rgraph_t      cj_rgraph_t;
 
 /** @brief Optional custom allocator callbacks. */
-typedef struct cj_allocator_t   cj_allocator_t;
 
 /** Generic handle: (index:32 | generation:32).
  *  Used to reference resources in a type-safe way with generation tracking.

@@ -28,6 +28,7 @@
 #include <ghoti.io/cjelly/macros.h>
 #include <stdint.h>
 #include <stdbool.h>
+#include <ghoti.io/cjelly/cj_allocator.h>
 #include "cj_types.h"
 #include "cj_result.h"
 #include "runtime.h"
@@ -55,13 +56,6 @@ typedef enum cj_engine_flags_t {
   CJ_ENGINE_ENABLE_THREADING    = CJ_BIT(2),
 } cj_engine_flags_t;
 
-/** Optional custom allocator. All fields optional. */
-struct cj_allocator_t {
-  void* (*alloc)(void* user, size_t size, size_t align);
-  void  (*free)(void* user, void* ptr);
-  void* user;
-};
-
 /** Engine creation descriptor. */
 typedef struct cj_engine_desc_t {
   cj_str_t           app_name;                 /**< Optional. */
@@ -75,7 +69,7 @@ typedef struct cj_engine_desc_t {
   uint32_t           bindless_limits_images;   /**< 0 = default. */
   uint32_t           bindless_limits_buffers;  /**< 0 = default. */
 
-  const cj_allocator_t* allocator;             /**< Optional custom allocator. */
+  const cj_allocator_t* allocator;             /**< Host allocator, or NULL for ::cj_allocator_default(). */
 } cj_engine_desc_t;
 
 /** Create the engine.

@@ -107,15 +107,16 @@ static CJellyFormatImageType type_from_codec_name(const char * name) {
  * ::CJELLY_FORMAT_IMAGE_MAX_FILE_BYTES for why a texture asset is not the
  * same thing as a trusted one.
  */
-static CJellyFormatImageError read_file(
-    const char * path, unsigned char ** out_data, size_t * out_size) {
+static CJellyFormatImageError read_file(const char * path,
+    const cj_allocator_t * allocator, unsigned char ** out_data,
+    size_t * out_size) {
   *out_data = NULL;
   *out_size = 0;
 
   void * data = NULL;
   size_t length = 0;
   switch (gcu_file_read(
-      path, CJELLY_FORMAT_IMAGE_MAX_FILE_BYTES, NULL, &data, &length)) {
+      path, CJELLY_FORMAT_IMAGE_MAX_FILE_BYTES, allocator, &data, &length)) {
     case GCU_FILE_OK:
       break;
     case GCU_FILE_ERR_OOM:
@@ -143,7 +144,7 @@ static CJellyFormatImageError read_file(
   /* An empty file is not a format this library has a codec for, and saying so
    * here keeps the probe from having to describe zero bytes. */
   if (length == 0) {
-    gcu_file_free(NULL, data);
+    gcu_file_free(allocator, data);
     return CJELLY_FORMAT_IMAGE_ERR_INVALID_FORMAT;
   }
 
@@ -153,8 +154,8 @@ static CJellyFormatImageError read_file(
 }
 
 /** Copy a decoded raster into a newly allocated tightly packed RGBA buffer. */
-static CJellyFormatImageError pack_raster(
-    const GIMG_Raster * raster, CJellyFormatImageRaw * raw) {
+static CJellyFormatImageError pack_raster(const GIMG_Raster * raster,
+    const cj_allocator_t * allocator, CJellyFormatImageRaw * raw) {
   uint32_t width = gimg_raster_width(raster);
   uint32_t height = gimg_raster_height(raster);
   const GIMG_Pixel_Format * format = gimg_raster_format(raster);
@@ -172,7 +173,8 @@ static CJellyFormatImageError pack_raster(
     return CJELLY_FORMAT_IMAGE_ERR_INVALID_FORMAT;
   }
 
-  unsigned char * data = (unsigned char *)malloc(total);
+  unsigned char * data =
+      (unsigned char *)gcu_allocator_malloc(allocator, total);
   if (!data) {
     return CJELLY_FORMAT_IMAGE_ERR_OUT_OF_MEMORY;
   }
@@ -195,8 +197,8 @@ static CJellyFormatImageError pack_raster(
   return CJELLY_FORMAT_IMAGE_SUCCESS;
 }
 
-CJellyFormatImageError cjelly_format_image_load(
-    const char * filename, CJellyFormatImage ** out_image) {
+CJellyFormatImageError cjelly_format_image_load(const char * filename,
+    const cj_allocator_t * allocator, CJellyFormatImage ** out_image) {
   if (!filename || !out_image) {
     return CJELLY_FORMAT_IMAGE_ERR_INVALID_ARGUMENT;
   }
@@ -204,7 +206,8 @@ CJellyFormatImageError cjelly_format_image_load(
 
   unsigned char * file_data = NULL;
   size_t file_size = 0;
-  CJellyFormatImageError err = read_file(filename, &file_data, &file_size);
+  CJellyFormatImageError err =
+      read_file(filename, allocator, &file_data, &file_size);
   if (err != CJELLY_FORMAT_IMAGE_SUCCESS) {
     return err;
   }
@@ -245,25 +248,30 @@ CJellyFormatImageError cjelly_format_image_load(
     goto cleanup;
   }
 
-  image = (CJellyFormatImage *)calloc(1, sizeof(CJellyFormatImage));
+  image = (CJellyFormatImage *)gcu_allocator_calloc(
+      allocator, 1, sizeof(CJellyFormatImage));
   if (!image) {
     err = CJELLY_FORMAT_IMAGE_ERR_OUT_OF_MEMORY;
     goto cleanup;
   }
-  image->raw = (CJellyFormatImageRaw *)calloc(1, sizeof(CJellyFormatImageRaw));
+  /* Recorded before anything else is attached to the image, so that the
+   * cleanup path below frees through the same allocator on every branch. */
+  image->allocator = allocator;
+  image->raw = (CJellyFormatImageRaw *)gcu_allocator_calloc(
+      allocator, 1, sizeof(CJellyFormatImageRaw));
   if (!image->raw) {
     err = CJELLY_FORMAT_IMAGE_ERR_OUT_OF_MEMORY;
     goto cleanup;
   }
   image->type = type;
 
-  err = pack_raster(raster, image->raw);
+  err = pack_raster(raster, allocator, image->raw);
   if (err != CJELLY_FORMAT_IMAGE_SUCCESS) {
     goto cleanup;
   }
 
   size_t name_len = strlen(filename);
-  image->name = (unsigned char *)malloc(name_len + 1);
+  image->name = (unsigned char *)gcu_allocator_malloc(allocator, name_len + 1);
   if (!image->name) {
     err = CJELLY_FORMAT_IMAGE_ERR_OUT_OF_MEMORY;
     goto cleanup;
@@ -285,7 +293,7 @@ cleanup:
   if (stream) {
     gimg_stream_destroy(stream);
   }
-  gcu_file_free(NULL, file_data);
+  gcu_file_free(allocator, file_data);
   return err;
 }
 
@@ -293,21 +301,24 @@ void cjelly_format_image_free(CJellyFormatImage * image) {
   if (!image) {
     return;
   }
+  /* The allocator the image was built with, not whatever is current: a
+   * caller may free an image long after moving on to a different one. */
+  const cj_allocator_t * allocator = image->allocator;
   if (image->raw) {
-    free(image->raw->data);
+    gcu_allocator_free(allocator, image->raw->data);
     image->raw->data = NULL;
     image->raw->data_size = 0;
-    free(image->raw);
+    gcu_allocator_free(allocator, image->raw);
     image->raw = NULL;
   }
-  free(image->name);
+  gcu_allocator_free(allocator, image->name);
   image->name = NULL;
   image->type = CJELLY_FORMAT_IMAGE_UNKNOWN;
-  free(image);
+  gcu_allocator_free(allocator, image);
 }
 
-CJellyFormatImageError cjelly_format_image_detect_type(
-    const char * path, CJellyFormatImageType * out_type) {
+CJellyFormatImageError cjelly_format_image_detect_type(const char * path,
+    const cj_allocator_t * allocator, CJellyFormatImageType * out_type) {
   // Validate before writing: the assignment used to come first, so passing a
   // NULL out_type crashed instead of returning the error it checks for.
   if (!path || !out_type) {
@@ -317,14 +328,15 @@ CJellyFormatImageError cjelly_format_image_detect_type(
 
   unsigned char * file_data = NULL;
   size_t file_size = 0;
-  CJellyFormatImageError err = read_file(path, &file_data, &file_size);
+  CJellyFormatImageError err =
+      read_file(path, allocator, &file_data, &file_size);
   if (err != CJELLY_FORMAT_IMAGE_SUCCESS) {
     return err;
   }
 
   GIMG_Stream * stream = NULL;
   if (gimg_stream_create_memory(file_data, file_size, &stream) != GIMG_OK) {
-    gcu_file_free(NULL, file_data);
+    gcu_file_free(allocator, file_data);
     return CJELLY_FORMAT_IMAGE_ERR_OUT_OF_MEMORY;
   }
 
@@ -335,7 +347,7 @@ CJellyFormatImageError cjelly_format_image_detect_type(
   }
 
   gimg_stream_destroy(stream);
-  gcu_file_free(NULL, file_data);
+  gcu_file_free(allocator, file_data);
 
   return *out_type == CJELLY_FORMAT_IMAGE_UNKNOWN
       ? CJELLY_FORMAT_IMAGE_ERR_INVALID_FORMAT

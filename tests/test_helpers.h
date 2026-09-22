@@ -19,6 +19,7 @@
 #include <string>
 #include <gtest/gtest.h>
 
+#include <ghoti.io/cjelly/cj_allocator.h>
 #include <ghoti.io/cutil/file.h>
 #include <ghoti.io/cutil/path.h>
 
@@ -105,6 +106,76 @@ private:
   GCU_File_Temp temp_ {};
   std::string path_;
   bool valid_ = false;
+};
+
+
+/**
+ * An allocator that counts what passes through it.
+ *
+ * The point is not instrumentation for its own sake.  CJelly's engine
+ * descriptor carried an `allocator` field for a long time that nothing ever
+ * read, so a caller could supply one and every allocation still went to
+ * malloc().  Nothing caught it because no test ever asked whether the
+ * allocator was used - only whether the call succeeded, which it did.
+ *
+ * So these counters exist to be asserted non-zero.  A test that only checks
+ * the balance returns to zero would pass against a library that ignored the
+ * allocator completely.
+ */
+class CountingAllocator {
+public:
+  CountingAllocator() {
+    vtable_.ctx = this;
+    vtable_.malloc_fn = &CountingAllocator::do_malloc;
+    vtable_.calloc_fn = &CountingAllocator::do_calloc;
+    vtable_.realloc_fn = &CountingAllocator::do_realloc;
+    vtable_.free_fn = &CountingAllocator::do_free;
+  }
+
+  CountingAllocator(const CountingAllocator &) = delete;
+  CountingAllocator & operator=(const CountingAllocator &) = delete;
+
+  const cj_allocator_t * get() const { return &vtable_; }
+
+  size_t allocations() const { return allocations_; }
+  size_t frees() const { return frees_; }
+  /** Blocks handed out and not yet returned. */
+  long live() const { return (long)allocations_ - (long)frees_; }
+
+private:
+  static CountingAllocator * self(void * ctx) {
+    return static_cast<CountingAllocator *>(ctx);
+  }
+
+  static void * do_malloc(void * ctx, size_t size) {
+    self(ctx)->allocations_++;
+    return std::malloc(size ? size : 1);
+  }
+  static void * do_calloc(void * ctx, size_t nitems, size_t size) {
+    // The contract requires overflow to be a failure rather than a short
+    // allocation, so the counting wrapper has to honour it too.
+    if (nitems && size > (size_t)-1 / nitems) {
+      return nullptr;
+    }
+    self(ctx)->allocations_++;
+    return std::calloc(nitems ? nitems : 1, size ? size : 1);
+  }
+  static void * do_realloc(void * ctx, void * ptr, size_t size) {
+    if (!ptr) {
+      self(ctx)->allocations_++;
+    }
+    return std::realloc(ptr, size ? size : 1);
+  }
+  static void do_free(void * ctx, void * ptr) {
+    if (ptr) {
+      self(ctx)->frees_++;
+    }
+    std::free(ptr);
+  }
+
+  cj_allocator_t vtable_ {};
+  size_t allocations_ = 0;
+  size_t frees_ = 0;
 };
 
 /** A path that is guaranteed not to exist. */

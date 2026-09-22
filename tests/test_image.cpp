@@ -29,6 +29,7 @@
 #endif
 
 using cjtest::asset;
+using cjtest::CountingAllocator;
 using cjtest::TempFile;
 
 namespace {
@@ -92,38 +93,35 @@ std::string make_bmp24(int width, int height, unsigned char b, unsigned char g,
 
 TEST(ImageDetect, RecognisesBmp) {
   CJellyFormatImageType type = CJELLY_FORMAT_IMAGE_UNKNOWN;
-  ASSERT_EQ(cjelly_format_image_detect_type(
-                asset("images/bmp/tang.bmp").c_str(), &type),
+  ASSERT_EQ(cjelly_format_image_detect_type(asset("images/bmp/tang.bmp").c_str(), nullptr, &type),
       CJELLY_FORMAT_IMAGE_SUCCESS);
   EXPECT_EQ(type, CJELLY_FORMAT_IMAGE_BMP);
 }
 
 TEST(ImageDetect, RecognisesPng) {
   CJellyFormatImageType type = CJELLY_FORMAT_IMAGE_UNKNOWN;
-  ASSERT_EQ(cjelly_format_image_detect_type(
-                asset("images/png/pattern.png").c_str(), &type),
+  ASSERT_EQ(cjelly_format_image_detect_type(asset("images/png/pattern.png").c_str(), nullptr, &type),
       CJELLY_FORMAT_IMAGE_SUCCESS);
   EXPECT_EQ(type, CJELLY_FORMAT_IMAGE_PNG);
 }
 
 TEST(ImageDetect, RecognisesJpeg) {
   CJellyFormatImageType type = CJELLY_FORMAT_IMAGE_UNKNOWN;
-  ASSERT_EQ(cjelly_format_image_detect_type(
-                asset("images/jpeg/flat.jpg").c_str(), &type),
+  ASSERT_EQ(cjelly_format_image_detect_type(asset("images/jpeg/flat.jpg").c_str(), nullptr, &type),
       CJELLY_FORMAT_IMAGE_SUCCESS);
   EXPECT_EQ(type, CJELLY_FORMAT_IMAGE_JPEG);
 }
 
 TEST(ImageDetect, MissingFileReportsNotFound) {
   CJellyFormatImageType type = CJELLY_FORMAT_IMAGE_BMP;
-  EXPECT_EQ(cjelly_format_image_detect_type(cjtest::missing_path(), &type),
+  EXPECT_EQ(cjelly_format_image_detect_type(cjtest::missing_path(), nullptr, &type),
       CJELLY_FORMAT_IMAGE_ERR_FILE_NOT_FOUND);
 }
 
 TEST(ImageDetect, UnknownSignatureIsUnknown) {
   TempFile f("not an image at all, just text");
   CJellyFormatImageType type = CJELLY_FORMAT_IMAGE_BMP;
-  cjelly_format_image_detect_type(f.path(), &type);
+  cjelly_format_image_detect_type(f.path(), nullptr, &type);
   EXPECT_EQ(type, CJELLY_FORMAT_IMAGE_UNKNOWN);
 }
 
@@ -131,16 +129,16 @@ TEST(ImageDetect, UnknownSignatureIsUnknown) {
 TEST(ImageDetect, TruncatedFileIsUnknown) {
   TempFile f("B");
   CJellyFormatImageType type = CJELLY_FORMAT_IMAGE_BMP;
-  cjelly_format_image_detect_type(f.path(), &type);
+  cjelly_format_image_detect_type(f.path(), nullptr, &type);
   EXPECT_EQ(type, CJELLY_FORMAT_IMAGE_UNKNOWN);
 }
 
 TEST(ImageDetect, NullArgumentsRejected) {
   CJellyFormatImageType type = CJELLY_FORMAT_IMAGE_UNKNOWN;
-  EXPECT_EQ(cjelly_format_image_detect_type(nullptr, &type),
+  EXPECT_EQ(cjelly_format_image_detect_type(nullptr, nullptr, &type),
       CJELLY_FORMAT_IMAGE_ERR_INVALID_ARGUMENT);
   // Must report the error rather than writing through the null pointer.
-  EXPECT_EQ(cjelly_format_image_detect_type("whatever.bmp", nullptr),
+  EXPECT_EQ(cjelly_format_image_detect_type("whatever.bmp", nullptr, nullptr),
       CJELLY_FORMAT_IMAGE_ERR_INVALID_ARGUMENT);
 }
 
@@ -172,7 +170,7 @@ TEST(ImageFree, NullIsSafe) {
 TEST(ImageLoad, LoadsBmpAndRecordsName) {
   CJellyFormatImage * image = nullptr;
   std::string path = asset("images/bmp/tang.bmp");
-  ASSERT_EQ(cjelly_format_image_load(path.c_str(), &image),
+  ASSERT_EQ(cjelly_format_image_load(path.c_str(), nullptr, &image),
       CJELLY_FORMAT_IMAGE_SUCCESS);
   ASSERT_NE(image, nullptr);
   EXPECT_EQ(image->type, CJELLY_FORMAT_IMAGE_BMP);
@@ -187,13 +185,13 @@ TEST(ImageLoad, LoadsBmpAndRecordsName) {
 TEST(ImageLoad, UnknownFormatRejected) {
   TempFile f("definitely not an image");
   CJellyFormatImage * image = nullptr;
-  EXPECT_EQ(cjelly_format_image_load(f.path(), &image),
+  EXPECT_EQ(cjelly_format_image_load(f.path(), nullptr, &image),
       CJELLY_FORMAT_IMAGE_ERR_INVALID_FORMAT);
 }
 
 TEST(ImageLoad, MissingFileReportsNotFound) {
   CJellyFormatImage * image = nullptr;
-  EXPECT_EQ(cjelly_format_image_load(cjtest::missing_path(), &image),
+  EXPECT_EQ(cjelly_format_image_load(cjtest::missing_path(), nullptr, &image),
       CJELLY_FORMAT_IMAGE_ERR_FILE_NOT_FOUND);
 }
 
@@ -204,7 +202,7 @@ TEST(ImageLoad, MissingFileReportsNotFound) {
 TEST(ImageLoad, NotABitmapRejected) {
   TempFile f("XX not a bitmap header");
   CJellyFormatImage * image = nullptr;
-  EXPECT_NE(cjelly_format_image_load(f.path(), &image),
+  EXPECT_NE(cjelly_format_image_load(f.path(), nullptr, &image),
       CJELLY_FORMAT_IMAGE_SUCCESS);
 }
 
@@ -215,7 +213,7 @@ TEST(ImageLoad, TruncatedPixelDataRejected) {
   bmp.resize(bmp.size() / 2);
   TempFile f(bmp);
   CJellyFormatImage * image = nullptr;
-  CJellyFormatImageError err = cjelly_format_image_load(f.path(), &image);
+  CJellyFormatImageError err = cjelly_format_image_load(f.path(), nullptr, &image);
   EXPECT_NE(err, CJELLY_FORMAT_IMAGE_SUCCESS)
       << "header promised more pixel data than the file contains";
   if (err == CJELLY_FORMAT_IMAGE_SUCCESS) {
@@ -228,7 +226,7 @@ TEST(ImageLoad, HeaderOnlyRejected) {
   bmp.resize(14 + 40);
   TempFile f(bmp);
   CJellyFormatImage * image = nullptr;
-  CJellyFormatImageError err = cjelly_format_image_load(f.path(), &image);
+  CJellyFormatImageError err = cjelly_format_image_load(f.path(), nullptr, &image);
   EXPECT_NE(err, CJELLY_FORMAT_IMAGE_SUCCESS);
   if (err == CJELLY_FORMAT_IMAGE_SUCCESS) {
     cjelly_format_image_free(image);
@@ -241,7 +239,7 @@ TEST(ImageLoad, Synthetic24BitBmp) {
   std::string bmp = make_bmp24(3, 2, 0x10, 0x20, 0x30);
   TempFile f(bmp);
   CJellyFormatImage * image = nullptr;
-  ASSERT_EQ(cjelly_format_image_load(f.path(), &image),
+  ASSERT_EQ(cjelly_format_image_load(f.path(), nullptr, &image),
       CJELLY_FORMAT_IMAGE_SUCCESS);
   ASSERT_NE(image, nullptr);
   ASSERT_NE(image->raw, nullptr);
@@ -258,8 +256,7 @@ TEST(ImageLoad, Synthetic24BitBmp) {
 
 TEST(ImageLoad, Loads4BitPalettedBmp) {
   CJellyFormatImage * image = nullptr;
-  CJellyFormatImageError err = cjelly_format_image_load(
-      asset("images/bmp/16Color.bmp").c_str(), &image);
+  CJellyFormatImageError err = cjelly_format_image_load(asset("images/bmp/16Color.bmp").c_str(), nullptr, &image);
   ASSERT_EQ(err, CJELLY_FORMAT_IMAGE_SUCCESS)
       << cjelly_format_image_strerror(err);
   ASSERT_NE(image, nullptr);
@@ -274,7 +271,7 @@ TEST(ImageLoad, Loads4BitPalettedBmp) {
 TEST(ImageLoad, LoadsPng) {
   CJellyFormatImage * image = nullptr;
   std::string path = asset("images/png/pattern.png");
-  CJellyFormatImageError err = cjelly_format_image_load(path.c_str(), &image);
+  CJellyFormatImageError err = cjelly_format_image_load(path.c_str(), nullptr, &image);
   ASSERT_EQ(err, CJELLY_FORMAT_IMAGE_SUCCESS)
       << cjelly_format_image_strerror(err);
   ASSERT_NE(image, nullptr);
@@ -301,7 +298,7 @@ TEST(ImageLoad, LoadsPng) {
 TEST(ImageLoad, LoadsJpeg) {
   CJellyFormatImage * image = nullptr;
   std::string path = asset("images/jpeg/flat.jpg");
-  CJellyFormatImageError err = cjelly_format_image_load(path.c_str(), &image);
+  CJellyFormatImageError err = cjelly_format_image_load(path.c_str(), nullptr, &image);
   ASSERT_EQ(err, CJELLY_FORMAT_IMAGE_SUCCESS)
       << cjelly_format_image_strerror(err);
   ASSERT_NE(image, nullptr);
@@ -330,7 +327,7 @@ TEST(ImageLoad, PixelsAreTightlyPackedRgba) {
     std::string bmp = make_bmp24(width, 3, 0x11, 0x22, 0x33);
     TempFile f(bmp);
     CJellyFormatImage * image = nullptr;
-    ASSERT_EQ(cjelly_format_image_load(f.path(), &image),
+    ASSERT_EQ(cjelly_format_image_load(f.path(), nullptr, &image),
         CJELLY_FORMAT_IMAGE_SUCCESS)
         << "width " << width;
     ASSERT_NE(image->raw, nullptr);
@@ -453,7 +450,7 @@ TEST(ImageRead, LoadsFromAnInputThatReportsNoSize) {
   ASSERT_TRUE(fifo.start());
 
   CJellyFormatImage * image = nullptr;
-  ASSERT_EQ(cjelly_format_image_load(fifo.path(), &image),
+  ASSERT_EQ(cjelly_format_image_load(fifo.path(), nullptr, &image),
       CJELLY_FORMAT_IMAGE_SUCCESS)
       << "a FIFO reports no size; the reader must not ask for one";
   ASSERT_NE(image, nullptr);
@@ -474,7 +471,7 @@ TEST(ImageRead, RefusesAnInputLargerThanTheLimit) {
   ASSERT_TRUE(fifo.start());
 
   CJellyFormatImage * image = nullptr;
-  EXPECT_EQ(cjelly_format_image_load(fifo.path(), &image),
+  EXPECT_EQ(cjelly_format_image_load(fifo.path(), nullptr, &image),
       CJELLY_FORMAT_IMAGE_ERR_LIMIT);
   EXPECT_EQ(image, nullptr) << "nothing is handed back to free";
 }
@@ -487,14 +484,75 @@ TEST(ImageRead, RefusesAnInputLargerThanTheLimit) {
 // without depending on the test not running as root.
 TEST(ImageRead, ReportsIoRatherThanNotFoundForSomethingThatExists) {
   CJellyFormatImage * image = nullptr;
-  EXPECT_EQ(cjelly_format_image_load(cjtest::asset_dir().c_str(), &image),
+  EXPECT_EQ(cjelly_format_image_load(cjtest::asset_dir().c_str(), nullptr, &image),
       CJELLY_FORMAT_IMAGE_ERR_IO);
   EXPECT_EQ(image, nullptr);
 
   CJellyFormatImageType type = CJELLY_FORMAT_IMAGE_UNKNOWN;
   EXPECT_EQ(
-      cjelly_format_image_detect_type(cjtest::asset_dir().c_str(), &type),
+      cjelly_format_image_detect_type(cjtest::asset_dir().c_str(), nullptr, &type),
       CJELLY_FORMAT_IMAGE_ERR_IO);
+}
+
+//
+// The allocator
+//
+
+// The engine descriptor carried an unread allocator field for a long time, so
+// "the call succeeded" is not evidence the allocator was used.  These assert
+// the counters moved, not merely that they balanced.
+TEST(ImageAllocator, LoadAndFreeGoThroughTheCallersAllocator) {
+  std::string bmp = make_bmp24(8, 8, 0x11, 0x22, 0x33);
+  TempFile f(bmp);
+  CountingAllocator alloc;
+
+  CJellyFormatImage * image = nullptr;
+  ASSERT_EQ(cjelly_format_image_load(f.path(), alloc.get(), &image),
+      CJELLY_FORMAT_IMAGE_SUCCESS);
+  ASSERT_NE(image, nullptr);
+
+  EXPECT_GT(alloc.allocations(), 0u)
+      << "the image was built without asking the allocator for anything";
+  EXPECT_GT(alloc.live(), 0)
+      << "nothing is outstanding, so the image cannot be holding its memory";
+  EXPECT_EQ(image->allocator, alloc.get())
+      << "the image must record what it was built with, for free() to use";
+
+  const size_t after_load = alloc.allocations();
+  cjelly_format_image_free(image);
+
+  EXPECT_EQ(alloc.live(), 0) << "every block must come back";
+  EXPECT_EQ(alloc.allocations(), after_load) << "free must not allocate";
+  EXPECT_EQ(alloc.frees(), after_load);
+}
+
+// The transient read buffer is the caller's business too, even though nothing
+// is handed back.
+TEST(ImageAllocator, DetectTypeBorrowsAndReturnsEverything) {
+  std::string bmp = make_bmp24(4, 4, 1, 2, 3);
+  TempFile f(bmp);
+  CountingAllocator alloc;
+
+  CJellyFormatImageType type = CJELLY_FORMAT_IMAGE_UNKNOWN;
+  ASSERT_EQ(cjelly_format_image_detect_type(f.path(), alloc.get(), &type),
+      CJELLY_FORMAT_IMAGE_SUCCESS);
+  EXPECT_EQ(type, CJELLY_FORMAT_IMAGE_BMP);
+
+  EXPECT_GT(alloc.allocations(), 0u) << "the file was read through malloc()";
+  EXPECT_EQ(alloc.live(), 0) << "detect_type hands nothing back to free";
+}
+
+// A failed load must not leave the caller's allocator holding anything.
+TEST(ImageAllocator, AFailedLoadReturnsEveryBlock) {
+  TempFile f("definitely not an image");
+  CountingAllocator alloc;
+
+  CJellyFormatImage * image = nullptr;
+  EXPECT_EQ(cjelly_format_image_load(f.path(), alloc.get(), &image),
+      CJELLY_FORMAT_IMAGE_ERR_INVALID_FORMAT);
+  EXPECT_EQ(image, nullptr);
+  EXPECT_GT(alloc.allocations(), 0u) << "it got far enough to read the file";
+  EXPECT_EQ(alloc.live(), 0) << "the error path leaked";
 }
 
 int main(int argc, char ** argv) {

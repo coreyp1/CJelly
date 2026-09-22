@@ -64,6 +64,7 @@
 #define CJellyTextureAtlas GHOTIIO_CJELLY(CJellyTextureAtlas)
 #define CJellyTexturedResources GHOTIIO_CJELLY(CJellyTexturedResources)
 #define CJellyVulkanContext GHOTIIO_CJELLY(CJellyVulkanContext)
+#define cj_allocator_default GHOTIIO_CJELLY(cj_allocator_default)
 #define cj_allocator_t GHOTIIO_CJELLY(cj_allocator_t)
 #define cj_bindless_info_t GHOTIIO_CJELLY(cj_bindless_info_t)
 #define cj_buffer_desc_t GHOTIIO_CJELLY(cj_buffer_desc_t)

@@ -23,6 +23,7 @@
 
 #include <stddef.h>
 
+#include <ghoti.io/cjelly/cj_allocator.h>
 #include <ghoti.io/cjelly/macros.h>
 
 
@@ -104,6 +105,7 @@ typedef struct CJellyFormatImage {
   unsigned char * name;       /**< The name of the file. */
   CJellyFormatImageRaw * raw; /**< The raw image data. */
   CJellyFormatImageType type; /**< Image format type. */
+  const cj_allocator_t * allocator; /**< Allocator that owns everything above. */
 } CJellyFormatImage;
 
 /**
@@ -114,14 +116,20 @@ typedef struct CJellyFormatImage {
  * PNG, and JPEG.
  *
  * @param filename Path to the image file.
+ * @param allocator Allocator for the image and its pixels, or NULL for
+ *   ::cj_allocator_default().  It is recorded in the image and used again by
+ *   ::cjelly_format_image_free(), so it must outlive the image.
  * @param out_image Output pointer that will point to the allocated CJellyFormatImage on success.
  * @return 0 on success, non-zero error code on failure.
  */
-CJellyFormatImageError cjelly_format_image_load(const char * filename, CJellyFormatImage * * out_image);
+CJellyFormatImageError cjelly_format_image_load(const char * filename,
+    const cj_allocator_t * allocator, CJellyFormatImage * * out_image);
 
 /**
  * @brief Deallocates the memory used by an image.  The image pointer will be
  * set to NULL.
+ *
+ * Released through the allocator the image was loaded with.
  *
  * @param image Pointer to the CJellyFormatImage to be freed.
  */
@@ -131,10 +139,13 @@ void cjelly_format_image_free(CJellyFormatImage * image);
  * @brief Detect the type of image file at the given path.
  *
  * @param path The path to the image file.
+ * @param allocator Allocator for the buffer the file is read into, or NULL
+ *   for ::cj_allocator_default().  Nothing is handed back to free.
  * @param out_type The detected image type.
  * @return CJellyFormatImageError
  */
-CJellyFormatImageError cjelly_format_image_detect_type(const char * path, CJellyFormatImageType * out_type);
+CJellyFormatImageError cjelly_format_image_detect_type(const char * path,
+    const cj_allocator_t * allocator, CJellyFormatImageType * out_type);
 
 /**
  * @brief Converts an Image error code to a human-readable error message.

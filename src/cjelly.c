@@ -2401,7 +2401,7 @@ static VkResult createBindlessGraphicsPipelineWithLayout(
 static void createTextureImageCtx(const CJellyVulkanContext* ctx, const char * filePath) {
   // Load BMP data (assumed to be in 24-bit RGB format)
   CJellyFormatImage * image;
-  CJellyFormatImageError error = cjelly_format_image_load(filePath, &image);
+  CJellyFormatImageError error = cjelly_format_image_load(filePath, NULL, &image);
   if (error != CJELLY_FORMAT_IMAGE_SUCCESS) {
     fprintf(stderr, "Failed to load BMP file: %s\n", filePath);
     fprintf(stderr, "Error: %s\n", cjelly_format_image_strerror(error));
@@ -3064,7 +3064,7 @@ uint32_t cjelly_atlas_add_texture(CJellyTextureAtlas * atlas, const char * fileP
 
   // Load the image
   CJellyFormatImage * image;
-  if (cjelly_format_image_load(filePath, &image) != CJELLY_FORMAT_IMAGE_SUCCESS) {
+  if (cjelly_format_image_load(filePath, NULL, &image) != CJELLY_FORMAT_IMAGE_SUCCESS) {
     fprintf(stderr, "Failed to load texture: %s\n", filePath);
     return 0;
   }
@@ -3165,7 +3165,7 @@ uint32_t cjelly_atlas_add_texture_ctx(CJellyTextureAtlas * atlas, const char * f
 
   // Load the image
   CJellyFormatImage * image;
-  if (cjelly_format_image_load(filePath, &image) != CJELLY_FORMAT_IMAGE_SUCCESS) {
+  if (cjelly_format_image_load(filePath, NULL, &image) != CJELLY_FORMAT_IMAGE_SUCCESS) {
     fprintf(stderr, "Failed to load texture: %s\n", filePath);
     return 0;
   }

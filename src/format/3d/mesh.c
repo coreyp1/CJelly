@@ -139,7 +139,8 @@ static void mesh_accumulate_normal(const GMDL_Obj * obj,
 }
 
 CJellyModelMeshError cjelly_model_mesh_from_obj(
-    const GMDL_Obj * obj, CJellyModelMesh ** out_mesh) {
+    const GMDL_Obj * obj, const cj_allocator_t * allocator,
+    CJellyModelMesh ** out_mesh) {
   if (!out_mesh) {
     return CJELLY_MODEL_MESH_ERR_INVALID;
   }
@@ -163,7 +164,8 @@ CJellyModelMeshError cjelly_model_mesh_from_obj(
   // are computed here.
   bool have_normals = obj->normal_count > 0;
   if (!have_normals) {
-    accumulated = calloc(obj->vertex_count * 3, sizeof(float));
+    accumulated = gcu_allocator_calloc(
+        allocator, obj->vertex_count * 3, sizeof(float));
     if (!accumulated) {
       return CJELLY_MODEL_MESH_ERR_OUT_OF_MEMORY;
     }
@@ -178,13 +180,14 @@ CJellyModelMeshError cjelly_model_mesh_from_obj(
   }
 
   if (!gcu_array_create_in_place(
-          &vertices, sizeof(CJellyModelVertex), obj->face_count * 3, NULL)) {
+          &vertices, sizeof(CJellyModelVertex), obj->face_count * 3,
+          allocator)) {
     err = CJELLY_MODEL_MESH_ERR_OUT_OF_MEMORY;
     goto cleanup;
   }
   vertices_ready = true;
   if (!gcu_array_create_in_place(
-          &indices, sizeof(uint32_t), obj->face_count * 3, NULL)) {
+          &indices, sizeof(uint32_t), obj->face_count * 3, allocator)) {
     err = CJELLY_MODEL_MESH_ERR_OUT_OF_MEMORY;
     goto cleanup;
   }
@@ -265,7 +268,8 @@ CJellyModelMeshError cjelly_model_mesh_from_obj(
   }
 
   {
-    CJellyModelMesh * mesh = calloc(1, sizeof(CJellyModelMesh));
+    CJellyModelMesh * mesh =
+        gcu_allocator_calloc(allocator, 1, sizeof(CJellyModelMesh));
     if (!mesh) {
       err = CJELLY_MODEL_MESH_ERR_OUT_OF_MEMORY;
       goto cleanup;
@@ -280,6 +284,7 @@ CJellyModelMeshError cjelly_model_mesh_from_obj(
     mesh->indices = (uint32_t *)gcu_array_steal(&indices, &index_count);
     mesh->vertex_count = (uint32_t)vertex_count;
     mesh->index_count = (uint32_t)index_count;
+    mesh->allocator = allocator;
     mesh->generated_normals = have_normals ? 0 : 1;
     mesh->dropped_faces = dropped;
 
@@ -314,7 +319,7 @@ CJellyModelMeshError cjelly_model_mesh_from_obj(
 
     gcu_array_destroy_in_place(&vertices);
     gcu_array_destroy_in_place(&indices);
-    free(accumulated);
+    gcu_allocator_free(allocator, accumulated);
     *out_mesh = mesh;
     return CJELLY_MODEL_MESH_SUCCESS;
   }
@@ -326,12 +331,12 @@ cleanup:
   if (indices_ready) {
     gcu_array_destroy_in_place(&indices);
   }
-  free(accumulated);
+  gcu_allocator_free(allocator, accumulated);
   return err;
 }
 
-CJellyModelMeshError cjelly_model_mesh_load(
-    const char * path, CJellyModelMesh ** out_mesh) {
+CJellyModelMeshError cjelly_model_mesh_load(const char * path,
+    const cj_allocator_t * allocator, CJellyModelMesh ** out_mesh) {
   if (!out_mesh) {
     return CJELLY_MODEL_MESH_ERR_INVALID;
   }
@@ -341,13 +346,17 @@ CJellyModelMeshError cjelly_model_mesh_load(
   }
 
   GMDL_Obj * obj = NULL;
-  GMDL_Result result = gmdl_obj_load_file(path, NULL, NULL, &obj);
+  /* The model library takes the same allocator: GMDL_Allocator and
+   * cj_allocator_t are both cutil's, so one allocator covers the OBJ parse
+   * as well as the mesh built from it. */
+  GMDL_Result result = gmdl_obj_load_file(path, NULL, allocator, &obj);
   if (result != GMDL_OK) {
     return result == GMDL_ERR_OOM ? CJELLY_MODEL_MESH_ERR_OUT_OF_MEMORY
                                   : CJELLY_MODEL_MESH_ERR_LOAD;
   }
 
-  CJellyModelMeshError err = cjelly_model_mesh_from_obj(obj, out_mesh);
+  CJellyModelMeshError err =
+      cjelly_model_mesh_from_obj(obj, allocator, out_mesh);
   gmdl_obj_free(obj);
   return err;
 }
@@ -356,9 +365,10 @@ void cjelly_model_mesh_free(CJellyModelMesh * mesh) {
   if (!mesh) {
     return;
   }
-  free(mesh->vertices);
-  free(mesh->indices);
-  free(mesh);
+  const cj_allocator_t * allocator = mesh->allocator;
+  gcu_allocator_free(allocator, mesh->vertices);
+  gcu_allocator_free(allocator, mesh->indices);
+  gcu_allocator_free(allocator, mesh);
 }
 
 const char * cjelly_model_mesh_strerror(CJellyModelMeshError err) {

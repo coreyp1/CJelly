@@ -36,6 +36,7 @@
 #ifndef GHOTI_IO_CJ_FORMAT_3D_MESH_H
 #define GHOTI_IO_CJ_FORMAT_3D_MESH_H
 
+#include <ghoti.io/cjelly/cj_allocator.h>
 #include <ghoti.io/cjelly/macros.h>
 
 #include <stdint.h>
@@ -103,30 +104,40 @@ typedef struct CJellyModelMesh {
    * of the position array.
    */
   uint32_t dropped_faces;
+
+  /** Allocator that owns `vertices`, `indices` and this struct. */
+  const cj_allocator_t * allocator;
 } CJellyModelMesh;
 
 /**
  * @brief Build a mesh from an already-parsed OBJ.
  *
  * @param obj The parsed model.
+ * @param allocator Allocator for the mesh and its arrays, or NULL for
+ *   ::cj_allocator_default().  It is recorded in the mesh and used again by
+ *   ::cjelly_model_mesh_free(), so it must outlive the mesh.
  * @param out_mesh Receives the mesh on success.
  * @return CJELLY_MODEL_MESH_SUCCESS, or an error code.
  */
-CJellyModelMeshError cjelly_model_mesh_from_obj(
-    const GMDL_Obj * obj, CJellyModelMesh ** out_mesh);
+CJellyModelMeshError cjelly_model_mesh_from_obj(const GMDL_Obj * obj,
+    const cj_allocator_t * allocator, CJellyModelMesh ** out_mesh);
 
 /**
  * @brief Read an OBJ file and build a mesh from it.
  *
  * @param path Path to the OBJ file.
+ * @param allocator Allocator for the mesh, its arrays, and the OBJ parse the
+ *   model library performs on the way, or NULL for ::cj_allocator_default().
  * @param out_mesh Receives the mesh on success.
  * @return CJELLY_MODEL_MESH_SUCCESS, or an error code.
  */
-CJellyModelMeshError cjelly_model_mesh_load(
-    const char * path, CJellyModelMesh ** out_mesh);
+CJellyModelMeshError cjelly_model_mesh_load(const char * path,
+    const cj_allocator_t * allocator, CJellyModelMesh ** out_mesh);
 
 /**
  * @brief Free a mesh. NULL is ignored.
+ *
+ * Released through the allocator the mesh was built with.
  *
  * @param mesh The mesh.
  */
