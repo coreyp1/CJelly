@@ -185,60 +185,65 @@ static void DestroyDebugUtilsMessengerEXT(VkInstance instance,
 
 
 /**
- * @brief Internal helper function to add an extension string to a dynamic
- * array.
+ * @brief Append an extension name to one of the options arrays.
  *
- * This function checks for duplicates, grows the array if needed, duplicates
- * the extension string, and appends it to the array.
+ * Duplicates are ignored rather than being an error: the same extension can
+ * be required by CJelly and asked for again by the caller, and refusing the
+ * second request would make the order they arrive in matter.
  *
- * @param extensions A pointer to the dynamic array of extension strings.
- *                   (This pointer will be updated if the array is reallocated.)
- * @param count A pointer to the current number of extensions in the array.
- * @param capacity A pointer to the capacity of the array.
- * @param extension The extension string to add.
- * @return CJellyApplicationError CJELLY_APPLICATION_ERROR_NONE on success,
- *         or an error code on failure.
+ * The growth, the capacity and the reallocation are the array's now.  What
+ * stood here doubled `*capacity`, which grows nothing from zero - reachable
+ * only if an array ever arrived here uninitialised, which initialize_options
+ * happened to prevent. There is no such edge on a GCU_Array.
+ *
+ * @param extensions The array to append to.
+ * @param extension The name to append. Copied.
+ * @return CJELLY_APPLICATION_ERROR_NONE, or an error code.
  */
-static CJellyApplicationError add_extension_generic(const char *** extensions,
-    size_t * count, size_t * capacity, const char * extension) {
-
-  assert(extensions);
-  assert(count);
-  assert(capacity);
+static CJellyApplicationError add_extension_generic(
+    GCU_Array * extensions, const char * extension) {
   assert(extensions);
 
-  if (!extension)
+  if (!extension) {
     return CJELLY_APPLICATION_ERROR_INVALID_OPTIONS;
+  }
 
-  // Check if the extension is already present.
-  for (size_t i = 0; i < *count; i++) {
-    if (strcmp((*extensions)[i], extension) == 0) {
+  size_t count = gcu_array_count(extensions);
+  for (size_t i = 0; i < count; i++) {
+    char ** slot = (char **)gcu_array_at(extensions, i);
+    if (slot && *slot && strcmp(*slot, extension) == 0) {
       return CJELLY_APPLICATION_ERROR_NONE;
     }
   }
 
-  // Expand the array if necessary.
-  if (*count == *capacity) {
-    size_t newCap = (*capacity) * 2;
-    const char ** newArray = realloc(*extensions, sizeof(char *) * newCap);
-    if (!newArray) {
-      fprintf(stderr, "Failed to reallocate memory for extensions.\n");
-      return CJELLY_APPLICATION_ERROR_INIT_FAILED;
-    }
-    *extensions = newArray;
-    *capacity = newCap;
-  }
-
-  // Duplicate the extension string and add it to the array.
   char * dup = strdup(extension);
   if (!dup) {
     fprintf(stderr, "Failed to duplicate extension name.\n");
     return CJELLY_APPLICATION_ERROR_INIT_FAILED;
   }
-  (*extensions)[*count] = dup;
-  (*count)++;
+  if (!gcu_array_append(extensions, &dup)) {
+    // The append is what takes ownership, so until it succeeds the copy is
+    // still this function's to release.
+    free(dup);
+    fprintf(stderr, "Failed to grow the extension array.\n");
+    return CJELLY_APPLICATION_ERROR_INIT_FAILED;
+  }
 
   return CJELLY_APPLICATION_ERROR_NONE;
+}
+
+
+/** Release every name an extension array holds, then the array itself. */
+static void free_extension_array(GCU_Array * array) {
+  assert(array);
+  size_t count = gcu_array_count(array);
+  for (size_t i = 0; i < count; i++) {
+    char ** slot = (char **)gcu_array_at(array, i);
+    if (slot) {
+      free(*slot);
+    }
+  }
+  gcu_array_destroy_in_place(array);
 }
 
 
@@ -252,27 +257,10 @@ static CJellyApplicationError add_extension_generic(const char *** extensions,
 static void free_options(CJellyApplicationOptions * opts) {
   assert(opts);
 
-  // Instance Extensions.
-  if (opts->requiredInstanceExtensions) {
-    for (size_t i = 0; i < opts->requiredInstanceExtensionCount; i++) {
-      free((void *)opts->requiredInstanceExtensions[i]);
-    }
-    free(opts->requiredInstanceExtensions);
-  }
-  opts->requiredInstanceExtensions = NULL;
-  opts->requiredInstanceExtensionCount = 0;
-  opts->requiredInstanceExtensionCapacity = 0;
-
-  // Device Extensions.
-  if (opts->requiredDeviceExtensions) {
-    for (size_t i = 0; i < opts->requiredDeviceExtensionCount; i++) {
-      free((void *)opts->requiredDeviceExtensions[i]);
-    }
-    free(opts->requiredDeviceExtensions);
-  }
-  opts->requiredDeviceExtensions = NULL;
-  opts->requiredDeviceExtensionCount = 0;
-  opts->requiredDeviceExtensionCapacity = 0;
+  // The array owns the strings but not their contents, so the strdup'd names
+  // come back one at a time before the storage does.
+  free_extension_array(&opts->requiredInstanceExtensions);
+  free_extension_array(&opts->requiredDeviceExtensions);
 }
 
 
@@ -295,23 +283,18 @@ static bool initialize_options(CJellyApplicationOptions * opts) {
   opts->requiredDeviceType = CJELLY_DEVICE_TYPE_ANY;
   opts->preferredDeviceType = CJELLY_DEVICE_TYPE_ANY;
 
-  // Allocate the instance extension array.
-  opts->requiredInstanceExtensionCount = 0;
-  opts->requiredInstanceExtensionCapacity = INITIAL_EXTENSION_CAPACITY;
-  opts->requiredInstanceExtensions =
-      malloc(sizeof(char *) * opts->requiredInstanceExtensionCapacity);
-  if (!opts->requiredInstanceExtensions) {
+  // Both arrays hold `char *`, reserved at the size the old code allocated
+  // up front.  A GCU_Array would grow from nothing just as well; the reserve
+  // only avoids a reallocation for the handful of names added below.
+  if (!gcu_array_create_in_place(&opts->requiredInstanceExtensions,
+          sizeof(char *), INITIAL_EXTENSION_CAPACITY, NULL)) {
     fprintf(stderr,
         "Failed to allocate memory for required instance extensions.\n");
     goto ERROR_FREE_OPTIONS;
   }
 
-  // Allocate the device extension array.
-  opts->requiredDeviceExtensionCount = 0;
-  opts->requiredDeviceExtensionCapacity = INITIAL_EXTENSION_CAPACITY;
-  opts->requiredDeviceExtensions =
-      malloc(sizeof(char *) * opts->requiredDeviceExtensionCapacity);
-  if (!opts->requiredDeviceExtensions) {
+  if (!gcu_array_create_in_place(&opts->requiredDeviceExtensions,
+          sizeof(char *), INITIAL_EXTENSION_CAPACITY, NULL)) {
     fprintf(
         stderr, "Failed to allocate memory for required device extensions.\n");
     goto ERROR_FREE_OPTIONS;
@@ -331,8 +314,6 @@ static bool initialize_options(CJellyApplicationOptions * opts) {
       sizeof(instanceExtensions) / sizeof(instanceExtensions[0]);
   for (size_t i = 0; i < instanceExtCount; ++i) {
     if (add_extension_generic(&opts->requiredInstanceExtensions,
-            &opts->requiredInstanceExtensionCount,
-            &opts->requiredInstanceExtensionCapacity,
             instanceExtensions[i]) != CJELLY_APPLICATION_ERROR_NONE) {
       fprintf(stderr, "Failed to add required instance extension: %s\n",
           instanceExtensions[i]);
@@ -349,8 +330,6 @@ static bool initialize_options(CJellyApplicationOptions * opts) {
       sizeof(requiredDeviceExtensions) / sizeof(requiredDeviceExtensions[0]);
   for (size_t i = 0; i < requiredDeviceExtCount; ++i) {
     if (add_extension_generic(&opts->requiredDeviceExtensions,
-            &opts->requiredDeviceExtensionCount,
-            &opts->requiredDeviceExtensionCapacity,
             requiredDeviceExtensions[i]) != CJELLY_APPLICATION_ERROR_NONE) {
       fprintf(stderr, "Failed to add required device extension: %s\n",
           requiredDeviceExtensions[i]);
@@ -475,25 +454,31 @@ CJ_API CJellyApplicationError cjelly_application_create(
   newApp->transferQueue = VK_NULL_HANDLE;
   newApp->computeQueue = VK_NULL_HANDLE;
 
-  // Initialize window tracking
-  newApp->windows = NULL;
-  newApp->window_count = 0;
-  newApp->window_capacity = 0;
+  // Initialize window tracking.  Zero reserved: most applications open one
+  // window, and the array allocates on the first append.
+  if (!gcu_array_create_in_place(
+          &newApp->windows, sizeof(void *), 0, NULL)) {
+    goto ERROR_CLEANUP_APPNAME;
+  }
   newApp->handle_map = NULL;  // Created on the first window registration.
 
   // Initialize signal handling fields
   newApp->shutdown_requested = 0;
   newApp->shutdown_callback = NULL;
   newApp->shutdown_callback_user_data = NULL;
-  newApp->custom_signal_handlers = NULL;
-  newApp->custom_signal_handler_count = 0;
-  newApp->custom_signal_handler_capacity = 0;
+  if (!gcu_array_create_in_place(&newApp->custom_signal_handlers,
+          sizeof(CJellyApplicationSignalHandler), 0, NULL)) {
+    goto ERROR_CLEANUP_WINDOWS;
+  }
   newApp->signal_handlers_registered = false;
 
   *app = newApp;
   return CJELLY_APPLICATION_ERROR_NONE;
 
   // Error handling.
+ERROR_CLEANUP_WINDOWS:
+  gcu_array_destroy_in_place(&newApp->windows);
+
 ERROR_CLEANUP_APPNAME:
   free(newApp->appName);
   newApp->appName = NULL;
@@ -566,8 +551,7 @@ CJ_API CJellyApplicationError cjelly_application_add_instance_extension(
     return CJELLY_APPLICATION_ERROR_INVALID_OPTIONS;
 
   return add_extension_generic(&app->options.requiredInstanceExtensions,
-      &app->options.requiredInstanceExtensionCount,
-      &app->options.requiredInstanceExtensionCapacity, extension);
+            extension);
 }
 
 
@@ -578,8 +562,7 @@ CJ_API CJellyApplicationError cjelly_application_add_device_extension(
     return CJELLY_APPLICATION_ERROR_INVALID_OPTIONS;
 
   return add_extension_generic(&app->options.requiredDeviceExtensions,
-      &app->options.requiredDeviceExtensionCount,
-      &app->options.requiredDeviceExtensionCapacity, extension);
+            extension);
 }
 
 
@@ -650,10 +633,12 @@ CJ_API CJellyApplicationError cjelly_application_init(CJellyApplication * app) {
   VkInstanceCreateInfo instanceCreateInfo = {0};
   instanceCreateInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
   instanceCreateInfo.pApplicationInfo = &appInfo;
+  // `data` is the contiguous `char *` block Vulkan wants; the array exists
+  // so that growing it is not this file's problem.
   instanceCreateInfo.enabledExtensionCount =
-      app->options.requiredInstanceExtensionCount;
+      (uint32_t)gcu_array_count(&app->options.requiredInstanceExtensions);
   instanceCreateInfo.ppEnabledExtensionNames =
-      (const char **)app->options.requiredInstanceExtensions;
+      (const char * const *)app->options.requiredInstanceExtensions.data;
 
   // If validation layers are enabled, add the required layers and extensions.
   const char * validationLayers[] = {
@@ -828,8 +813,11 @@ CJ_API CJellyApplicationError cjelly_application_init(CJellyApplication * app) {
 
     // For each required extension, check if it is present in the device's list.
     bool extensionsSupported = true;
-    for (size_t e = 0; e < app->options.requiredDeviceExtensionCount; ++e) {
-      const char * reqExt = app->options.requiredDeviceExtensions[e];
+    size_t requiredExtCount =
+        gcu_array_count(&app->options.requiredDeviceExtensions);
+    for (size_t e = 0; e < requiredExtCount; ++e) {
+      const char * reqExt =
+          *(char **)gcu_array_at(&app->options.requiredDeviceExtensions, e);
       bool found = false;
       for (uint32_t j = 0; j < availableExtensionCount; ++j) {
         if (strcmp(reqExt, availableExtensions[j].extensionName) == 0) {
@@ -1003,9 +991,8 @@ CJ_API void cjelly_application_destroy(CJellyApplication * app) {
   free_options(&app->options);
 
   // Free window tracking
-  if (app->windows) {
-    free(app->windows);
-    app->windows = NULL;
+  {
+    gcu_array_destroy_in_place(&app->windows);
   }
   if (app->handle_map) {
     gcu_hash64_destroy((GCU_Hash64 *)app->handle_map);
@@ -1013,9 +1000,8 @@ CJ_API void cjelly_application_destroy(CJellyApplication * app) {
   }
 
   // Free signal handling
-  if (app->custom_signal_handlers) {
-    free(app->custom_signal_handlers);
-    app->custom_signal_handlers = NULL;
+  {
+    gcu_array_destroy_in_place(&app->custom_signal_handlers);
   }
 
   // Free the application name if it was allocated.
@@ -1148,8 +1134,6 @@ CJ_API CJellyApplicationError cjelly_application_create_logical_device(
   // Add descriptor indexing extension if supported
   if (descriptorIndexingSupported) {
     if (add_extension_generic(&app->options.requiredDeviceExtensions,
-            &app->options.requiredDeviceExtensionCount,
-            &app->options.requiredDeviceExtensionCapacity,
             VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME) != CJELLY_APPLICATION_ERROR_NONE) {
       fprintf(stderr, "Failed to add descriptor indexing extension\n");
       free(availableExtensions);
@@ -1167,8 +1151,10 @@ CJ_API CJellyApplicationError cjelly_application_create_logical_device(
   deviceCreateInfo.pQueueCreateInfos = queueCreateInfos;
 
   // Enable the required extensions
-  deviceCreateInfo.enabledExtensionCount = app->options.requiredDeviceExtensionCount;
-  deviceCreateInfo.ppEnabledExtensionNames = app->options.requiredDeviceExtensions;
+  deviceCreateInfo.enabledExtensionCount =
+      (uint32_t)gcu_array_count(&app->options.requiredDeviceExtensions);
+  deviceCreateInfo.ppEnabledExtensionNames =
+      (const char * const *)app->options.requiredDeviceExtensions.data;
 
   // Chain the descriptor indexing features if supported (minimal features only)
   if (descriptorIndexingSupported) {
@@ -1216,7 +1202,7 @@ CJ_API bool cjelly_application_supports_bindless_rendering(CJellyApplication * a
 CJ_API uint32_t cjelly_application_window_count(const CJellyApplication * app) {
   if (!app)
     return 0;
-  return app->window_count;
+  return (uint32_t)gcu_array_count(&app->windows);
 }
 
 CJ_API uint32_t cjelly_application_get_windows(const CJellyApplication * app,
@@ -1225,9 +1211,10 @@ CJ_API uint32_t cjelly_application_get_windows(const CJellyApplication * app,
   if (!app || !out_windows || window_count == 0)
     return 0;
 
-  uint32_t count = (window_count < app->window_count) ? window_count : app->window_count;
+  uint32_t held = (uint32_t)gcu_array_count(&app->windows);
+  uint32_t count = (window_count < held) ? window_count : held;
   for (uint32_t i = 0; i < count; i++) {
-    out_windows[i] = app->windows[i];
+    out_windows[i] = *(void **)gcu_array_at(&app->windows, i);
   }
   return count;
 }
@@ -1257,17 +1244,11 @@ static bool add_window_to_application(CJellyApplication * app, void* window, voi
   if (!app || !window || !handle)
     return false;
 
-  // Reserve room in the window list first, but do not commit the count yet.
-  // If the handle map insertion then fails, the list is simply left with
-  // spare capacity, so there is nothing to roll back.
-  if (app->window_count >= app->window_capacity) {
-    uint32_t new_capacity = (app->window_capacity == 0) ? 4 : app->window_capacity * 2;
-    void** new_windows = realloc(app->windows, sizeof(void*) * new_capacity);
-    if (!new_windows)
-      return false;  // Out of memory - window list allocation failed
-    app->windows = new_windows;
-    app->window_capacity = new_capacity;
-  }
+  // Reserve room in the window list first, but do not append yet.  If the
+  // handle map insertion then fails, the list is simply left with spare
+  // capacity, so there is nothing to roll back.
+  if (!gcu_array_reserve(&app->windows, gcu_array_count(&app->windows) + 1))
+    return false;  // Out of memory - window list allocation failed
 
   if (!app->handle_map) {
     app->handle_map = gcu_hash64_create(0);
@@ -1279,7 +1260,9 @@ static bool add_window_to_application(CJellyApplication * app, void* window, voi
           GCU_TYPE64_P(window)))
     return false;  // Out of memory - handle map insertion failed
 
-  app->windows[app->window_count++] = window;
+  // Reserved above, so this cannot fail and cannot leave the map and the
+  // list disagreeing.
+  (void)gcu_array_append(&app->windows, &window);
 
   return true;
 }
@@ -1288,13 +1271,12 @@ static void remove_window_from_application(CJellyApplication * app, void* window
   if (!app || !window)
     return;
 
-  // Remove from window list
-  for (uint32_t i = 0; i < app->window_count; i++) {
-    if (app->windows[i] == window) {
-      // Move last element to this position and clear it
-      app->windows[i] = app->windows[app->window_count - 1];
-      app->windows[app->window_count - 1] = NULL;  // Clear the moved pointer
-      app->window_count--;
+  // Remove from window list.  The order of this list is not meaningful, so
+  // the last element moves into the gap - which is what swap_remove does.
+  size_t held = gcu_array_count(&app->windows);
+  for (size_t i = 0; i < held; i++) {
+    if (*(void **)gcu_array_at(&app->windows, i) == window) {
+      (void)gcu_array_swap_remove(&app->windows, i, NULL);
       break;
     }
   }
@@ -1325,15 +1307,18 @@ CJ_API void cjelly_application_close_all_windows(CJellyApplication * app, bool c
   if (!app)
     return;
 
-  // Create a copy of the window list to avoid issues if windows are destroyed during iteration
-  void** windows_copy = malloc(sizeof(void*) * app->window_count);
+  // Copy the list first: closing a window unregisters it, which mutates the
+  // array being walked.
+  uint32_t count = (uint32_t)gcu_array_count(&app->windows);
+  if (count == 0)
+    return;
+  void ** windows_copy = malloc(sizeof(void *) * count);
   if (!windows_copy)
     return;
 
-  for (uint32_t i = 0; i < app->window_count; i++) {
-    windows_copy[i] = app->windows[i];
+  for (uint32_t i = 0; i < count; i++) {
+    windows_copy[i] = *(void **)gcu_array_at(&app->windows, i);
   }
-  uint32_t count = app->window_count;
 
   // Close each window
   for (uint32_t i = 0; i < count; i++) {
@@ -1522,30 +1507,23 @@ CJ_API void cjelly_application_on_signal(CJellyApplication* app,
   if (!app)
     return;
 
-  // Find existing handler for this signal
-  for (uint32_t i = 0; i < app->custom_signal_handler_count; i++) {
-    if (app->custom_signal_handlers[i].signal == signal) {
-      // Update existing handler
-      app->custom_signal_handlers[i].handler = handler;
-      app->custom_signal_handlers[i].user_data = user_data;
+  // Replace the handler for a signal already registered, so that calling
+  // this twice for one signal does not leave two entries with the first
+  // winning the lookup.
+  size_t count = gcu_array_count(&app->custom_signal_handlers);
+  for (size_t i = 0; i < count; i++) {
+    CJellyApplicationSignalHandler * entry =
+        (CJellyApplicationSignalHandler *)gcu_array_at(
+            &app->custom_signal_handlers, i);
+    if (entry->signal == signal) {
+      entry->handler = handler;
+      entry->user_data = user_data;
       return;
     }
   }
 
-  // Add new handler
-  if (app->custom_signal_handler_count >= app->custom_signal_handler_capacity) {
-    uint32_t new_capacity = app->custom_signal_handler_capacity == 0 ? 4 : app->custom_signal_handler_capacity * 2;
-    void* new_handlers = realloc(app->custom_signal_handlers,
-                                 new_capacity * sizeof(*app->custom_signal_handlers));
-    if (!new_handlers)
-      return;  // OOM
-    // Cast through void* to work around anonymous struct type mismatch (same pattern as handle_map)
-    app->custom_signal_handlers = (void*)new_handlers;
-    app->custom_signal_handler_capacity = new_capacity;
-  }
-
-  app->custom_signal_handlers[app->custom_signal_handler_count].signal = signal;
-  app->custom_signal_handlers[app->custom_signal_handler_count].handler = handler;
-  app->custom_signal_handlers[app->custom_signal_handler_count].user_data = user_data;
-  app->custom_signal_handler_count++;
+  // The element type is named now, so this is an ordinary append rather than
+  // the cast through void* the anonymous struct used to require.
+  CJellyApplicationSignalHandler entry = {signal, handler, user_data};
+  (void)gcu_array_append(&app->custom_signal_handlers, &entry);
 }

@@ -34,10 +34,17 @@ namespace {
  */
 class BareApp {
 public:
-  BareApp() { app_ = {}; }
+  BareApp() {
+    app_ = {};
+    // The window list is a GCU_Array now, and a zeroed one has an element
+    // size of zero - so it has to be initialised here exactly as
+    // cjelly_application_create() does, not merely zeroed.
+    EXPECT_TRUE(
+        gcu_array_create_in_place(&app_.windows, sizeof(void *), 0, nullptr));
+  }
 
   ~BareApp() {
-    free(app_.windows);
+    gcu_array_destroy_in_place(&app_.windows);
     if (app_.handle_map) {
       gcu_hash64_destroy((GCU_Hash64 *)app_.handle_map);
     }

@@ -39,6 +39,8 @@
 #ifndef GHOTI_IO_CJ_APPLICATION_H
 #define GHOTI_IO_CJ_APPLICATION_H
 
+#include <ghoti.io/cutil/array.h>
+
 #include <ghoti.io/cjelly/macros.h>
 
 #ifdef __cplusplus
@@ -144,6 +146,19 @@ typedef enum CJellyApplicationError {
  * @var requiredDeviceExtensionCapacity
  *  The allocated capacity for the required device extensions array.
  */
+/**
+ * @brief One entry in an application's custom signal-handler list.
+ *
+ * Named so that a GCU_Array can carry it.  It used to be an anonymous struct
+ * declared inline in CJellyApplication, which meant every assignment to the
+ * list had to be cast through void* to get past the type mismatch.
+ */
+typedef struct CJellyApplicationSignalHandler {
+  int signal;                                    /**< The signal number. */
+  void (*handler)(int signal, void * user_data); /**< What to call. */
+  void * user_data;                              /**< Passed to @p handler. */
+} CJellyApplicationSignalHandler;
+
 typedef struct CJellyApplicationOptions {
   uint32_t requiredVulkanVersion;
   uint32_t requiredGPUMemory;
@@ -151,15 +166,18 @@ typedef struct CJellyApplicationOptions {
   CJellyApplicationDeviceType preferredDeviceType;
   bool enableValidation;
 
-  // Instance extensions (enabled during vkCreateInstance)
-  const char ** requiredInstanceExtensions;
-  size_t requiredInstanceExtensionCount;
-  size_t requiredInstanceExtensionCapacity;
+  // Instance extensions (enabled during vkCreateInstance).  Elements are
+  // `char *`, each owned by the array; `data` is what vkCreateInstance wants
+  // for ppEnabledExtensionNames, so the contiguity is load-bearing.
+  //
+  // These were a pointer, a count and a capacity grown by hand.  The growth
+  // doubled `capacity`, so an array that ever reached this code with a
+  // capacity of zero would have grown to zero and written past the end; it
+  // was unreachable only because initialize_options() always allocated first.
+  GCU_Array requiredInstanceExtensions;
 
-  // Device extensions (enabled during vkCreateDevice)
-  const char ** requiredDeviceExtensions;
-  size_t requiredDeviceExtensionCount;
-  size_t requiredDeviceExtensionCapacity;
+  // Device extensions (enabled during vkCreateDevice).  Same arrangement.
+  GCU_Array requiredDeviceExtensions;
 } CJellyApplicationOptions;
 
 
@@ -245,10 +263,9 @@ struct CJellyApplication {
   int computeQueueFamilyIndex;
   bool supportsBindlessRendering;
 
-  // Window tracking (for future mutex protection when multi-threaded)
-  void** windows;  // Window list for tracking (opaque pointers to cj_window_t*)
-  uint32_t window_count;
-  uint32_t window_capacity;
+  // Window tracking (for future mutex protection when multi-threaded).
+  // Elements are `cj_window_t *` held as void*, so this stays an opaque list.
+  GCU_Array windows;
 
   // Handle mapping for event routing: platform handle (HWND, X11 Window) ->
   // cj_window_t*. A cutil GCU_Hash64, held as void* so this header does not
@@ -261,14 +278,11 @@ struct CJellyApplication {
   void (*shutdown_callback)(CJellyApplication* app, void* user_data);  // Shutdown callback
   void* shutdown_callback_user_data;  // User data for shutdown callback
 
-  // Custom signal handlers (array of {signal, handler, user_data})
-  struct {
-    int signal;
-    void (*handler)(int signal, void* user_data);
-    void* user_data;
-  }* custom_signal_handlers;  // Array of custom signal handlers
-  uint32_t custom_signal_handler_count;
-  uint32_t custom_signal_handler_capacity;
+  // Custom signal handlers.  Elements are CJellyApplicationSignalHandler;
+  // the struct is named rather than anonymous because a GCU_Array needs a
+  // sizeof, and because the old code had to cast through void* to assign to
+  // it at all.
+  GCU_Array custom_signal_handlers;
 
   bool signal_handlers_registered;  // Track if signal handlers have been registered
 };

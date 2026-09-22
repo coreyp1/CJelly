@@ -50,6 +50,7 @@
 #define CJellyApplicationDeviceType GHOTIIO_CJELLY(CJellyApplicationDeviceType)
 #define CJellyApplicationError GHOTIIO_CJELLY(CJellyApplicationError)
 #define CJellyApplicationOptions GHOTIIO_CJELLY(CJellyApplicationOptions)
+#define CJellyApplicationSignalHandler GHOTIIO_CJELLY(CJellyApplicationSignalHandler)
 #define CJellyBasicState GHOTIIO_CJELLY(CJellyBasicState)
 #define CJellyBindlessResources GHOTIIO_CJELLY(CJellyBindlessResources)
 #define CJellyBindlessState GHOTIIO_CJELLY(CJellyBindlessState)
