@@ -303,9 +303,27 @@ CJellyModelMeshError cjelly_model_mesh_from_obj(
         }
       }
     }
+    // The midpoint, by whichever of the two spellings cannot leave the box
+    // on these inputs. Neither works alone, and both failures are reachable
+    // from ordinary OBJ text:
+    //
+    //   (min + max) * 0.5f   overflows when the bounds are large and share a
+    //                        sign - three vertices at -3.4e38 give an
+    //                        infinite centre for a finite box.
+    //   0.5f*min + 0.5f*max  underflows when they are denormal, halving
+    //                        1.4e-45 to zero and putting the centre below a
+    //                        box that is entirely above it.
+    //
+    // When the signs differ, |min + max| is at most the larger magnitude, so
+    // the first form cannot overflow. When they agree, |max - min| is at
+    // most the larger magnitude, so the second cannot, and adding back onto
+    // min keeps the result between them.
     for (int axis = 0; axis < 3; axis++) {
-      mesh->center[axis] =
-          (mesh->bounds_min[axis] + mesh->bounds_max[axis]) * 0.5f;
+      float lo = mesh->bounds_min[axis];
+      float hi = mesh->bounds_max[axis];
+      mesh->center[axis] = ((lo < 0.0f) == (hi < 0.0f))
+          ? lo + (hi - lo) * 0.5f
+          : (lo + hi) * 0.5f;
     }
     mesh->radius = 0.0f;
     for (uint32_t i = 0; i < mesh->vertex_count; i++) {

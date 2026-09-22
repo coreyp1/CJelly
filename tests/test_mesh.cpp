@@ -407,6 +407,71 @@ TEST(MeshAllocator, TheObjParseUsesItToo) {
 }
 
 //
+// Bounding box
+//
+
+TEST(MeshBounds, TheCentreOfAFiniteBoxIsInsideIt) {
+  // Coordinates near the top of float's range are ordinary OBJ text, and a
+  // box can be finite at both ends while min+max is not: the sum overflows
+  // before the halving gets a chance to bring it back. The centre then lands
+  // outside the box it is the centre of, and the radius follows it to
+  // infinity - so a caller framing a camera on the bounding sphere gets no
+  // usable numbers from a file that parsed perfectly.
+  CJellyModelMesh * mesh = build(
+      "v -3.4e38 -3.4e38 -3.4e38\n"
+      "v -3.4e38 -3.4e38 -3.4e38\n"
+      "v -3.4e38 -3.4e38 -3.4e38\n"
+      "f 1 2 3\n");
+  ASSERT_NE(mesh, nullptr);
+  for (int axis = 0; axis < 3; axis++) {
+    ASSERT_TRUE(std::isfinite(mesh->bounds_min[axis]));
+    ASSERT_TRUE(std::isfinite(mesh->bounds_max[axis]));
+    EXPECT_TRUE(std::isfinite(mesh->center[axis]))
+        << "axis " << axis << " centre " << mesh->center[axis];
+    EXPECT_GE(mesh->center[axis], mesh->bounds_min[axis]) << "axis " << axis;
+    EXPECT_LE(mesh->center[axis], mesh->bounds_max[axis]) << "axis " << axis;
+  }
+  cjelly_model_mesh_free(mesh);
+}
+
+TEST(MeshBounds, TheCentreOfASmallestBoxIsInsideIt) {
+  // The opposite end from the case above, and the reason the fix cannot
+  // simply halve both bounds before adding them: halving the smallest
+  // denormal underflows to zero, which is outside a box that sits entirely
+  // on one side of it. Found by the struct fuzzer against exactly that
+  // first attempt.
+  CJellyModelMesh * mesh = build(
+      "v 1.4e-45 1.4e-45 1.4e-45\n"
+      "v 1.4e-45 1.4e-45 1.4e-45\n"
+      "v 1.4e-45 1.4e-45 1.4e-45\n"
+      "f 1 2 3\n");
+  ASSERT_NE(mesh, nullptr);
+  for (int axis = 0; axis < 3; axis++) {
+    EXPECT_GE(mesh->center[axis], mesh->bounds_min[axis])
+        << "axis " << axis << " centre " << mesh->center[axis]
+        << " min " << mesh->bounds_min[axis];
+    EXPECT_LE(mesh->center[axis], mesh->bounds_max[axis]) << "axis " << axis;
+  }
+  cjelly_model_mesh_free(mesh);
+}
+
+TEST(MeshBounds, TheCentreOfTheWidestBoxIsStillFinite) {
+  // The other end of the same arithmetic: a box spanning the whole range.
+  // Halving each bound before adding has to keep this one right too, or the
+  // fix for the case above would have traded one overflow for another.
+  CJellyModelMesh * mesh = build(
+      "v -3.4e38 0 0\n"
+      "v 3.4e38 0 0\n"
+      "v 0 1 0\n"
+      "f 1 2 3\n");
+  ASSERT_NE(mesh, nullptr);
+  EXPECT_TRUE(std::isfinite(mesh->center[0])) << mesh->center[0];
+  EXPECT_GE(mesh->center[0], mesh->bounds_min[0]);
+  EXPECT_LE(mesh->center[0], mesh->bounds_max[0]);
+  cjelly_model_mesh_free(mesh);
+}
+
+//
 // The harness's own fixture lookup
 //
 // These guard the thing that decides whether any of the tests above are
