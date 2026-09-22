@@ -292,7 +292,7 @@ UNIT_TEST_EXECUTABLES := $(addprefix $(APP_DIR)/,$(addsuffix $(EXE_EXTENSION),\
 TEST_INCLUDE := $(INCLUDE) -I src/ -I tests/
 
 define unit-test-rule
-$(APP_DIR)/$2$(EXE_EXTENSION): $1 | $(APP_DIR)/$(TARGET) $(APP_DIR)/$(STATIC_TARGET)
+$(APP_DIR)/$2$(EXE_EXTENSION): $1 $(APP_DIR)/$(STATIC_TARGET) | $(APP_DIR)/$(TARGET)
 	@printf "\n### Compiling and linking %s Test ###\n" "$2"
 	@mkdir -p $$(@D)
 	$$(CXX) $$(CXXFLAGS) $$(TEST_INCLUDE) -MMD -MP -MF $$(APP_DIR)/$2.d -o $$@ $$< $$(CJELLYLIBRARY) $$(LDFLAGS) $$(TESTFLAGS)
