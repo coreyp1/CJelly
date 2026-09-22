@@ -197,13 +197,38 @@ else
 
 endif
 
+# ---------------------------------------------------------------------------
+# Targets that need no dependencies
+#
+# The $(error) calls below fire while the makefile is being read, before make
+# has looked at what was asked for.  So `make clean` with nothing installed
+# exited 2 having removed nothing - the one command whose whole purpose is to
+# work on a broken tree was the one that needed the tree to be whole.  Same
+# for `docs`, `cloc` and `help`, and for `uninstall`, which removes files it
+# locates through PREFIX and never asks pkg-config anything.
+#
+# `demo` is deliberately absent: it builds and runs a binary, so it needs the
+# real check.  So are `test` and `check-symbols`.
+#
+# $(or $(MAKECMDGOALS),all) is load-bearing.  A bare `make` names no goal, and
+# an empty MAKECMDGOALS would filter to nothing and look dependency-free -
+# which would skip the check exactly when it matters most.  Substituting `all`
+# keeps the bare case honest.
+# ---------------------------------------------------------------------------
+DEPLESS_GOALS := clean docs docs-pdf cloc help uninstall uninstall-debug
+ifeq ($(filter-out $(DEPLESS_GOALS),$(or $(MAKECMDGOALS),all)),)
+SKIP_DEP_CHECK := 1
+endif
+
 # The Ghoti.io CUtil library supplies the generic container used by the format
 # parsers. Same install-then-sibling arrangement as image below.
 CUTIL_PC ?= $(SUITE)-cutil$(BRANCH)
 CUTIL_CFLAGS := $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_LOOKUP_PATH) pkg-config --cflags $(CUTIL_PC) 2>/dev/null)
 CUTIL_LIBS := $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_LOOKUP_PATH) pkg-config --libs $(CUTIL_PC) 2>/dev/null)
 ifeq ($(strip $(CUTIL_CFLAGS)),)
+ifndef SKIP_DEP_CHECK
 $(error ghoti.io-cutil was not found by pkg-config. Run ./bootstrap.sh in the parent folder to build and install the suite into a local prefix, then pass the same PREFIX here - or point PKG_CONFIG_PATH at the directory holding its .pc file. There is deliberately no sibling-checkout fallback: a second resolution path that only in-tree builds exercise is one that silently rots.)
+endif
 endif
 LDFLAGS += $(CUTIL_LIBS)
 
@@ -219,7 +244,9 @@ IMAGE_LIBS := $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_LOOKUP_PATH) pkg-config --lib
 # Fall back when pkg-config produced nothing, or echoed an unsubstituted
 # placeholder (a literal "(" is the tell).
 ifeq ($(strip $(IMAGE_CFLAGS)),)
+ifndef SKIP_DEP_CHECK
 $(error ghoti.io-image was not found by pkg-config. Run ./bootstrap.sh in the parent folder to build and install the suite into a local prefix, then pass the same PREFIX here - or point PKG_CONFIG_PATH at the directory holding its .pc file. There is deliberately no sibling-checkout fallback: a second resolution path that only in-tree builds exercise is one that silently rots.)
+endif
 endif
 LDFLAGS += $(IMAGE_LIBS)
 
@@ -228,7 +255,9 @@ MODEL_PC ?= $(SUITE)-model$(BRANCH)
 MODEL_CFLAGS := $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_LOOKUP_PATH) pkg-config --cflags $(MODEL_PC) 2>/dev/null)
 MODEL_LIBS := $(shell PKG_CONFIG_PATH=$(PKG_CONFIG_LOOKUP_PATH) pkg-config --libs $(MODEL_PC) 2>/dev/null)
 ifeq ($(strip $(MODEL_CFLAGS)),)
+ifndef SKIP_DEP_CHECK
 $(error ghoti.io-model was not found by pkg-config. Run ./bootstrap.sh in the parent folder to build and install the suite into a local prefix, then pass the same PREFIX here - or point PKG_CONFIG_PATH at the directory holding its .pc file. There is deliberately no sibling-checkout fallback: a second resolution path that only in-tree builds exercise is one that silently rots.)
+endif
 endif
 LDFLAGS += $(MODEL_LIBS)
 
