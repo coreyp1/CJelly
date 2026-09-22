@@ -694,8 +694,117 @@ demo: \
 	fi
 	cd $(APP_DIR) && LD_LIBRARY_PATH="$(RUNTIME_LIB_PATH)" $(ENV_VARS) ./main$(EXE_EXTENSION) $(DEMO_MODEL_ARG)
 
+####################################################################
+# Sanitizer build (ASan + UBSan)
+####################################################################
+# Instrumented objects go in a sibling of the ordinary build directory rather
+# than a child, so that nothing can mistake one for the other and `clean` can
+# name both. The generated headers are shared deliberately: the shaders and
+# the version header do not depend on how the library is compiled, and
+# INCLUDE already points at them.
+#
+# float-cast-overflow is named explicitly, and named twice. GCC does not put
+# it in the `undefined` group - clang does, which is where the expectation
+# comes from - and -fno-sanitize-recover=undefined names that same group, so
+# it does not cover the check either. Enable only `undefined` and a
+# float-to-integer overflow prints a diagnostic and the run still exits 0: a
+# gate that describes the bug and passes. Spelling the list once and using it
+# in both flags is what keeps the two from drifting apart again.
+UBSAN_CHECKS := undefined,float-cast-overflow
+ASAN_UBSAN_FLAGS := -fsanitize=address,$(UBSAN_CHECKS) \
+	-fno-sanitize-recover=$(UBSAN_CHECKS) -fno-omit-frame-pointer -g
+
+ASAN_BUILD_DIR := ./build/$(BUILD)-asan
+ASAN_OBJ_DIR := $(ASAN_BUILD_DIR)/objects
+ASAN_APP_DIR := $(ASAN_BUILD_DIR)/apps
+
+ASAN_LIBOBJECTS := $(patsubst src/%.c,$(ASAN_OBJ_DIR)/%.o,$(SOURCES))
+ASAN_STATIC_TARGET := $(BASE_NAME_PREFIX)-asan.a
+
+ASAN_CFLAGS := $(LIB_CFLAGS) $(ASAN_UBSAN_FLAGS)
+ASAN_CXXFLAGS := $(CXXFLAGS) $(ASAN_UBSAN_FLAGS)
+ASAN_LDFLAGS := $(LDFLAGS) $(ASAN_UBSAN_FLAGS)
+
+# The tests link the instrumented archive, exactly as the ordinary ones link
+# the ordinary archive. That also means there is no ASan runtime ordering
+# problem to solve: a static link puts libasan in the executable's own NEEDED
+# list, so it initialises before anything it has to intercept, and no
+# LD_PRELOAD is needed.
+ASAN_CJELLYLIBRARY := -Wl,--whole-archive $(ASAN_APP_DIR)/$(ASAN_STATIC_TARGET) \
+	-Wl,--no-whole-archive $(IMAGE_LIBS) $(MODEL_LIBS) $(CUTIL_LIBS)
+
+$(ASAN_LIBOBJECTS): | $(SHADER_HEADERS)
+
+$(ASAN_OBJ_DIR)/%.o: src/%.c | $(LIBVER_GEN)
+	@printf "\n### Compiling ASan $@ ###\n"
+	@mkdir -p $(@D)
+	$(CC) $(ASAN_CFLAGS) $(INCLUDE) -c $< -MMD -MP -MF $(@:.o=.d) -o $@
+
+$(ASAN_APP_DIR)/$(ASAN_STATIC_TARGET): $(ASAN_LIBOBJECTS)
+	@printf "\n### Archiving ASan CJelly Library ###\n"
+	@mkdir -p $(@D)
+	@rm -f $@
+	ar rcs $@ $^
+
+# The archive is a normal prerequisite, not an order-only one, for the same
+# reason it is in the ordinary test rule: it is what the recipe links, so a
+# change to library source has to relink the test. Behind a `|` the suite
+# would keep passing against the previous build.
+define asan-unit-test-rule
+$(ASAN_APP_DIR)/$2$(EXE_EXTENSION): $1 $(ASAN_APP_DIR)/$(ASAN_STATIC_TARGET)
+	@printf "\n### Compiling and linking ASan %s Test ###\n" "$2"
+	@mkdir -p $$(@D)
+	$$(CXX) $$(ASAN_CXXFLAGS) $$(TEST_INCLUDE) -MMD -MP -MF $$(ASAN_APP_DIR)/$2.d -o $$@ $$< $$(ASAN_CJELLYLIBRARY) $$(ASAN_LDFLAGS) $$(TESTFLAGS)
+endef
+$(foreach pair,$(UNIT_TEST_PAIRS),$(eval $(call asan-unit-test-rule,$(word 1,$(subst |, ,$(pair))),$(word 2,$(subst |, ,$(pair))))))
+
+ASAN_TEST_EXECUTABLES := $(addprefix $(ASAN_APP_DIR)/,$(addsuffix $(EXE_EXTENSION),\
+	$(foreach pair,$(UNIT_TEST_PAIRS),$(word 2,$(subst |, ,$(pair))))))
+
+-include $(ASAN_TEST_EXECUTABLES:%=%.d)
+
+# check-symbols is deliberately not a prerequisite. It inspects
+# $(APP_DIR)/$(TARGET), which this target does not build, so depending on it
+# would link a release shared library as a side effect of asking for an
+# instrumented run - to re-check what `make test` already checked.
+test-asan: ## Run the unit tests under AddressSanitizer + UndefinedBehaviorSanitizer (Linux only)
+test-asan: $(ASAN_TEST_EXECUTABLES)
+ifeq ($(OS_NAME), Linux)
+	@printf "\033[0;36m\n"
+	@printf "###########################################\n"
+	@printf "### Running tests with ASan + UBSan     ###\n"
+	@printf "###########################################\n"
+	@printf "\033[0m\n"
+	@for test_exe in $(ASAN_TEST_EXECUTABLES); do \
+		test_name=$$(basename $$test_exe $(EXE_EXTENSION)); \
+		printf "\033[0;30;43m\n### Running %s (ASan+UBSan) ###\033[0m\n\n" "$$test_name"; \
+		env -u LD_PRELOAD \
+			LD_LIBRARY_PATH="$(RUNTIME_LIB_PATH)" \
+			CJELLY_TEST_DIR="$(CURDIR)/test" \
+			ASAN_OPTIONS=detect_leaks=1:halt_on_error=1 \
+			UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1 \
+			$$test_exe --gtest_brief=1 || exit 1; \
+	done
+	@printf "\033[0;32m\nAll tests passed with ASan + UBSan.\033[0m\n"
+else
+	@printf "\033[0;31mSanitizer builds are currently only supported on Linux.\033[0m\n"
+	@exit 1
+endif
+
+# LD_PRELOAD is cleared for the run above, not as tidiness. This desktop sets
+# it to libgtk3-nocsd, which is loaded before libasan and displaces the
+# interceptors; the symptom is a sanitizer that reports nothing, which is
+# indistinguishable from a clean run.
+
+test-ubsan: ## Alias for test-asan (ASan and UBSan run together)
+test-ubsan: test-asan
+
 clean: ## Remove all contents of the build directories.
-	-@rm -rvf $(BUILD_DIR)
+# The sanitizer tree goes too. It is a sibling of the ordinary build
+# directory rather than a child, so a clean naming only the latter leaves
+# instrumented objects behind - and those are the worst kind to leave,
+# because they still run.
+	-@rm -rvf $(BUILD_DIR) $(ASAN_BUILD_DIR)
 
 # Files will be as follows:
 # /usr/local/lib/(SUITE)/
