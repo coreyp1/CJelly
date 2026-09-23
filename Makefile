@@ -1291,12 +1291,21 @@ END {
 # arm still walks physical lines, and only the compile arm claims its
 # record.
 #
-# The stamped-link arm does consume its record, so LINKED counts records
-# there rather than invocations. It is the same collapse, and it is only
-# harmless because a second invocation inside one stamped link recipe would
-# be covered by that rule's stamp anyway. Measured: walking physical lines
-# there too leaves LINKED at 5, so nothing in this makefile has that shape
-# today.
+# The stamped-link arm consumes its record, so LINKED counts RULES there,
+# which is what the gate's own message says it counts. That is deliberate and
+# not the collapse above: a record never spans two rules, so a second command
+# inside one stamped link recipe is the same rule, under the same stamp, with
+# its variables already read from the whole record. Nothing is lost.
+#
+# Do NOT "fix" this into counting invocations here. ghoti-io-3d's chron did
+# count invocations while still reading each one's whole record, so a stamped
+# link rule holding two commands reported the same unrecorded name twice, at
+# two different line numbers - and UNRECORDED is pinned at zero, so the
+# inflated number is the one a reader judges the damage by. The two units
+# have to agree per arm: count invocations where the COUNT is the answer
+# (unmodelled, which is a count of compiler calls outside the model), count
+# rules where the STAMP is the answer. Measured here with a planted
+# two-command link rule: one report, LINKED up by one.
     iscompile = (L[i] ~ /-c \$$</)
     if (!iscompile) {
       if (L[i] ~ /^\t[ \t]*\043/) continue
