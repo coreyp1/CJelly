@@ -57,6 +57,9 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include <ghoti.io/cjelly/cj_result.h>
+#include <ghoti.io/cjelly/cj_window.h>
+
 /* The seam. Each of these is declared once, with no conditional, and defined
  * by both platform modules. A call site in window.c that uses them needs no
  * #ifdef of its own, which is the whole point: the conditional moves from
@@ -80,6 +83,26 @@ bool cj_plat_capture_mouse(uintptr_t handle);
  *  @return true if a capture was released.
  */
 bool cj_plat_release_mouse(void);
+
+/** Ask the window system where this window actually is.
+ *  @return true if it answered; false leaves the library's cache authoritative.
+ */
+bool cj_plat_query_position(uintptr_t handle, int32_t* out_x, int32_t* out_y);
+
+/** Ask the window system what state this window is in.
+ *  @return true if it answered; false leaves the library's cache authoritative.
+ */
+bool cj_plat_query_state(uintptr_t handle, cj_window_state_t* out_state);
+
+/** Move the window, given the library's cached position for comparison.
+ *  @return true if the caller should arm programmatic-move suppression, which
+ *          only a window system that reports moves back to us needs.
+ */
+bool cj_plat_move_window(uintptr_t handle, int32_t x, int32_t y,
+    int32_t cur_x, int32_t cur_y);
+
+/** Ask the window manager to change this window's state. */
+cj_result_t cj_plat_set_window_state(uintptr_t handle, cj_window_state_t state);
 
 /** Drain the window system's event queue and dispatch to window callbacks.
  *

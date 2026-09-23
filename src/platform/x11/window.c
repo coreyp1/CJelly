@@ -274,3 +274,117 @@ bool cj_plat_release_mouse(void) {
   XUngrabPointer(cj_x11_display, CurrentTime);
   return true;
 }
+
+bool cj_plat_query_position(uintptr_t handle, int32_t* out_x, int32_t* out_y) {
+  /* X11: the cached CLIENT position is authoritative. XMoveWindow takes
+   * client coordinates, and what XGetGeometry reports depends on whether the
+   * window manager reparented us, so asking would answer a different
+   * question than the one the caller is asking. */
+  (void)handle; (void)out_x; (void)out_y;
+  return false;
+}
+
+bool cj_plat_query_state(uintptr_t handle, cj_window_state_t* out_state) {
+  if (!cj_x11_display || !handle || !out_state) return false;
+  Window w = (Window)handle;
+
+  Atom wm_state = XInternAtom(cj_x11_display, "_NET_WM_STATE", False);
+  Atom actual_type;
+  int actual_format;
+  unsigned long nitems, bytes_after;
+  unsigned char* prop = NULL;
+
+  if (XGetWindowProperty(cj_x11_display, w, wm_state, 0, 1024, False,
+          XA_ATOM, &actual_type, &actual_format, &nitems, &bytes_after, &prop)
+      != Success) {
+    return false;
+  }
+
+  bool maximized = false;
+  if (prop && nitems > 0) {
+    Atom* atoms = (Atom*)prop;
+    Atom max_horz = XInternAtom(cj_x11_display, "_NET_WM_STATE_MAXIMIZED_HORZ", False);
+    Atom max_vert = XInternAtom(cj_x11_display, "_NET_WM_STATE_MAXIMIZED_VERT", False);
+    bool has_max_horz = false, has_max_vert = false;
+    for (unsigned long i = 0; i < nitems; i++) {
+      if (atoms[i] == max_horz) has_max_horz = true;
+      if (atoms[i] == max_vert) has_max_vert = true;
+    }
+    maximized = has_max_horz && has_max_vert;
+  }
+  if (prop) XFree(prop);
+
+  if (maximized) {
+    *out_state = CJ_WINDOW_STATE_MAXIMIZED;
+    return true;
+  }
+
+  XWindowAttributes attrs;
+  if (!XGetWindowAttributes(cj_x11_display, w, &attrs)) return false;
+  *out_state = (attrs.map_state == IsUnmapped)
+      ? CJ_WINDOW_STATE_MINIMIZED
+      : CJ_WINDOW_STATE_NORMAL;
+  return true;
+}
+
+bool cj_plat_move_window(uintptr_t handle, int32_t x, int32_t y,
+    int32_t cur_x, int32_t cur_y) {
+  if (!cj_x11_display || !handle) return false;
+  /* Moving to where we already are costs a round trip and can draw a
+   * spurious ConfigureNotify back. */
+  if (x == cur_x && y == cur_y) return false;
+
+  int32_t decor_left = 0, decor_top = 0;
+  cj_x11_get_frame_extents(cj_x11_display, (Window)handle,
+      &decor_left, NULL, &decor_top, NULL);
+
+  /* Empirically determined: the WM adds (decor - 32) to our coordinates, so
+   * subtract that to compensate. Seen under WSLg/XWayland. */
+  int32_t move_x = x - (decor_left - 32);
+  int32_t move_y = y - (decor_top - 32);
+
+  XMoveWindow(cj_x11_display, (Window)handle, move_x, move_y);
+  XFlush(cj_x11_display);
+  /* X11 reports the move back as a ConfigureNotify; the caller has to know
+   * to ignore it. */
+  return true;
+}
+
+cj_result_t cj_plat_set_window_state(uintptr_t handle, cj_window_state_t state) {
+  if (!cj_x11_display || !handle) return CJ_E_INVALID_ARGUMENT;
+  Window w = (Window)handle;
+  int screen = DefaultScreen(cj_x11_display);
+
+  Atom wm_state = XInternAtom(cj_x11_display, "_NET_WM_STATE", False);
+  Atom max_horz = XInternAtom(cj_x11_display, "_NET_WM_STATE_MAXIMIZED_HORZ", False);
+  Atom max_vert = XInternAtom(cj_x11_display, "_NET_WM_STATE_MAXIMIZED_VERT", False);
+
+  long action;
+  switch (state) {
+    case CJ_WINDOW_STATE_NORMAL:    action = 0; break; /* _NET_WM_STATE_REMOVE */
+    case CJ_WINDOW_STATE_MAXIMIZED: action = 1; break; /* _NET_WM_STATE_ADD */
+    case CJ_WINDOW_STATE_MINIMIZED:
+      XIconifyWindow(cj_x11_display, w, screen);
+      XFlush(cj_x11_display);
+      return CJ_SUCCESS;
+    case CJ_WINDOW_STATE_FULLSCREEN:
+      return CJ_E_UNSUPPORTED; /* Not implemented yet */
+    default:
+      return CJ_E_INVALID_ARGUMENT;
+  }
+
+  XEvent ev = {0};
+  ev.type = ClientMessage;
+  ev.xclient.window = w;
+  ev.xclient.message_type = wm_state;
+  ev.xclient.format = 32;
+  ev.xclient.data.l[0] = action;
+  ev.xclient.data.l[1] = (long)max_horz;
+  ev.xclient.data.l[2] = (long)max_vert;
+  ev.xclient.data.l[3] = 1; /* Source indication: application */
+  ev.xclient.data.l[4] = 0;
+  XSendEvent(cj_x11_display, RootWindow(cj_x11_display, screen), False,
+      SubstructureNotifyMask | SubstructureRedirectMask, &ev);
+  XFlush(cj_x11_display);
+  return CJ_SUCCESS;
+}

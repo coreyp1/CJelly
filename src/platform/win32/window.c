@@ -784,3 +784,48 @@ bool cj_plat_release_mouse(void) {
   ReleaseCapture();
   return true;
 }
+
+bool cj_plat_query_position(uintptr_t handle, int32_t* out_x, int32_t* out_y) {
+  /* Windows knows where the window is, including after the user moved it. */
+  RECT rect;
+  if (!handle || !GetWindowRect((HWND)handle, &rect)) return false;
+  /* TODO: Apply DPI scaling conversion (for now, assume 1.0 scale) */
+  if (out_x) *out_x = rect.left;
+  if (out_y) *out_y = rect.top;
+  return true;
+}
+
+bool cj_plat_query_state(uintptr_t handle, cj_window_state_t* out_state) {
+  HWND hwnd = (HWND)handle;
+  if (!hwnd || !out_state) return false;
+  if (IsZoomed(hwnd))      *out_state = CJ_WINDOW_STATE_MAXIMIZED;
+  else if (IsIconic(hwnd)) *out_state = CJ_WINDOW_STATE_MINIMIZED;
+  else                     *out_state = CJ_WINDOW_STATE_NORMAL;
+  return true;
+}
+
+bool cj_plat_move_window(uintptr_t handle, int32_t x, int32_t y,
+    int32_t cur_x, int32_t cur_y) {
+  (void)cur_x; (void)cur_y;
+  if (!handle) return false;
+  /* TODO: Apply DPI scaling conversion (for now, assume 1.0 scale) */
+  SetWindowPos((HWND)handle, NULL, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
+  /* Windows does not feed programmatic moves back as user moves, so there is
+   * nothing for the caller to suppress. */
+  return false;
+}
+
+cj_result_t cj_plat_set_window_state(uintptr_t handle, cj_window_state_t state) {
+  HWND hwnd = (HWND)handle;
+  if (!hwnd) return CJ_E_INVALID_ARGUMENT;
+  int show_cmd;
+  switch (state) {
+    case CJ_WINDOW_STATE_NORMAL:     show_cmd = SW_RESTORE;  break;
+    case CJ_WINDOW_STATE_MAXIMIZED:  show_cmd = SW_MAXIMIZE; break;
+    case CJ_WINDOW_STATE_MINIMIZED:  show_cmd = SW_MINIMIZE; break;
+    case CJ_WINDOW_STATE_FULLSCREEN: return CJ_E_UNSUPPORTED; /* Not implemented yet */
+    default:                         return CJ_E_INVALID_ARGUMENT;
+  }
+  ShowWindow(hwnd, show_cmd);
+  return CJ_SUCCESS;
+}

@@ -1030,87 +1030,24 @@ CJ_API void cj_window_get_position(const cj_window_t* window, int32_t* out_x, in
     if (out_y) *out_y = 0;
     return;
   }
-#ifdef _WIN32
-  // Query actual position from Windows (may have changed externally)
-  RECT rect;
-  if (GetWindowRect(window->plat->handle, &rect)) {
-    // TODO: Apply DPI scaling conversion (for now, assume 1.0 scale)
-    if (out_x) *out_x = rect.left;
-    if (out_y) *out_y = rect.top;
-    // Update cached position
-    window->plat->x = rect.left;
-    window->plat->y = rect.top;
-  } else {
-    // Fallback to cached position
-    if (out_x) *out_x = window->plat->x;
-    if (out_y) *out_y = window->plat->y;
+  /* The window may have been moved by the user or the window manager. Where
+   * the window system will say so, refresh the cache first; where it will
+   * not, the cache is what we have. */
+  int32_t px = 0, py = 0;
+  if (cj_plat_query_position((uintptr_t)window->plat->handle, &px, &py)) {
+    window->plat->x = px;
+    window->plat->y = py;
   }
-#else
-  // Linux: return cached CLIENT position.
-  // XMoveWindow expects client coordinates, so we use client coords throughout.
   if (out_x) *out_x = window->plat->x;
   if (out_y) *out_y = window->plat->y;
-#endif
 }
 
 CJ_API cj_window_state_t cj_window_get_state(const cj_window_t* window) {
   if (!window || !window->plat) return CJ_WINDOW_STATE_NORMAL;
-#ifdef _WIN32
-  // Query actual state from Windows
-  HWND hwnd = window->plat->handle;
-  if (IsZoomed(hwnd)) {
-    window->plat->state = CJ_WINDOW_STATE_MAXIMIZED;
-  } else if (IsIconic(hwnd)) {
-    window->plat->state = CJ_WINDOW_STATE_MINIMIZED;
-  } else {
-    window->plat->state = CJ_WINDOW_STATE_NORMAL;
+  cj_window_state_t st = CJ_WINDOW_STATE_NORMAL;
+  if (cj_plat_query_state((uintptr_t)window->plat->handle, &st)) {
+    window->plat->state = st;
   }
-#else
-  // Linux: Query _NET_WM_STATE property
-  Atom wm_state = XInternAtom(cj_x11_display, "_NET_WM_STATE", False);
-  Atom actual_type;
-  int actual_format;
-  unsigned long nitems, bytes_after;
-  unsigned char* prop = NULL;
-
-  if (XGetWindowProperty(cj_x11_display, window->plat->handle, wm_state, 0, 1024, False,
-                         XA_ATOM, &actual_type, &actual_format, &nitems, &bytes_after, &prop) == Success) {
-    if (prop && nitems > 0) {
-      Atom* atoms = (Atom*)prop;
-      Atom max_horz = XInternAtom(cj_x11_display, "_NET_WM_STATE_MAXIMIZED_HORZ", False);
-      Atom max_vert = XInternAtom(cj_x11_display, "_NET_WM_STATE_MAXIMIZED_VERT", False);
-      bool has_max_horz = false, has_max_vert = false;
-      for (unsigned long i = 0; i < nitems; i++) {
-        if (atoms[i] == max_horz) has_max_horz = true;
-        if (atoms[i] == max_vert) has_max_vert = true;
-      }
-      if (has_max_horz && has_max_vert) {
-        window->plat->state = CJ_WINDOW_STATE_MAXIMIZED;
-      } else {
-        // Check if minimized (viewable attribute)
-        XWindowAttributes attrs;
-        if (XGetWindowAttributes(cj_x11_display, window->plat->handle, &attrs)) {
-          if (attrs.map_state == IsUnmapped) {
-            window->plat->state = CJ_WINDOW_STATE_MINIMIZED;
-          } else {
-            window->plat->state = CJ_WINDOW_STATE_NORMAL;
-          }
-        }
-      }
-      XFree(prop);
-    } else {
-      // No state atoms, check if minimized
-      XWindowAttributes attrs;
-      if (XGetWindowAttributes(cj_x11_display, window->plat->handle, &attrs)) {
-        if (attrs.map_state == IsUnmapped) {
-          window->plat->state = CJ_WINDOW_STATE_MINIMIZED;
-        } else {
-          window->plat->state = CJ_WINDOW_STATE_NORMAL;
-        }
-      }
-    }
-  }
-#endif
   return window->plat->state;
 }
 
@@ -1126,121 +1063,25 @@ CJ_API bool cj_window_is_high_dpi(const cj_window_t* window) {
 
 CJ_API cj_result_t cj_window_set_position(cj_window_t* window, int32_t x, int32_t y) {
   if (!window || !window->plat || window->is_destroyed) return CJ_E_INVALID_ARGUMENT;
-#ifdef _WIN32
-  // TODO: Apply DPI scaling conversion (for now, assume 1.0 scale)
-  SetWindowPos(window->plat->handle, NULL, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
-  // Update cached position
-  window->plat->x = x;
-  window->plat->y = y;
-#else
-
-  // Skip if position hasn't changed (reduces lag from duplicate moves)
-  if (x == window->plat->x && y == window->plat->y) {
-    return CJ_SUCCESS;
+  /* x,y are CLIENT coordinates on both platforms. What the window system
+   * needs doing to them, and whether it will report the move back to us, is
+   * its own business. */
+  if (cj_plat_move_window((uintptr_t)window->plat->handle, x, y,
+          window->plat->x, window->plat->y)) {
+    cj_window__set_programmatic_move(window, true);
   }
-
-  // Get decoration offset
-  int32_t decor_left = 0, decor_top = 0;
-  cj_x11_get_frame_extents(cj_x11_display, window->plat->handle, &decor_left, NULL, &decor_top, NULL);
-
-  // Empirically determined: WM adds (decor - 32) to our coordinates.
-  // To compensate, subtract this offset.
-  // This seems to be specific to WSLg/XWayland behavior.
-  int32_t offset_x = decor_left - 32;
-  int32_t offset_y = decor_top - 32;
-  int32_t move_x = x - offset_x;
-  int32_t move_y = y - offset_y;
-
-  // Set flag to suppress ConfigureNotify feedback during programmatic moves
-  cj_window__set_programmatic_move(window, true);
-
-  // x,y are CLIENT coordinates. Subtract offset to compensate for WM behavior.
-  XMoveWindow(cj_x11_display, window->plat->handle, move_x, move_y);
-  XFlush(cj_x11_display);
-
-  // Update cached position immediately (in client coordinates)
   window->plat->x = x;
   window->plat->y = y;
-#endif
   return CJ_SUCCESS;
 }
 
 CJ_API cj_result_t cj_window_set_state(cj_window_t* window, cj_window_state_t state) {
   if (!window || !window->plat || window->is_destroyed) return CJ_E_INVALID_ARGUMENT;
-#ifdef _WIN32
-  HWND hwnd = window->plat->handle;
-  int show_cmd;
-  switch (state) {
-    case CJ_WINDOW_STATE_NORMAL:
-      show_cmd = SW_RESTORE;
-      break;
-    case CJ_WINDOW_STATE_MAXIMIZED:
-      show_cmd = SW_MAXIMIZE;
-      break;
-    case CJ_WINDOW_STATE_MINIMIZED:
-      show_cmd = SW_MINIMIZE;
-      break;
-    case CJ_WINDOW_STATE_FULLSCREEN:
-      // Not implemented yet
-      return CJ_E_UNSUPPORTED;
-    default:
-      return CJ_E_INVALID_ARGUMENT;
-  }
-  ShowWindow(hwnd, show_cmd);
-  window->plat->state = state;
-  // State change callback will be invoked by WM_SIZE handler
-#else
-  int screen = DefaultScreen(cj_x11_display);
-  XEvent ev = {0};
-  Atom wm_state = XInternAtom(cj_x11_display, "_NET_WM_STATE", False);
-  Atom max_horz = XInternAtom(cj_x11_display, "_NET_WM_STATE_MAXIMIZED_HORZ", False);
-  Atom max_vert = XInternAtom(cj_x11_display, "_NET_WM_STATE_MAXIMIZED_VERT", False);
-
-  switch (state) {
-    case CJ_WINDOW_STATE_NORMAL:
-      // Remove maximized atoms
-      ev.type = ClientMessage;
-      ev.xclient.window = window->plat->handle;
-      ev.xclient.message_type = wm_state;
-      ev.xclient.format = 32;
-      ev.xclient.data.l[0] = 0;  // _NET_WM_STATE_REMOVE
-      ev.xclient.data.l[1] = max_horz;
-      ev.xclient.data.l[2] = max_vert;
-      ev.xclient.data.l[3] = 1;  // Source indication: application
-      ev.xclient.data.l[4] = 0;
-      XSendEvent(cj_x11_display, RootWindow(cj_x11_display, screen), False,
-                 SubstructureNotifyMask | SubstructureRedirectMask, &ev);
-      window->plat->state = CJ_WINDOW_STATE_NORMAL;
-      break;
-    case CJ_WINDOW_STATE_MAXIMIZED:
-      // Add maximized atoms
-      ev.type = ClientMessage;
-      ev.xclient.window = window->plat->handle;
-      ev.xclient.message_type = wm_state;
-      ev.xclient.format = 32;
-      ev.xclient.data.l[0] = 1;  // _NET_WM_STATE_ADD
-      ev.xclient.data.l[1] = max_horz;
-      ev.xclient.data.l[2] = max_vert;
-      ev.xclient.data.l[3] = 1;  // Source indication: application
-      ev.xclient.data.l[4] = 0;
-      XSendEvent(cj_x11_display, RootWindow(cj_x11_display, screen), False,
-                 SubstructureNotifyMask | SubstructureRedirectMask, &ev);
-      window->plat->state = CJ_WINDOW_STATE_MAXIMIZED;
-      break;
-    case CJ_WINDOW_STATE_MINIMIZED:
-      XIconifyWindow(cj_x11_display, window->plat->handle, screen);
-      window->plat->state = CJ_WINDOW_STATE_MINIMIZED;
-      break;
-    case CJ_WINDOW_STATE_FULLSCREEN:
-      // Not implemented yet
-      return CJ_E_UNSUPPORTED;
-    default:
-      return CJ_E_INVALID_ARGUMENT;
-  }
-  XFlush(cj_x11_display);
-  // State change callback will be invoked by PropertyNotify handler
-#endif
-  return CJ_SUCCESS;
+  cj_result_t r = cj_plat_set_window_state((uintptr_t)window->plat->handle, state);
+  /* The state-change callback is dispatched by the platform's own event
+   * handler, not here. */
+  if (r == CJ_SUCCESS) window->plat->state = state;
+  return r;
 }
 
 CJ_API uint64_t cj_window_frame_index(const cj_window_t* win) {
