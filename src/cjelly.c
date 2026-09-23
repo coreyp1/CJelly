@@ -77,8 +77,6 @@ extern unsigned int textured_vert_spv_len;
 // Global Vulkan objects shared among all windows.
 
 
-// Global flag to enable validation layers.
-int enableValidationLayers;
 
 
 /* Helpers to read from current engine */
@@ -112,14 +110,14 @@ typedef struct VertexBindless {
 
 
 // Forward declarations for helper functions still in use:
-void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
+static void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
     VkMemoryPropertyFlags properties, VkBuffer * buffer,
     VkDeviceMemory * bufferMemory);
-void transitionImageLayout(VkImage image, VkFormat format,
+static void transitionImageLayout(VkImage image, VkFormat format,
     VkImageLayout oldLayout, VkImageLayout newLayout);
-void createBindlessVertexBuffer(VkDevice device, VkCommandPool commandPool);
-void createBindlessGraphicsPipeline(VkDevice device, VkRenderPass renderPass);
-VkShaderModule createShaderModuleFromMemory(VkDevice device, const unsigned char * code, size_t codeSize);
+static void createBindlessVertexBuffer(VkDevice device, VkCommandPool commandPool);
+static void createBindlessGraphicsPipeline(VkDevice device, VkRenderPass renderPass);
+static VkShaderModule createShaderModuleFromMemory(VkDevice device, const unsigned char * code, size_t codeSize);
 
 // Forward declarations/definitions for texture atlas and application
 typedef struct CJellyTextureAtlas {
@@ -426,7 +424,7 @@ CJellyBindlessResources* cjelly_create_bindless_resources(void) {
     /*DEBUG*/ if(getenv("CJELLY_DEBUG")) fprintf(stderr, "DEBUG: Textures added to atlas\n");
 
     /*DEBUG*/ if(getenv("CJELLY_DEBUG")) fprintf(stderr, "DEBUG: Transition atlas to SHADER_READ_ONLY\n");
-    // Atlas image was created and filled per-texture via copyBufferToImage; ensure final layout
+    // The atlas image was filled per texture by the upload path; ensure final layout
     transitionImageLayout(atlas->atlasImage, VK_FORMAT_R8G8B8A8_UNORM,
         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     /*DEBUG*/ if(getenv("CJELLY_DEBUG")) fprintf(stderr, "DEBUG: Update descriptor set\n");
@@ -813,23 +811,21 @@ CJ_API CJellyBindlessResources* cjelly_create_bindless_color_square_resources_ct
     resources->colorMul[0]=1.0f; resources->colorMul[1]=1.0f; resources->colorMul[2]=1.0f; resources->colorMul[3]=1.0f;
     return resources;
 }
-void createImage(uint32_t width, uint32_t height, VkFormat format,
+static void createImage(uint32_t width, uint32_t height, VkFormat format,
     VkImageTiling tiling, VkImageUsageFlags usage,
     VkMemoryPropertyFlags properties, VkImage * image,
     VkDeviceMemory * imageMemory);
-VkCommandBuffer beginSingleTimeCommands(void);
-void endSingleTimeCommands(VkCommandBuffer commandBuffer);
-void transitionImageLayout(VkImage image, VkFormat format,
+static VkCommandBuffer beginSingleTimeCommands(void);
+static void endSingleTimeCommands(VkCommandBuffer commandBuffer);
+static void transitionImageLayout(VkImage image, VkFormat format,
     VkImageLayout oldLayout, VkImageLayout newLayout);
-void copyBufferToImage(
-    VkBuffer buffer, VkImage image, uint32_t width, uint32_t height);
 
 
 //
 // === UTILITY FUNCTIONS ===
 //
 
-VkShaderModule createShaderModuleFromMemory(
+static VkShaderModule createShaderModuleFromMemory(
     VkDevice device, const unsigned char * code, size_t codeSize) {
 
   VkShaderModuleCreateInfo createInfo = {0};
@@ -849,7 +845,7 @@ VkShaderModule createShaderModuleFromMemory(
 
 
 // Finds a suitable memory type based on typeFilter and desired properties.
-uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
+static uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags properties) {
   VkPhysicalDeviceMemoryProperties memProperties;
   vkGetPhysicalDeviceMemoryProperties(cj_engine_physical_device(cur_eng()), &memProperties);
   for (uint32_t i = 0; i < memProperties.memoryTypeCount; i++) {
@@ -1082,7 +1078,7 @@ static void createTexturedGraphicsPipelineCtx(const CJellyVulkanContext* ctx) {
   vkDestroyShaderModule(ctx->device, fragShaderModule, NULL);
 }
 
-void createBindlessGraphicsPipeline(VkDevice device __attribute__((unused)), VkRenderPass renderPass) {
+static void createBindlessGraphicsPipeline(VkDevice device __attribute__((unused)), VkRenderPass renderPass) {
   /*DEBUG*/ if(getenv("CJELLY_DEBUG")) fprintf(stderr, "DEBUG: enter createBindlessGraphicsPipeline\n");
   // Load SPIR-V binaries and create shader modules for bindless rendering.
   VkShaderModule vertShaderModule =
@@ -1501,7 +1497,7 @@ static void updateTextureDescriptorSetCtx(const CJellyVulkanContext* ctx, VkDesc
   vkUpdateDescriptorSets(ctx->device, 1, &descriptorWrite, 0, NULL);
 }
 
-void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
+static void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
     VkMemoryPropertyFlags properties, VkBuffer * buffer,
     VkDeviceMemory * bufferMemory) {
   VkBufferCreateInfo bufferInfo = {0};
@@ -1532,7 +1528,7 @@ void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
   vkBindBufferMemory(cur_device(), *buffer, *bufferMemory, 0);
 }
 
-void createImage(uint32_t width, uint32_t height, VkFormat format,
+static void createImage(uint32_t width, uint32_t height, VkFormat format,
     VkImageTiling tiling, VkImageUsageFlags usage,
     VkMemoryPropertyFlags properties, VkImage * image,
     VkDeviceMemory * imageMemory) {
@@ -1573,7 +1569,7 @@ void createImage(uint32_t width, uint32_t height, VkFormat format,
   vkBindImageMemory(cur_device(), *image, *imageMemory, 0);
 }
 
-VkCommandBuffer beginSingleTimeCommands(void) {
+static VkCommandBuffer beginSingleTimeCommands(void) {
   VkCommandBufferAllocateInfo allocInfo = {0};
   allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
   allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
@@ -1591,7 +1587,7 @@ VkCommandBuffer beginSingleTimeCommands(void) {
   return commandBuffer;
 }
 
-void endSingleTimeCommands(VkCommandBuffer commandBuffer) {
+static void endSingleTimeCommands(VkCommandBuffer commandBuffer) {
   vkEndCommandBuffer(commandBuffer);
 
   VkSubmitInfo submitInfo = {0};
@@ -1605,7 +1601,7 @@ void endSingleTimeCommands(VkCommandBuffer commandBuffer) {
   vkFreeCommandBuffers(cur_device(), cur_cmd_pool(), 1, &commandBuffer);
 }
 
-void transitionImageLayout(VkImage image, CJ_MAYBE_UNUSED(VkFormat format),
+static void transitionImageLayout(VkImage image, CJ_MAYBE_UNUSED(VkFormat format),
     VkImageLayout oldLayout, VkImageLayout newLayout) {
   VkCommandBuffer commandBuffer = beginSingleTimeCommands();
 
@@ -1651,26 +1647,6 @@ void transitionImageLayout(VkImage image, CJ_MAYBE_UNUSED(VkFormat format),
   endSingleTimeCommands(commandBuffer);
 }
 
-void copyBufferToImage(
-    VkBuffer buffer, VkImage image, uint32_t width, uint32_t height) {
-  VkCommandBuffer commandBuffer = beginSingleTimeCommands();
-
-  VkBufferImageCopy region = {0};
-  region.bufferOffset = 0;
-  region.bufferRowLength = 0; // Tightly packed.
-  region.bufferImageHeight = 0;
-  region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-  region.imageSubresource.mipLevel = 0;
-  region.imageSubresource.baseArrayLayer = 0;
-  region.imageSubresource.layerCount = 1;
-  region.imageOffset = (VkOffset3D){0, 0, 0};
-  region.imageExtent = (VkExtent3D){width, height, 1};
-
-  vkCmdCopyBufferToImage(commandBuffer, buffer, image,
-      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
-
-  endSingleTimeCommands(commandBuffer);
-}
 
 
 /**
@@ -1680,7 +1656,7 @@ void copyBufferToImage(
  * from the global 'verticesTextured' array. The VertexTextured structure
  * includes both position and texture coordinates.
  */
-void createTexturedVertexBuffer(void) {
+static void createTexturedVertexBuffer(void) {
   // Vertices for a textured square.
   VertexTextured verticesTextured[] = {
       {{-0.5f, -0.5f}, {0.0f, 0.0f}}, {{0.5f, -0.5f}, {1.0f, 0.0f}},
@@ -1732,7 +1708,7 @@ void createTexturedVertexBuffer(void) {
 
 /* Context-based textured command buffers for a window */
 
-void createBindlessVertexBuffer(VkDevice device __attribute__((unused)), VkCommandPool commandPool __attribute__((unused))) {
+static void createBindlessVertexBuffer(VkDevice device __attribute__((unused)), VkCommandPool commandPool __attribute__((unused))) {
   // Create vertices for bindless rendering - single square with dynamic color switching
   VertexBindless verticesBindless[] = {
     // Single square - use white so texture colors pass through
