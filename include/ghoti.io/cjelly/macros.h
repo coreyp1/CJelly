@@ -150,6 +150,29 @@ typedef struct CJellyModelMesh CJellyModelMesh;
 
 
 /**
+ * A cross-compiler macro for checking a printf-style format string against
+ * its arguments.
+ *
+ * @param FMT The 1-based index of the format parameter.
+ * @param ARG The 1-based index of the first variadic argument.
+ *
+ * mingw is the awkward one: its plain `printf` archetype is the MSVC runtime's,
+ * which has no %zu and no %lld, so a correct call would be diagnosed. The
+ * `gnu_printf` archetype names the format the library actually writes.
+ */
+#if defined(__MINGW32__) || defined(__MINGW64__)
+#define CJ_PRINTF_FORMAT(FMT, ARG) __attribute__((format(gnu_printf, FMT, ARG)))
+
+#elif defined(__GNUC__) || defined(__clang__)
+#define CJ_PRINTF_FORMAT(FMT, ARG) __attribute__((format(printf, FMT, ARG)))
+
+#else
+#define CJ_PRINTF_FORMAT(FMT, ARG)
+
+#endif
+
+
+/**
  * A cross-compiler macro for marking a function as deprecated.
  */
 #if defined(__GNUC__) || defined(__clang__)
