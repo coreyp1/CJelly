@@ -569,6 +569,14 @@ CJ_API CJellyApplicationError cjelly_application_add_device_extension(
 CJ_API CJellyApplicationError cjelly_application_init(CJellyApplication * app) {
   CJellyApplicationError err = CJELLY_APPLICATION_ERROR_NONE;
 
+  // Declared here rather than beside its malloc, because ERROR_RETURN reads
+  // it and two of the gotos that reach ERROR_RETURN are above that malloc.
+  // Jumping past a declaration is legal C and leaves the object
+  // uninitialized, so those two paths - no Vulkan instance, and no physical
+  // device, which is what any machine without a working driver does - read
+  // an indeterminate pointer and free() it.
+  VkPhysicalDevice * physicalDevices = NULL;
+
   if (!app) {
     return CJELLY_APPLICATION_ERROR_INVALID_OPTIONS;
   }
@@ -682,8 +690,7 @@ CJ_API CJellyApplicationError cjelly_application_init(CJellyApplication * app) {
   }
 
   // Allocate memory for the list of physical devices.
-  VkPhysicalDevice * physicalDevices =
-      malloc(sizeof(VkPhysicalDevice) * deviceCount);
+  physicalDevices = malloc(sizeof(VkPhysicalDevice) * deviceCount);
   if (!physicalDevices) {
     fprintf(stderr, "Memory allocation failure for device list.\n");
     goto ERROR_RETURN;
@@ -866,6 +873,13 @@ CJ_API CJellyApplicationError cjelly_application_init(CJellyApplication * app) {
     // Continue the loop and evaluate the next device.
     continue;
   }
+
+  // The list has served its purpose: the chosen device is held by handle in
+  // bestPhysicalDevice, which does not point into the array. Freeing it here
+  // rather than only in ERROR_RETURN is what stops the success path leaking
+  // it, and leaves NULL behind for the gotos further down.
+  free(physicalDevices);
+  physicalDevices = NULL;
 
   // Check if a suitable physical device was found.
   if (bestPhysicalDevice == VK_NULL_HANDLE) {
