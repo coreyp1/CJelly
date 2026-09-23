@@ -153,7 +153,7 @@ static bool init_xinput2(void) {
 }
 
 /* Select XInput2 events for a window. Returns true if XInput2 events were selected. */
-bool select_xinput2_events(Window window) {
+bool cj_x11_select_xinput2_events(Window window) {
   if (!init_xinput2() || !cj_x11_display) {
     return false;
   }

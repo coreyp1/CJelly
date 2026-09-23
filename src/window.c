@@ -1176,7 +1176,7 @@ static void plat_createPlatformWindow(CJPlatformWindow * win, const char * title
                ButtonPressMask | ButtonReleaseMask | PointerMotionMask | EnterWindowMask | LeaveWindowMask | FocusChangeMask | PropertyChangeMask);
 
   /* Try to select XInput2 events for smooth scrolling (falls back to traditional events if unavailable) */
-  select_xinput2_events(win->handle);
+  cj_x11_select_xinput2_events(win->handle);
 
   Atom wmDelete = XInternAtom(cj_x11_display, "WM_DELETE_WINDOW", False);
   XStoreName(cj_x11_display, win->handle, title);

@@ -707,8 +707,21 @@ test-watch: ## Watch the file directory for changes and run the unit tests
 # Symbol namespace check
 ####################################################################
 
+# The .so check above is the wrong instrument for internal names, because
+# -fvisibility=hidden keeps every one of them out of it. The static archive
+# is what the tests link and what a consumer choosing static linkage gets,
+# and there every non-static definition is a name in the global namespace.
+# `display` sat there, so did select_xinput2_events, and so did four
+# functions with no callers at all - none of which the .so could show.
+#
+# The generated SPIR-V arrays are the exception and are pinned rather than
+# excused: the shader generator gives them external linkage, which is why
+# including one of those headers in a second translation unit is a
+# duplicate-symbol error. Fixing that is a change to the generator.
+CHECK_ARCHIVE_SHADER_SYMBOLS := 26
+
 check-symbols: ## Fail if any exported symbol lacks the version namespace
-check-symbols: $(APP_DIR)/$(TARGET)
+check-symbols: $(APP_DIR)/$(TARGET) $(APP_DIR)/$(STATIC_TARGET)
 ifeq ($(OS_NAME), Linux)
 	@leaked=$$(nm -D --defined-only $(APP_DIR)/$(TARGET) \
 		| awk '$$2 ~ /^[TDBR]$$/ {print $$3}' \
@@ -718,6 +731,25 @@ ifeq ($(OS_NAME), Linux)
 		printf "%s\n" "$$leaked" >&2; \
 		printf "\nEach needs a '#define <name> GHOTIIO_CJELLY(<name>)' line in namespace.h, or\n" >&2; \
 		printf "should not be exported. See CONVENTIONS.md section 4.\n" >&2; \
+		exit 1; \
+	fi
+	@shaders=$$(nm --defined-only $(APP_DIR)/$(STATIC_TARGET) \
+		| awk '$$2 ~ /^[TDBRG]$$/ {print $$3}' \
+		| grep -cE '_spv(_len)?$$' || true); \
+	bare=$$(nm --defined-only $(APP_DIR)/$(STATIC_TARGET) \
+		| awk '$$2 ~ /^[TDBRG]$$/ {print $$3}' \
+		| grep -vE '^($(LIBVER_SYMBOL)_|cj_|CJelly|cjelly)' \
+		| grep -vE '_spv(_len)?$$' | grep -v '^_' | sort -u || true); \
+	if [ "$$shaders" != "$(CHECK_ARCHIVE_SHADER_SYMBOLS)" ]; then \
+		printf "\033[0;31mcheck-symbols: the archive has %s generated shader symbols, not the %s pinned. If a shader was added the pin wants raising; if it fell to 0 this scan has stopped matching and the check below means nothing.\033[0m\n" "$$shaders" "$(CHECK_ARCHIVE_SHADER_SYMBOLS)" >&2; \
+		exit 1; \
+	fi; \
+	if [ -n "$$bare" ]; then \
+		printf "\033[0;31m\n### Archive symbols with no library prefix ###\033[0m\n" >&2; \
+		printf "%s\n" "$$bare" >&2; \
+		printf "\nThese are invisible in the .so and real in the archive, where they\n" >&2; \
+		printf "collide with whatever else the consumer links. Give it internal\n" >&2; \
+		printf "linkage if one file uses it, a cj_ prefix if several do.\n" >&2; \
 		exit 1; \
 	fi
 	@split=$$(nm -D --undefined-only $(APP_DIR)/$(TARGET) \
@@ -780,6 +812,7 @@ ifeq ($(OS_NAME), Linux)
 	fi
 	@printf "\033[0;32mEvery exported symbol carries the $(LIBVER_SYMBOL)_ namespace.\033[0m\n"
 	@printf "\033[0;32mEvery public declaration carries CJ_API.\033[0m\n"
+	@printf "\033[0;32mEvery archive symbol carries a library prefix, the $(CHECK_ARCHIVE_SHADER_SYMBOLS) generated shader symbols excepted, as pinned.\033[0m\n"
 	@printf "\033[0;32mEvery header includes macros.h.\033[0m\n"
 	@printf "\033[0;32mEvery include guard is unique and correctly prefixed.\033[0m\n"
 else

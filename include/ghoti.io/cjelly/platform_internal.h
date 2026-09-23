@@ -86,14 +86,14 @@ void cj_x11_close_display(void);
 /** Ask the X server for XInput2 events on this window, if XInput2 is there.
  *
  *  window.c calls this after creating a window. It reached it through an
- *  `extern bool select_xinput2_events(Window);` written inside the calling
+ *  `extern bool cj_x11_select_xinput2_events(Window);` written inside the calling
  *  function, which is a declaration the compiler cannot check against the
  *  definition in another translation unit.
  *
  *  @param window The X window to select events on.
  *  @return true if XInput2 events were selected.
  */
-bool select_xinput2_events(Window window);
+bool cj_x11_select_xinput2_events(Window window);
 
 /** Internal helper to get DPI scale for a window based on its position
  *  (Linux/XRandR).
