@@ -924,30 +924,6 @@ void DestroyDebugUtilsMessengerEXT(VkInstance instance,
 // === TEXTURED SQUARE ===
 //
 
-/**
- * @brief Creates a descriptor pool for texture descriptor sets.
- *
- * This function creates a descriptor pool that can allocate descriptor sets
- * containing combined image samplers.
- */
-void createTextureDescriptorPool(void) {
-  VkDescriptorPoolSize poolSize = {0};
-  poolSize.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-  poolSize.descriptorCount = 1; // Change this if you need more descriptors.
-
-  VkDescriptorPoolCreateInfo poolInfo = {0};
-  poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
-  poolInfo.poolSizeCount = 1;
-  poolInfo.pPoolSizes = &poolSize;
-  poolInfo.maxSets = 1; // Adjust if allocating multiple descriptor sets.
-
-  CJellyTexturedResources* tx0 = cur_tx();
-  if (vkCreateDescriptorPool(cur_device(), &poolInfo, NULL, &tx0->descriptorPool) !=
-      VK_SUCCESS) {
-    fprintf(stderr, "Failed to create texture descriptor pool!\n");
-    exit(EXIT_FAILURE);
-  }
-}
 
 // Context-based textured helpers (transition away from globals)
 static void createTextureDescriptorPoolCtx(const CJellyVulkanContext* ctx) {
@@ -968,26 +944,6 @@ static void createTextureDescriptorPoolCtx(const CJellyVulkanContext* ctx) {
   }
 }
 
-void createDescriptorSetLayouts(void) {
-  // Define a descriptor set layout for the texture.
-  VkDescriptorSetLayoutBinding layoutBinding = {0};
-  layoutBinding.binding = 0;
-  layoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
-  layoutBinding.descriptorCount = 1;
-  layoutBinding.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
-
-  VkDescriptorSetLayoutCreateInfo layoutInfo = {0};
-  layoutInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
-  layoutInfo.bindingCount = 1;
-  layoutInfo.pBindings = &layoutBinding;
-
-  CJellyTexturedResources* tx2 = cur_tx();
-  if (vkCreateDescriptorSetLayout(cur_device(), &layoutInfo, NULL,
-          &tx2->descriptorSetLayout) != VK_SUCCESS) {
-    fprintf(stderr, "Failed to create texture descriptor set layout\n");
-    exit(EXIT_FAILURE);
-  }
-}
 
 static void createDescriptorSetLayoutsCtx(const CJellyVulkanContext* ctx) {
   VkDescriptorSetLayoutBinding layoutBinding = {0};
@@ -1008,26 +964,6 @@ static void createDescriptorSetLayoutsCtx(const CJellyVulkanContext* ctx) {
   }
 }
 
-/**
- * @brief Allocates a descriptor set for the texture.
- *
- * This function allocates a descriptor set from the descriptor pool using
- * the layout defined by textureDescriptorSetLayout.
- */
-void allocateTextureDescriptorSet(void) {
-  VkDescriptorSetAllocateInfo allocInfo = {0};
-  allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
-  CJellyTexturedResources* tx4 = cur_tx();
-  allocInfo.descriptorPool = tx4->descriptorPool;
-  allocInfo.descriptorSetCount = 1;
-  allocInfo.pSetLayouts = &tx4->descriptorSetLayout;
-
-  if (vkAllocateDescriptorSets(cur_device(), &allocInfo, &tx4->descriptorSet) !=
-      VK_SUCCESS) {
-    fprintf(stderr, "Failed to allocate texture descriptor set!\n");
-    exit(EXIT_FAILURE);
-  }
-}
 
 static void allocateTextureDescriptorSetCtx(const CJellyVulkanContext* ctx) {
   VkDescriptorSetAllocateInfo allocInfo = {0};
@@ -1043,150 +979,6 @@ static void allocateTextureDescriptorSetCtx(const CJellyVulkanContext* ctx) {
   }
 }
 
-void createTexturedGraphicsPipeline(void) {
-  // Load SPIR-V binaries and create shader modules for texturing.
-  VkShaderModule vertShaderModule =
-      createShaderModuleFromMemory(cur_device(), textured_vert_spv, textured_vert_spv_len);
-  VkShaderModule fragShaderModule = createShaderModuleFromMemory(
-      cur_device(), textured_frag_spv, textured_frag_spv_len);
-
-  if (vertShaderModule == VK_NULL_HANDLE ||
-      fragShaderModule == VK_NULL_HANDLE) {
-    fprintf(stderr, "Failed to create textured shader modules\n");
-    exit(EXIT_FAILURE);
-  }
-
-  VkPipelineShaderStageCreateInfo shaderStages[2] = {0};
-
-  // Vertex shader stage (expects texture coordinates).
-  shaderStages[0].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-  shaderStages[0].stage = VK_SHADER_STAGE_VERTEX_BIT;
-  shaderStages[0].module = vertShaderModule;
-  shaderStages[0].pName = "main";
-
-  // Fragment shader stage (samples from texture).
-  shaderStages[1].sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-  shaderStages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-  shaderStages[1].module = fragShaderModule;
-  shaderStages[1].pName = "main";
-
-  // Define a binding description for our textured vertex structure.
-  VkVertexInputBindingDescription bindingDescription = {0};
-  bindingDescription.binding = 0;
-  bindingDescription.stride = sizeof(VertexTextured);
-  bindingDescription.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-
-  // Define attribute descriptions for the textured vertex shader inputs.
-  VkVertexInputAttributeDescription attributeDescriptions[2] = {0};
-
-  // Attribute 0: position (vec2)
-  attributeDescriptions[0].binding = 0;
-  attributeDescriptions[0].location = 0;
-  attributeDescriptions[0].format = VK_FORMAT_R32G32_SFLOAT;
-  attributeDescriptions[0].offset = offsetof(VertexTextured, pos);
-
-  // Attribute 1: texture coordinate (vec2)
-  attributeDescriptions[1].binding = 0;
-  attributeDescriptions[1].location = 1;
-  attributeDescriptions[1].format = VK_FORMAT_R32G32_SFLOAT;
-  attributeDescriptions[1].offset = offsetof(VertexTextured, texCoord);
-
-  VkPipelineVertexInputStateCreateInfo vertexInputInfo = {0};
-  vertexInputInfo.sType =
-      VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-  vertexInputInfo.vertexBindingDescriptionCount = 1;
-  vertexInputInfo.pVertexBindingDescriptions = &bindingDescription;
-  vertexInputInfo.vertexAttributeDescriptionCount = 2;
-  vertexInputInfo.pVertexAttributeDescriptions = attributeDescriptions;
-
-  VkPipelineInputAssemblyStateCreateInfo inputAssembly = {0};
-  inputAssembly.sType =
-      VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
-  inputAssembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
-  inputAssembly.primitiveRestartEnable = VK_FALSE;
-
-  // Keep viewport and dynamic state as before.
-  VkPipelineViewportStateCreateInfo viewportState = {0};
-  viewportState.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
-  viewportState.viewportCount = 1;
-  viewportState.scissorCount = 1;
-
-  VkDynamicState dynamicStates[] = {
-      VK_DYNAMIC_STATE_VIEWPORT,
-      VK_DYNAMIC_STATE_SCISSOR,
-  };
-
-  VkPipelineDynamicStateCreateInfo dynamicState = {0};
-  dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
-  dynamicState.dynamicStateCount = 2;
-  dynamicState.pDynamicStates = dynamicStates;
-
-  VkPipelineRasterizationStateCreateInfo rasterizer = {0};
-  rasterizer.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
-  rasterizer.depthClampEnable = VK_FALSE;
-  rasterizer.rasterizerDiscardEnable = VK_FALSE;
-  rasterizer.polygonMode = VK_POLYGON_MODE_FILL;
-  rasterizer.lineWidth = 1.0f;
-  rasterizer.cullMode = VK_CULL_MODE_BACK_BIT;
-  rasterizer.frontFace = VK_FRONT_FACE_CLOCKWISE;
-
-  VkPipelineMultisampleStateCreateInfo multisampling = {0};
-  multisampling.sType =
-      VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
-  multisampling.sampleShadingEnable = VK_FALSE;
-  multisampling.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
-
-  VkPipelineColorBlendAttachmentState colorBlendAttachment = {0};
-  colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
-      VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT |
-      VK_COLOR_COMPONENT_A_BIT;
-  colorBlendAttachment.blendEnable = VK_FALSE;
-
-  VkPipelineColorBlendStateCreateInfo colorBlending = {0};
-  colorBlending.sType =
-      VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-  colorBlending.logicOpEnable = VK_FALSE;
-  colorBlending.attachmentCount = 1;
-  colorBlending.pAttachments = &colorBlendAttachment;
-
-  CJellyTexturedResources* tx6 = cur_tx();
-  VkDescriptorSetLayout descriptorSetLayouts[] = {tx6->descriptorSetLayout};
-  VkPipelineLayoutCreateInfo pipelineLayoutInfo = {0};
-  pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
-  pipelineLayoutInfo.setLayoutCount = 1;
-  pipelineLayoutInfo.pSetLayouts = descriptorSetLayouts;
-
-  if (vkCreatePipelineLayout(cur_device(), &pipelineLayoutInfo, NULL,
-          &tx6->pipelineLayout) != VK_SUCCESS) {
-    fprintf(stderr, "Failed to create textured pipeline layout\n");
-    exit(EXIT_FAILURE);
-  }
-
-  VkGraphicsPipelineCreateInfo pipelineInfo = {0};
-  pipelineInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
-  pipelineInfo.stageCount = 2;
-  pipelineInfo.pStages = shaderStages;
-  pipelineInfo.pVertexInputState = &vertexInputInfo;
-  pipelineInfo.pInputAssemblyState = &inputAssembly;
-  pipelineInfo.pViewportState = &viewportState;
-  pipelineInfo.pDynamicState = &dynamicState;
-  pipelineInfo.pRasterizationState = &rasterizer;
-  pipelineInfo.pMultisampleState = &multisampling;
-  pipelineInfo.pColorBlendState = &colorBlending;
-  pipelineInfo.layout = tx6->pipelineLayout; // Use the new layout.
-  pipelineInfo.renderPass = cur_render_pass();
-  pipelineInfo.subpass = 0;
-
-  if (vkCreateGraphicsPipelines(cur_device(), VK_NULL_HANDLE, 1, &pipelineInfo, NULL,
-          &tx6->pipeline) != VK_SUCCESS) {
-    fprintf(stderr, "Failed to create textured graphics pipeline\n");
-    exit(EXIT_FAILURE);
-  }
-
-  // Clean up shader modules after pipeline creation.
-  vkDestroyShaderModule(cur_device(), vertShaderModule, NULL);
-  vkDestroyShaderModule(cur_device(), fragShaderModule, NULL);
-}
 
 static void createTexturedGraphicsPipelineCtx(const CJellyVulkanContext* ctx) {
   VkShaderModule vertShaderModule =
