@@ -574,7 +574,8 @@ $(APP_DIR)/main$(EXE_EXTENSION): \
 		$(DEP_CJELLY) \
 		$(DEP_FORMAT_3D_MTL) \
 		$(DEP_FORMAT_3D_OBJ) \
-		$(APP_DIR)/$(TARGET)
+		$(APP_DIR)/$(TARGET) \
+		$(FLAGS_STAMP)
 	@printf "\n### Compiling CJelly Test ###\n"
 	@mkdir -p $(@D)
 	$(CC) $(CFLAGS) $(INCLUDE) -o $@ $< $(CJELLYLIBRARY) $(LDFLAGS)
@@ -1128,15 +1129,15 @@ valgrind: all ## Run main under valgrind with suppressions
 
 $(FLAGS_STAMP): force-flags
 	@mkdir -p $(@D)
-	@printf '%s\n' '$(CFLAGS) $(CXXFLAGS) $(LDFLAGS) $(INCLUDE) $(TESTFLAGS)' > $@.new
+	@printf '%s\n' '$(CC) $(CXX) $(LIB_CFLAGS) $(CFLAGS) $(CXXFLAGS) $(LDFLAGS) $(INCLUDE) $(TEST_INCLUDE) $(CJELLYLIBRARY) $(TESTFLAGS)' > $@.new
 	@cmp -s $@.new $@ 2>/dev/null && rm -f $@.new || mv -f $@.new $@
 
 $(ASAN_FLAGS_STAMP): force-flags
 	@mkdir -p $(@D)
-	@printf '%s\n' '$(ASAN_CFLAGS) $(ASAN_CXXFLAGS) $(ASAN_LDFLAGS) $(INCLUDE) $(TESTFLAGS)' > $@.new
+	@printf '%s\n' '$(CC) $(CXX) $(ASAN_CFLAGS) $(ASAN_CXXFLAGS) $(ASAN_LDFLAGS) $(INCLUDE) $(TEST_INCLUDE) $(ASAN_CJELLYLIBRARY) $(TESTFLAGS)' > $@.new
 	@cmp -s $@.new $@ 2>/dev/null && rm -f $@.new || mv -f $@.new $@
 
 $(FUZZ_FLAGS_STAMP): force-flags
 	@mkdir -p $(@D)
-	@printf '%s\n' '$(FUZZ_SAN) $(FUZZ_LIB_FLAGS) $(FUZZ_BIN_FLAGS) $(INCLUDE)' > $@.new
+	@printf '%s\n' '$(FUZZ_CC) $(FUZZ_SAN) $(FUZZ_LIB_FLAGS) $(FUZZ_BIN_FLAGS) $(INCLUDE)' > $@.new
 	@cmp -s $@.new $@ 2>/dev/null && rm -f $@.new || mv -f $@.new $@
