@@ -151,10 +151,30 @@ endif
 PKG_CONFIG_LOOKUP_PATH := $(if $(PKG_CONFIG_PATH_ENV),$(PKG_CONFIG_PATH_ENV):)$(PKG_CONFIG_PATH)
 
 
+# The optimization level is the one thing that distinguishes the two builds'
+# compile flags. `release` is what gets installed and what anything linking
+# against this library actually runs, so it is compiled for speed; `debug` is
+# compiled for stepping through. -g stays in both, because a release build
+# that cannot be read in a debugger is a release build nobody can diagnose,
+# and the symbols cost only file size.
+#
+# Both builds were -O0 until now, which meant `BUILD=debug` renamed the
+# artifact and changed nothing about how it was compiled, and the shipped
+# library was the debugging build under another name.
+#
+# The sanitizer build puts its own -O1 after this one (see ASAN_UBSAN_FLAGS),
+# the fuzz build its own -O1, and `make coverage` its own -O0, all by
+# appending, since the last -O on the command line wins.
+ifeq ($(BUILD),debug)
+OPT_CFLAGS := -O0
+else
+OPT_CFLAGS := -O2
+endif
+
 CXX := g++
 CXXFLAGS := -pedantic-errors -Wall -Wextra -Werror -Wfatal-errors -std=c++20 -O1 -g $(EXTRA_CXXFLAGS)
 CC := cc
-CFLAGS := -pedantic-errors -Wall -Wextra -Werror -Wfatal-errors -std=c17 -O0 -g `PKG_CONFIG_PATH=$(PKG_CONFIG_LOOKUP_PATH) pkg-config --cflags vulkan` $(EXTRA_CFLAGS)
+CFLAGS := -pedantic-errors -Wall -Wextra -Werror -Wfatal-errors -std=c17 $(OPT_CFLAGS) -g `PKG_CONFIG_PATH=$(PKG_CONFIG_LOOKUP_PATH) pkg-config --cflags vulkan` $(EXTRA_CFLAGS)
 # Library-specific compile flags (export symbols on Windows, PIC on Linux)
 # The shipped library exports its public API and nothing else. Tests reach the
 # internals by linking the static archive, which a static link can do even for
@@ -712,8 +732,17 @@ demo: \
 # gate that describes the bug and passes. Spelling the list once and using it
 # in both flags is what keeps the two from drifting apart again.
 UBSAN_CHECKS := undefined,float-cast-overflow
+# -O1 is pinned here rather than inherited, and that is a decision, not a
+# default. It appends after CFLAGS and the last -O on the line wins, so the
+# 15 C translation units of this target compile at -O1 whatever the release
+# level is; measured, not assumed. The argument the other way is real - a
+# gate that runs at the level that ships is testing the code that ships - but
+# an inherited level means `make test-asan` silently changes what it tests
+# every time the release level moves, and a gate that quietly redefines
+# itself is worth less than one that is slightly less faithful. The fuzz
+# target already pins its own -O1 for the same reason.
 ASAN_UBSAN_FLAGS := -fsanitize=address,$(UBSAN_CHECKS) \
-	-fno-sanitize-recover=$(UBSAN_CHECKS) -fno-omit-frame-pointer -g
+	-fno-sanitize-recover=$(UBSAN_CHECKS) -fno-omit-frame-pointer -g -O1
 
 ASAN_BUILD_DIR := ./build/$(BUILD)-asan
 ASAN_OBJ_DIR := $(ASAN_BUILD_DIR)/objects
