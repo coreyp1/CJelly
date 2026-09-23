@@ -1559,12 +1559,17 @@ bool cj_window__should_bypass_fps_limit(cj_render_reason_t reason) {
   }
 }
 
-#ifdef _WIN32
 /*
- * Render a single frame immediately. Used during Windows modal resize loop.
- * This bypasses the main event loop to keep the window responsive during resize.
+ * Render a single frame immediately, bypassing the event loop. Windows calls
+ * this from its modal resize loop, which does not return to the event loop
+ * until the drag finishes, so without it the window stops drawing while it
+ * is being resized.
+ *
+ * The body is portable and the caller is not; it lives here rather than in
+ * the Win32 module because it needs the platform window struct and the
+ * swapchain helpers, which are window.c's.
  */
-static void cj_window__render_frame_immediate(cj_window_t* window) {
+void cj_window__render_frame_immediate(cj_window_t* window) {
   if (!window || window->is_destroyed || !window->plat) return;
 
   /* Recreate swapchain if needed */
@@ -1594,7 +1599,6 @@ static void cj_window__render_frame_immediate(cj_window_t* window) {
   cj_window_execute(window);
   cj_window_present(window);
 }
-#endif
 
 // Internal helper to invoke close callback and destroy window if allowed
 void cj_window_close_with_callback(cj_window_t* window, bool cancellable) {

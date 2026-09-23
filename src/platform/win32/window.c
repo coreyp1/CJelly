@@ -150,7 +150,6 @@ static cj_modifiers_t get_windows_modifiers(void) {
 #define CJ_RESIZE_TIMER_MS 16  /* ~60 FPS during resize */
 
 /* Forward declaration for rendering during resize */
-static void cj_window__render_frame_immediate(cj_window_t* window);
 
 /**
  * @brief Get DPI for a window

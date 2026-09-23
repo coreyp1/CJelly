@@ -108,6 +108,16 @@ void cj_window__dispatch_resize_callback(cj_window_t* window, uint32_t new_width
  */
 void cj_window__dispatch_move_callback(cj_window_t* window, int32_t new_x, int32_t new_y);
 
+/** Render one frame immediately, without returning to the event loop.
+ *
+ *  For a window system whose resize is a modal loop that does not return to
+ *  the event loop until the drag ends - Win32's is - so that the window
+ *  keeps drawing while it is being resized.
+ *
+ *  @param window The window to draw.
+ */
+void cj_window__render_frame_immediate(cj_window_t* window);
+
 /** Internal helper to dispatch state change callback (called from window messages/events).
  *  @param window The window whose state changed.
  *  @param new_state The new window state.
