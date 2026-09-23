@@ -43,9 +43,21 @@ This document is the single source of truth for what we’re doing now and what�
      than owning "OS surface + swapchain only". That is a structural change
      to CJPlatformWindow, not a platform-separation one.
 
-7) Diagnostics/logging
-   - Gate debug prints (env/build flag); quiet by default.
-   - Trim validation layer spam in release.
+7) ✅ Diagnostics/logging **COMPLETED**
+   - ✅ `cjelly/cj_log.h` is the seam: a level, a sink, and five macros. The
+     library is quiet unless something failed - `testApplication_init` emits
+     nothing at the default level and 975 lines at `CJELLY_LOG=trace`.
+   - ✅ All 215 direct `printf`/`fprintf` calls in the library now say what
+     happened and at what level. `check-quiet` keeps the 216th out.
+   - ✅ Validation messages arrive at the level matching the severity the
+     layer gave them, instead of all at full volume.
+   - ✅ One stream, not two: stdout is block-buffered when redirected and
+     stderr is not, so the library used to put its own messages out of order
+     in any log file.
+   - Remaining: nothing logs at INFO. That is honest rather than a gap - the
+     level sits between "something is off" and "step-by-step setup" and
+     nothing in the library currently has anything to say there - but it is
+     worth noticing if a message ever seems to want it.
 
 8) Shader hot-reload
    - File watch → recompile → swap pipeline, plumbed through Engine.
@@ -83,12 +95,21 @@ This document is the single source of truth for what we’re doing now and what�
 9. ✅ **Create basic render nodes**: Implement simple pass-through render node for basic rendering
 10. ✅ **Test render graph integration**: Verify windows can render via render graph instead of legacy helpers
 
-**Next Recommended Focus**: 7) Diagnostics/logging - gate debug prints
-behind an env/build flag and quiet the build by default. There is a known
-defect waiting there: the live debugCallback in application.c prints every
-validation message unconditionally, while the copy that gated it on
-CJELLY_DEBUG was dead code and has been deleted. See
-notes/cjelly/platform-separation.md.
+**Next Recommended Focus**: 8) Shader hot-reload - file watch, recompile,
+swap pipeline, plumbed through the Engine.
+
+Two smaller things are also loose, either of which is a shorter piece of work
+than track 8:
+
+- The demo cannot complete a run under Xvfb: the X connection dies during
+  window creation, before anything interesting happens. That makes headless
+  capture - the one way to check the render path without a person looking -
+  unavailable on a machine with no real display, so it is worth a look.
+- There is still no mingw cross compiler, so the ~1,065 lines under
+  `src/platform/win32/` are checked only by brace balance, text sweeps and
+  `check-quiet`. A syntax-only gate would have caught the one real Win32
+  break platform separation introduced. See
+  notes/cjelly/platform-separation.md.
 
 ---
 

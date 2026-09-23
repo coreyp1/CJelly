@@ -33,6 +33,7 @@
 #include <ghoti.io/cutil/file.h>
 
 #include <ghoti.io/cjelly/macros.h>
+#include <ghoti.io/cjelly/cj_log.h>
 #include <ghoti.io/cjelly/cj_capture.h>
 #include <ghoti.io/cjelly/engine_internal.h>
 #include <ghoti.io/cjelly/window_internal.h>
@@ -130,9 +131,8 @@ CJ_API cj_result_t cj_window_capture(
 
   capture_swizzle_t swizzle = capture_swizzle_for(source.format);
   if (!swizzle.understood) {
-    fprintf(stderr,
-        "cj_window_capture: swapchain format %d is not one this knows how to "
-        "unpack\n",
+    CJ_ERRORF("cj_window_capture: swapchain format %d is not one this knows how to "
+        "unpack",
         (int)source.format);
     return CJ_E_UNKNOWN;
   }

@@ -394,7 +394,7 @@ TESTFLAGS := `PKG_CONFIG_PATH=$(PKG_CONFIG_LOOKUP_PATH) pkg-config --libs --cfla
 # coverage target does, because --coverage links the gcov runtime, whose
 # mangle_path check-symbols is right to reject in a shipping library and
 # wrong to reject in an instrumented one. Spelled as text's TEST_GATES is.
-TEST_GATES ?= check-symbols check-stamps check-aliasing check-headers
+TEST_GATES ?= check-symbols check-stamps check-aliasing check-headers check-quiet
 
 
 
@@ -676,6 +676,7 @@ $(APP_DIR)/main$(EXE_EXTENSION): \
 .PHONY: fuzz fuzz-clean test-asan test-ubsan
 # Release build commands
 .PHONY: all demo install test test-watch uninstall watch check-symbols check-stamps check-aliasing
+.PHONY: check-headers check-quiet
 # Debug build commands
 .PHONY: all-debug install-debug test-debug test-watch-debug uninstall-debug watch-debug
 
@@ -1731,3 +1732,79 @@ check-headers: ## Fail if an installed header pulls the window system in with it
 		exit 1; \
 	fi; \
 	printf "\033[0;32mAll %s installed headers keep the window system to themselves.\033[0m\n" "$$n"
+
+####################################################################
+# check-quiet
+####################################################################
+#
+# A library that prints has decided something on its embedder's behalf. The
+# decision belongs in src/log.c, which is the one file allowed to name a
+# stream; everything else says what happened and at what level, and the
+# embedder picks a level and a sink.
+#
+# src/main.c is not library code - it is the demo, an application talking to
+# the person who ran it - so it writes to stdout like any other program.
+#
+# THE INSTRUMENT IS A TEXT SWEEP, and it is worth being plain about what that
+# can and cannot see:
+#
+#  - It cannot tell a call from the same word inside a comment or a string.
+#    That direction is a false positive, which is loud and self-explaining;
+#    the reverse - missing a real call - is what would matter, and text
+#    cannot miss one, because a call has to be spelled out to compile.
+#  - It reads the Win32 module too, which no compiler on this machine does.
+#    That is not a bonus so much as the only check those files get.
+#
+# nm on the objects would be the sharper tool for "does this call printf",
+# and it answers a different question: gcc rewrites fprintf(stderr, ...) to
+# fwrite, and fwrite to a FILE* the caller opened is perfectly fine. The
+# symbol cannot say which stream it meant. Text can.
+#
+# Pinned so that a sweep which stops finding sources fails instead of
+# reporting a clean tree. Raise it when a source file is added.
+CHECK_QUIET_EXPECTED := 19
+
+# The library sources, less the two that are allowed to write to a stream.
+CHECK_QUIET_SOURCES = $(shell find src -type f -name '*.c' \
+	! -name 'main.c' ! -name 'log.c' | sort)
+
+# Spelled once and used by both the control and the sweep, so that a pattern
+# which stops matching cannot do so for the sweep alone.
+CHECK_QUIET_PATTERN := (^|[^_[:alnum:]])(printf|fprintf|vfprintf|vprintf|puts|fputs|fputc|putchar|perror)[[:space:]]*\(|(^|[^_[:alnum:]])(stdout|stderr)([^_[:alnum:]]|$$)
+
+check-quiet: ## Fail if a library source writes to stdout or stderr itself
+	@mkdir -p $(BUILD_DIR)
+# The control runs first. grep here is ugrep, whose regex dialect is not
+# GNU's, so a pattern that has quietly stopped matching would let this gate
+# print the same thing a clean tree prints. Plant each spelling and require
+# the sweep to find it.
+	@printf 'void c(void);\nvoid c(void) { fprintf(stderr, "x"); printf("y"); }\n' \
+		> $(BUILD_DIR)/quiet_control.c
+	@found=$$(grep -cE '$(CHECK_QUIET_PATTERN)' $(BUILD_DIR)/quiet_control.c || true); \
+	if [ "$$found" = "0" ]; then \
+		printf "\033[0;31mcheck-quiet: the control file writes to both streams and the sweep did not see it, so a clean result from it means nothing.\033[0m\n" >&2; \
+		exit 1; \
+	fi
+	@n=0; bad=0; \
+	for f in $(CHECK_QUIET_SOURCES); do \
+		n=$$((n+1)); \
+		hits=$$(grep -nE '$(CHECK_QUIET_PATTERN)' "$$f" || true); \
+		if [ -n "$$hits" ]; then \
+			bad=$$((bad+1)); \
+			printf "  %s:\n" "$$f" >&2; \
+			printf "%s\n" "$$hits" | sed 's/^/    /' >&2; \
+		fi; \
+	done; \
+	if [ "$$n" != "$(CHECK_QUIET_EXPECTED)" ]; then \
+		printf "\033[0;31mcheck-quiet: swept %s sources, not the %s it is pinned to. Either a source was added and the pin wants raising, or the sweep stopped finding them - and an empty sweep reports clean.\033[0m\n" "$$n" "$(CHECK_QUIET_EXPECTED)" >&2; \
+		exit 1; \
+	fi; \
+	if [ "$$bad" != "0" ]; then \
+		printf "\033[0;31m\n### %s library sources write to a stream themselves ###\033[0m\n" "$$bad" >&2; \
+		printf "\nSay what happened and at what level instead:\n" >&2; \
+		printf "  CJ_ERRORF / CJ_WARNF / CJ_INFOF / CJ_DEBUGF / CJ_TRACEF\n" >&2; \
+		printf "from <ghoti.io/cjelly/cj_log.h>. The embedder chooses a level and a\n" >&2; \
+		printf "sink; src/log.c is the one file that turns that into a write.\n" >&2; \
+		exit 1; \
+	fi; \
+	printf "\033[0;32mAll %s library sources leave the writing to the log.\033[0m\n" "$$n"
