@@ -721,7 +721,14 @@ ifeq ($(OS_NAME), Linux)
 		printf "See CONVENTIONS.md section 4.\n" >&2; \
 		exit 1; \
 	fi
-	@badguards=$$(find include src -name '*.h' -exec awk 'FNR==1{d=0} !d && /^#ifndef/{print $$2; d=1}' {} + \
+# An include guard is `#ifndef X` IMMEDIATELY followed by `#define X`, and
+# the scan below requires both. Taking the first #ifndef in the file was
+# enough while every header opened with one, and is wrong for a header that
+# uses `#pragma once` and then has an ordinary conditional: the first
+# `#ifndef _WIN32` in such a file was reported as a guard named _WIN32, with
+# the wrong prefix and shared by every header that did the same. The guard a
+# header actually has is the pair, so the scan looks for the pair.
+	@badguards=$$(find include src -name '*.h' -exec awk 'FNR==1{d=0;prev=""} !d && prev ~ /^#ifndef[ \t]/ && /^#define[ \t]/ {split(prev,a," ");split($$0,b," "); if (a[2]==b[2]) {print a[2]; d=1}} {prev=$$0}' {} + \
 		| awk '$$1 !~ /^GHOTI_IO_CJ_/ {print $$1}' || true); \
 	if [ -n "$$badguards" ]; then \
 		printf "\033[0;31m\n### Include guards with the wrong prefix ###\033[0m\n" >&2; \
@@ -730,7 +737,7 @@ ifeq ($(OS_NAME), Linux)
 		printf "library token is one rename away from colliding with another library's.\n" >&2; \
 		exit 1; \
 	fi
-	@dupguards=$$(find include src -name '*.h' -exec awk 'FNR==1{d=0} !d && /^#ifndef/{print $$2; d=1}' {} + \
+	@dupguards=$$(find include src -name '*.h' -exec awk 'FNR==1{d=0;prev=""} !d && prev ~ /^#ifndef[ \t]/ && /^#define[ \t]/ {split(prev,a," ");split($$0,b," "); if (a[2]==b[2]) {print a[2]; d=1}} {prev=$$0}' {} + \
 		| sort | uniq -d || true); \
 	if [ -n "$$dupguards" ]; then \
 		printf "\033[0;31m\n### Headers sharing an include guard ###\033[0m\n" >&2; \
