@@ -28,9 +28,20 @@ This document is the single source of truth for what we’re doing now and what�
    - ✅ Implement `cj_rgraph_t` and `cj_window_set_render_graph`.
    - ✅ Windows render via the graph, not direct helper functions.
 
-6) Platform separation
-   - Move Xlib/Win32 specifics into platform modules per `cj_platform.h`.
-   - Window owns OS surface + swapchain only.
+6) ✅ Platform separation **COMPLETED**
+   - ✅ Xlib/Win32 specifics moved into `src/platform/<platform>/`; the
+     Makefile compiles exactly one directory, so no platform module carries
+     a conditional of its own.
+   - ✅ No `.c` file outside `src/platform` has a platform conditional, and
+     only the four platform modules include a window system's headers.
+   - ✅ `cjelly/plat_internal.h` is the seam: one name per operation, no
+     conditional, no window-system header. `cjelly/platform_internal.h` adds
+     the window system on top for the modules that implement it.
+   - ✅ Installed headers no longer carry Xlib or windows.h into consumers;
+     `check-headers` keeps it that way.
+   - Remaining: window still shares the swapchain with portable code rather
+     than owning "OS surface + swapchain only". That is a structural change
+     to CJPlatformWindow, not a platform-separation one.
 
 7) Diagnostics/logging
    - Gate debug prints (env/build flag); quiet by default.
@@ -72,7 +83,12 @@ This document is the single source of truth for what we’re doing now and what�
 9. ✅ **Create basic render nodes**: Implement simple pass-through render node for basic rendering
 10. ✅ **Test render graph integration**: Verify windows can render via render graph instead of legacy helpers
 
-**Next Recommended Focus**: 6) Platform Separation - Move Xlib/Win32 specifics into platform modules
+**Next Recommended Focus**: 7) Diagnostics/logging - gate debug prints
+behind an env/build flag and quiet the build by default. There is a known
+defect waiting there: the live debugCallback in application.c prints every
+validation message unconditionally, while the copy that gated it on
+CJELLY_DEBUG was dead code and has been deleted. See
+notes/cjelly/platform-separation.md.
 
 ---
 
