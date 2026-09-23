@@ -149,6 +149,22 @@ cj_result_t cj_plat_set_window_state(uintptr_t handle, cj_window_state_t state);
 CJ_API void processWindowEvents(void);
 
 
+/** Declare this process's DPI awareness to the window system, before any
+ *  window exists. A window system that has no such declaration to make does
+ *  nothing. */
+void cj_plat_declare_dpi_awareness(void);
+
+/** Ask the platform to call `on_shutdown` when the user asks the process to
+ *  stop - a signal on POSIX, a console control event on Windows.
+ *
+ *  The callback runs in a context where almost nothing is safe: on POSIX it
+ *  interrupts the main thread at an arbitrary point, on Windows it runs on
+ *  another thread entirely. It may only set a flag. It returns false if
+ *  there was nothing to tell, so a platform that distinguishes handled from
+ *  unhandled can fall back to its own default.
+ */
+void cj_plat_register_shutdown_handler(bool (*on_shutdown)(void));
+
 /** Open the window system's connection, if it has one to open.
  *  @return true if the library can go on to create windows. A window system
  *          with no connection to open answers true without doing anything.

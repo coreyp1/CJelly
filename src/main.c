@@ -34,29 +34,19 @@
 #include <ghoti.io/cjelly/format/image.h>
 
 
-#ifdef _WIN32
 #include <stdint.h>
-#include <windows.h>
-uint64_t getCurrentTimeInMilliseconds(void) {
-  LARGE_INTEGER frequency;
-  LARGE_INTEGER counter;
-  QueryPerformanceFrequency(&frequency);
-  QueryPerformanceCounter(&counter);
-  return (uint64_t)((counter.QuadPart * 1000LL) / frequency.QuadPart);
-}
-#else
-#include <stdint.h>
-#include <time.h>
+
 /* The demo asks the library to open whatever connection its window system
- * needs, and never touches it. This header names no window system, so the
- * demo does not either - on any platform. */
+ * needs, and to tell it the time, and never touches either itself. This
+ * header names no window system, so the demo does not either - on any
+ * platform. */
 #include <ghoti.io/cjelly/plat_internal.h>
-uint64_t getCurrentTimeInMilliseconds(void) {
-  struct timespec ts;
-  clock_gettime(CLOCK_MONOTONIC, &ts);
-  return (uint64_t)ts.tv_sec * 1000ULL + ts.tv_nsec / 1000000ULL;
+
+/* The library already has a monotonic clock per platform; this used to be a
+ * third copy of the same two arms. */
+static uint64_t getCurrentTimeInMilliseconds(void) {
+  return cj_plat_now_ms();
 }
-#endif
 
 #include <ghoti.io/cjelly/cjelly.h>
 #include <ghoti.io/cjelly/runtime.h>
@@ -317,9 +307,7 @@ static void test_mouse_callback(cj_window_t* window, const cj_mouse_event_t* eve
 
 int main(int argc, char ** argv) {
   const char * model_path = (argc > 1) ? argv[1] : DEMO_DEFAULT_MODEL;
-#ifndef _WIN32
   fprintf(stderr, "Starting CJelly demo...\n");
-#endif
   fprintf(stderr, "Opening the window system connection...\n");
   if (!cj_plat_open_display()) {
     fprintf(stderr, "Failed to open the window system connection\n");

@@ -51,14 +51,6 @@
 #include <string.h>
 #include <stdbool.h>
 
-// Signal handling headers
-#ifndef _WIN32
-#include <signal.h>
-#include <unistd.h>
-#else
-#include <windows.h>
-#include <shellscalingapi.h>
-#endif
 
 #define CJELLY_MINIMUM_VULKAN_VERSION VK_API_VERSION_1_2
 
@@ -351,76 +343,9 @@ CJ_API CJellyApplicationError cjelly_application_create(
     return CJELLY_APPLICATION_ERROR_INVALID_OPTIONS;
   }
 
-  // Declare DPI awareness BEFORE any window creation
-#ifdef _WIN32
-  // Try SetProcessDpiAwarenessContext first (Windows 10 1703+)
-  {
-    typedef BOOL (WINAPI *SetProcessDpiAwarenessContextFunc)(DPI_AWARENESS_CONTEXT);
-    static SetProcessDpiAwarenessContextFunc set_dpi_awareness_context = NULL;
-    static bool tried_load = false;
-
-    if (!tried_load) {
-      HMODULE user32 = GetModuleHandleA("user32.dll");
-      if (user32) {
-        FARPROC proc = GetProcAddress(user32, "SetProcessDpiAwarenessContext");
-        if (proc) {
-          // Use union to convert between function pointer types (ISO C compliant)
-          union {
-            FARPROC farproc;
-            SetProcessDpiAwarenessContextFunc func;
-          } u;
-          u.farproc = proc;
-          set_dpi_awareness_context = u.func;
-        }
-      }
-      tried_load = true;
-    }
-
-    if (set_dpi_awareness_context) {
-      // Per-Monitor V2 DPI awareness (Windows 10 1703+)
-      set_dpi_awareness_context(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-    } else {
-      // Fallback: SetProcessDpiAwareness (Windows 8.1+)
-      HMODULE shcore = LoadLibraryA("shcore.dll");
-      if (shcore) {
-        typedef HRESULT (WINAPI *SetProcessDpiAwarenessFunc)(PROCESS_DPI_AWARENESS);
-        FARPROC proc = GetProcAddress(shcore, "SetProcessDpiAwareness");
-        if (proc) {
-          // Use union to convert between function pointer types (ISO C compliant)
-          union {
-            FARPROC farproc;
-            SetProcessDpiAwarenessFunc func;
-          } u;
-          u.farproc = proc;
-          SetProcessDpiAwarenessFunc set_dpi_awareness = u.func;
-          if (set_dpi_awareness) {
-            set_dpi_awareness(PROCESS_PER_MONITOR_DPI_AWARE);
-          }
-        }
-        FreeLibrary(shcore);
-      } else {
-        // Final fallback: Legacy SetProcessDPIAware (Windows Vista+)
-        typedef BOOL (WINAPI *SetProcessDPIAwareFunc)(void);
-        HMODULE user32 = GetModuleHandleA("user32.dll");
-        if (user32) {
-          FARPROC proc = GetProcAddress(user32, "SetProcessDPIAware");
-          if (proc) {
-            // Use union to convert between function pointer types (ISO C compliant)
-            union {
-              FARPROC farproc;
-              SetProcessDPIAwareFunc func;
-            } u;
-            u.farproc = proc;
-            SetProcessDPIAwareFunc set_dpi_aware = u.func;
-            if (set_dpi_aware) {
-              set_dpi_aware();
-            }
-          }
-        }
-      }
-    }
-  }
-#endif
+  /* Declared before any window is created, where the platform has such a
+   * thing to declare. */
+  cj_plat_declare_dpi_awareness();
 
   CJellyApplication * newApp = malloc(sizeof(CJellyApplication));
   if (!newApp) {
@@ -1462,53 +1387,33 @@ CJ_API CJellyApplicationError cjelly_application_create_command_pools(
  * =============================================================================
  */
 
-#ifdef _WIN32
 /*
- * Windows console control handler.
+ * Asked for by the platform when the user asks the process to stop.
  *
- * IMPORTANT: This runs in a SEPARATE THREAD from the main loop!
- * We must NOT destroy windows or free memory here - that would race with
- * the main loop which may be in the middle of rendering.
+ * IMPORTANT: on POSIX this interrupts the main thread at an arbitrary point
+ * - it could be inside malloc(), a Vulkan call, or anything else
+ * non-reentrant - and on Windows it runs on a SEPARATE THREAD from the main
+ * loop. Either way it can only set a flag. Destroying a window or freeing
+ * memory here would race with whatever the main loop is doing.
+ *
+ * @return false if there is no application to tell, so that a platform which
+ *         distinguishes "handled" from "not handled" can fall back to its
+ *         own default.
  */
-static BOOL WINAPI console_ctrl_handler(CJ_MAYBE_UNUSED(DWORD dwCtrlType)) {
+static bool app_request_shutdown(void) {
   CJellyApplication* app = cjelly_application_get_current();
   if (!app)
-    return FALSE;
+    return false;
 
   app->shutdown_requested = 1;
-  return TRUE;
+  return true;
 }
-#else
-/*
- * POSIX signal handler.
- *
- * IMPORTANT: This interrupts the main thread at an arbitrary point!
- * The main thread could be in the middle of malloc(), a Vulkan call, or
- * any other non-reentrant operation. We can ONLY set a flag here.
- */
-static void default_signal_handler(CJ_MAYBE_UNUSED(int sig)) {
-  CJellyApplication* app = cjelly_application_get_current();
-  if (!app)
-    return;
-
-  app->shutdown_requested = 1;
-}
-#endif
 
 CJ_API void cjelly_application_register_signal_handlers(CJellyApplication* app) {
   if (!app || app->signal_handlers_registered)
     return;
 
-#ifdef _WIN32
-  // Register console control handler for Windows
-  SetConsoleCtrlHandler(console_ctrl_handler, TRUE);
-#else
-  // Register POSIX signal handlers
-  signal(SIGTERM, default_signal_handler);
-  signal(SIGINT, default_signal_handler);
-  signal(SIGHUP, default_signal_handler);
-  signal(SIGQUIT, default_signal_handler);
-#endif
+  cj_plat_register_shutdown_handler(app_request_shutdown);
 
   app->signal_handlers_registered = true;
 }

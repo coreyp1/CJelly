@@ -41,8 +41,10 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <signal.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 #include <X11/Xutil.h>
 
@@ -528,4 +530,24 @@ void cj_plat_sleep_ms(uint32_t ms) {
   req.tv_sec = (time_t)(ms / 1000u);
   req.tv_nsec = (long)((ms % 1000u) * 1000000u);
   nanosleep(&req, NULL);
+}
+
+void cj_plat_declare_dpi_awareness(void) {
+  /* X11 has no per-process DPI declaration; scaling is read per monitor
+   * from XRandR when a window is placed. */
+}
+
+static bool (*cj_x11_shutdown_cb)(void) = NULL;
+
+static void cj_x11_signal_handler(int sig) {
+  (void)sig;
+  if (cj_x11_shutdown_cb) cj_x11_shutdown_cb();
+}
+
+void cj_plat_register_shutdown_handler(bool (*on_shutdown)(void)) {
+  cj_x11_shutdown_cb = on_shutdown;
+  signal(SIGTERM, cj_x11_signal_handler);
+  signal(SIGINT, cj_x11_signal_handler);
+  signal(SIGHUP, cj_x11_signal_handler);
+  signal(SIGQUIT, cj_x11_signal_handler);
 }

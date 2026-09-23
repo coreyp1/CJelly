@@ -928,3 +928,85 @@ void cj_plat_sleep_ms(uint32_t ms) {
   if (ms == 0) return;
   Sleep((DWORD)ms);
 }
+
+void cj_plat_declare_dpi_awareness(void) {
+  // Try SetProcessDpiAwarenessContext first (Windows 10 1703+)
+  {
+    typedef BOOL (WINAPI *SetProcessDpiAwarenessContextFunc)(DPI_AWARENESS_CONTEXT);
+    static SetProcessDpiAwarenessContextFunc set_dpi_awareness_context = NULL;
+    static bool tried_load = false;
+
+    if (!tried_load) {
+      HMODULE user32 = GetModuleHandleA("user32.dll");
+      if (user32) {
+        FARPROC proc = GetProcAddress(user32, "SetProcessDpiAwarenessContext");
+        if (proc) {
+          // Use union to convert between function pointer types (ISO C compliant)
+          union {
+            FARPROC farproc;
+            SetProcessDpiAwarenessContextFunc func;
+          } u;
+          u.farproc = proc;
+          set_dpi_awareness_context = u.func;
+        }
+      }
+      tried_load = true;
+    }
+
+    if (set_dpi_awareness_context) {
+      // Per-Monitor V2 DPI awareness (Windows 10 1703+)
+      set_dpi_awareness_context(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    } else {
+      // Fallback: SetProcessDpiAwareness (Windows 8.1+)
+      HMODULE shcore = LoadLibraryA("shcore.dll");
+      if (shcore) {
+        typedef HRESULT (WINAPI *SetProcessDpiAwarenessFunc)(PROCESS_DPI_AWARENESS);
+        FARPROC proc = GetProcAddress(shcore, "SetProcessDpiAwareness");
+        if (proc) {
+          // Use union to convert between function pointer types (ISO C compliant)
+          union {
+            FARPROC farproc;
+            SetProcessDpiAwarenessFunc func;
+          } u;
+          u.farproc = proc;
+          SetProcessDpiAwarenessFunc set_dpi_awareness = u.func;
+          if (set_dpi_awareness) {
+            set_dpi_awareness(PROCESS_PER_MONITOR_DPI_AWARE);
+          }
+        }
+        FreeLibrary(shcore);
+      } else {
+        // Final fallback: Legacy SetProcessDPIAware (Windows Vista+)
+        typedef BOOL (WINAPI *SetProcessDPIAwareFunc)(void);
+        HMODULE user32 = GetModuleHandleA("user32.dll");
+        if (user32) {
+          FARPROC proc = GetProcAddress(user32, "SetProcessDPIAware");
+          if (proc) {
+            // Use union to convert between function pointer types (ISO C compliant)
+            union {
+              FARPROC farproc;
+              SetProcessDPIAwareFunc func;
+            } u;
+            u.farproc = proc;
+            SetProcessDPIAwareFunc set_dpi_aware = u.func;
+            if (set_dpi_aware) {
+              set_dpi_aware();
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+static bool (*cj_win32_shutdown_cb)(void) = NULL;
+
+static BOOL WINAPI cj_win32_console_ctrl_handler(CJ_MAYBE_UNUSED(DWORD dwCtrlType)) {
+  if (!cj_win32_shutdown_cb) return FALSE;
+  return cj_win32_shutdown_cb() ? TRUE : FALSE;
+}
+
+void cj_plat_register_shutdown_handler(bool (*on_shutdown)(void)) {
+  cj_win32_shutdown_cb = on_shutdown;
+  SetConsoleCtrlHandler(cj_win32_console_ctrl_handler, TRUE);
+}
