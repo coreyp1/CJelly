@@ -1321,6 +1321,12 @@ END {
       sub(/^\t[ \t]*/, "", head)
       sub(/^[-@]+[ \t]*/, "", head)
       sub(/^if[ \t]+/, "", head)
+# A negated invocation is still an invocation, and `if ! $$(CC) ...` is how a
+# gate asks whether something FAILS to compile - so the shapes this sweep
+# most needs to see are exactly the ones carrying a `!`. check-headers walked
+# into this on the day it was added: two $$(CC) -E calls, neither counted,
+# UNMODELLED still reading 3 and the gate still green.
+      sub(/^![ \t]*/, "", head)
       sub(/^[-@]+[ \t]*/, "", head)
       if (head !~ /^\$$\$$?\([A-Z_]*(CC|CXX)\)[ \t]/ &&
           head !~ /^(cc|c\+\+|gcc|g\+\+|clang|clang\+\+)[ \t]/) continue
@@ -1387,7 +1393,7 @@ STAMP_CHECK_MAKEFILE := $(firstword $(MAKEFILE_LIST))
 #
 # The pin earned itself immediately: it was 0, and adding check-aliasing in
 # the next commit failed this gate rather than passing in silence.
-STAMP_UNMODELLED_EXPECTED := 3
+STAMP_UNMODELLED_EXPECTED := 5
 
 # Variable names the link sweep skips because the rule already lists them as
 # file prerequisites, where mtime is the real check. Pinned so the list
