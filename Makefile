@@ -349,7 +349,39 @@ INCLUDE := -I include/ -I $(GEN_DIR)/ $(CUTIL_CFLAGS) $(IMAGE_CFLAGS) $(MODEL_CF
 # src/main.c is the demo program, not part of the library. It was landing in
 # LIBOBJECTS, so the shared object carried a main() it had no use for and the
 # static archive made that a duplicate-symbol error when the demo linked it.
-SOURCES := $(shell find src -type f -name '*.c' ! -name 'main.c')
+#
+# src/platform holds one directory per window system and exactly one of them
+# is built. Selecting here rather than wrapping each file in #ifdef is
+# deliberate: a file whose whole body is conditioned out is an empty
+# translation unit, which -pedantic-errors rejects as "ISO C forbids an empty
+# translation unit", so that route needs a dummy declaration in every file to
+# work at all. It also means neither platform module carries a conditional.
+ifeq ($(OS_NAME), Windows)
+PLATFORM_NAME := win32
+else
+PLATFORM_NAME := x11
+endif
+PLATFORM_DIR := src/platform/$(PLATFORM_NAME)
+
+PLATFORM_SOURCES := $(shell find $(PLATFORM_DIR) -type f -name '*.c' 2>/dev/null)
+
+# A platform directory that matches nothing is the dangerous case, not a
+# missing-file error: SOURCES just comes back one directory shorter, the
+# library links because nothing in the unit tests calls into the event loop,
+# all 118 tests pass, and the demo comes up and never responds to an event.
+# Checked at parse time, where it is a hard error naming the fix. That also
+# blocks `clean`, which is the known cost of a parse-time $$(error) here; the
+# dependency checks above already have it, and the state that triggers this
+# one is a tree somebody has broken rather than one anybody builds.
+ifeq ($(strip $(PLATFORM_SOURCES)),)
+$(error No platform module found in $(PLATFORM_DIR). Each window system has \
+one directory under src/platform and exactly one is built; OS_NAME is \
+$(OS_NAME), which selects $(PLATFORM_NAME). Add the directory, or correct \
+PLATFORM_NAME above.)
+endif
+
+SOURCES := $(shell find src -type f -name '*.c' ! -name 'main.c' ! -path 'src/platform/*') \
+	$(PLATFORM_SOURCES)
 
 # Convert each source file path to an object file path.
 LIBOBJECTS := $(patsubst src/%.c,$(OBJ_DIR)/%.o,$(SOURCES))
