@@ -1262,7 +1262,7 @@ END {
     name = L[i]; sub(/^\$$\(/, "", name); sub(/\).*/, "", name)
     for (j = i + 1; j <= NR && j < i + 8; j++) {
       if (L[j] !~ /printf/) continue
-      delete tmp; vars(L[j], tmp)
+      delete tmp; vars(joinrec(j), tmp)
       for (v in tmp) if (v != "") SV[name "|" v] = 1
       break
     }
@@ -1278,7 +1278,20 @@ END {
       }
       continue
     }
-    if (L[i] !~ /-c \$$</) {
+# Which population a recipe is in is decided from the JOINED record, not the
+# first physical line: a compile rule that wraps before `-c $$<` otherwise
+# reads as a link rule, and the wrong-tree check below lives only in the
+# compile arm, so an object rule stamped for another tree passes in silence.
+#
+# Joining is only allowed to decide that. It must not become the unit that
+# gets counted, which is the obvious next step and is wrong here: check-
+# aliasing is one logical line holding three separate compiler invocations,
+# and counting records instead of invocations takes UNMODELLED from 3 to 1
+# while the pin, the message and the makefile all still say 3. So the link
+# arm still walks physical lines, and only the compile arm claims its
+# record.
+    iscompile = (L[i] ~ /-c \$$</)
+    if (!iscompile) {
       if (L[i] ~ /^\t[ \t]*\043/) continue
       if (L[i] ~ /-c \$$\$$</) continue
       head = L[i]
@@ -1287,7 +1300,10 @@ END {
       sub(/^if[ \t]+/, "", head)
       sub(/^[-@]+[ \t]*/, "", head)
       if (head !~ /^\$$\$$?\([A-Z_]*(CC|CXX)\)[ \t]/ &&
-          head !~ /^(gcc|g\+\+|clang|clang\+\+)[ \t]/) continue
+          head !~ /^(cc|c\+\+|gcc|g\+\+|clang|clang\+\+)[ \t]/) continue
+      if (joinrec(i) ~ /-c \$$</) iscompile = 1
+    }
+    if (!iscompile) {
       hdr = cur; j = curline
       if (hdr !~ /FLAGS_STAMP/) { unmodelled++; continue }
       linked++
@@ -1304,6 +1320,7 @@ END {
       }
       continue
     }
+    rec = joinrec(i); skipto = RECEND
     total++
     hdr = cur; j = curline
     if (hdr !~ /FLAGS_STAMP/) {
@@ -1323,7 +1340,6 @@ END {
     }
     match(hdr, /\$$\([A-Z_]*FLAGS_STAMP\)/)
     sn = substr(hdr, RSTART + 2, RLENGTH - 3)
-    rec = joinrec(i); skipto = RECEND
     delete rv; vars(rec, rv)
     for (v in rv) {
       if (v == "" || v in PREREQ) continue
@@ -1366,9 +1382,10 @@ check-stamps: ## Fail if a compile or link rule has no flags stamp, or the wrong
 # faults and only those. The wrapped link rule is the arm for continuation
 # joining; without that, the rule reads as clean, which is how this class of
 # checker has already been wrong in two other libraries.
-	@printf '%s\n\t%s\n%s\n\t%s\n%s\n\t%s\n%s\n\t%s\n%s\n\t%s\n%s\n\t%s\n%s\n\t%s\n%s\n\t%s\n\t\t%s\n' \
+	@printf '%s\n\t%s\n\t\t%s\n%s\n\t%s\n%s\n\t%s\n%s\n\t%s\n%s\n\t%s\n%s\n\t%s\n%s\n\t%s\n%s\n\t%s\n\t\t%s\n%s\n\t%s\n\t\t%s\n' \
 		'$$(FLAGS_STAMP): force-flags' \
-		"@printf '%s' '\$$(CFLAGS) \$$(INCLUDE) \$$(LDFLAGS)' > \$$@.new" \
+		"@printf '%s' \\\\" \
+		"'\$$(CFLAGS) \$$(INCLUDE) \$$(LDFLAGS)' > \$$@.new" \
 		'$$(OBJ_DIR)/%.o: src/%.c $$(FLAGS_STAMP)' \
 		'cc $$(CFLAGS) $$(INCLUDE) -c $$< -o $$@' \
 		'$$(OBJ_DIR)/planted_nostamp.o: src/planted.c' \
@@ -1384,6 +1401,9 @@ check-stamps: ## Fail if a compile or link rule has no flags stamp, or the wrong
 		'$$(APP_DIR)/planted_link_wrapped: planted.o $$(FLAGS_STAMP)' \
 		'g++ $$(LDFLAGS) \\' \
 		'$$(PLANTED_WRAPPED) -o $$@ planted.o' \
+		'$$(ASAN_OBJ_DIR)/planted_wrapped_compile.o: src/p3.c $$(FLAGS_STAMP)' \
+		'$$(CC) $$(CFLAGS) \\' \
+		'$$(INCLUDE) -c $$< -o $$@' \
 		> $(BUILD_DIR)/stamp_control.mk
 # PREREQ is stripped from the control's line rather than pinned in it. The
 # same sweep produces both numbers, so a control that checked PREREQ too
@@ -1391,7 +1411,7 @@ check-stamps: ## Fail if a compile or link rule has no flags stamp, or the wrong
 # be seen to fire - coverage that cannot be demonstrated is not coverage.
 	@ctl=$$(awk -f $(BUILD_DIR)/stamp_check.awk \
 			$(BUILD_DIR)/stamp_control.mk | tail -1 | sed 's/ PREREQ [0-9]*$$//'); \
-	want="TOTAL 3 BAD 1 UNMODELLED 1 UNRECORDED 3 LINKED 3"; \
+	want="TOTAL 4 BAD 2 UNMODELLED 1 UNRECORDED 3 LINKED 3"; \
 	if [ "$$ctl" != "$$want" ]; then \
 		printf "\033[0;31mcheck-stamps: the control says '%s', not '%s' - the sweep is not reading rules the way it thinks it is, so a clean result from it means nothing.\033[0m\n" "$$ctl" "$$want" >&2; \
 		exit 1; \
