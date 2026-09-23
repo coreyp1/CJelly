@@ -71,10 +71,17 @@ extern "C" {
  *
  * The library is built with -fvisibility=hidden, so a symbol without this is
  * not exported at all.  See CONVENTIONS.md section 4.
+ *
+ * On Windows, code that links the static archive rather than the DLL must
+ * define CJELLY_STATIC: dllimport makes the compiler reference __imp_ thunks,
+ * which only a DLL's import library provides. The demo and the tests link
+ * the archive, so the Makefile defines it there.
  */
 #if defined(_WIN32) || defined(__CYGWIN__)
 #ifdef CJELLY_BUILD
 #define CJ_API CJ_EXTERN __declspec(dllexport)
+#elif defined(CJELLY_STATIC)
+#define CJ_API CJ_EXTERN
 #else
 #define CJ_API CJ_EXTERN __declspec(dllimport)
 #endif
@@ -94,6 +101,8 @@ extern "C" {
 #if defined(_WIN32) || defined(__CYGWIN__)
 #ifdef CJELLY_BUILD
 #define CJ_API_DATA __declspec(dllexport)
+#elif defined(CJELLY_STATIC)
+#define CJ_API_DATA
 #else
 #define CJ_API_DATA __declspec(dllimport)
 #endif

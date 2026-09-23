@@ -226,6 +226,14 @@ CFLAGS := -pedantic-errors -Wall -Wextra $(ALIASING_CFLAGS) $(PROTOTYPE_CFLAGS) 
 # The shipped library exports its public API and nothing else. Tests reach the
 # internals by linking the static archive, which a static link can do even for
 # hidden symbols.
+ifeq ($(OS_NAME), Windows)
+# Everything built here but the library itself links the static archive, so
+# the headers must not say dllimport to it: an archive has no __imp_ thunks.
+# The library's own objects also get CJELLY_BUILD, which the header tests
+# first. See CJ_API in macros.h.
+CFLAGS += -DCJELLY_STATIC
+CXXFLAGS += -DCJELLY_STATIC
+endif
 LIB_CFLAGS := $(CFLAGS) -fvisibility=hidden -DCJELLY_BUILD $(EXTRA_CFLAGS)
 # -DGHOTIIO_CUTIL_ENABLE_MEMORY_DEBUG
 LDFLAGS := -L /usr/lib -lstdc++ -lm `PKG_CONFIG_PATH=$(PKG_CONFIG_LOOKUP_PATH) pkg-config --libs --cflags vulkan` $(EXTRA_LDFLAGS)
