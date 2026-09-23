@@ -829,3 +829,24 @@ cj_result_t cj_plat_set_window_state(uintptr_t handle, cj_window_state_t state) 
   ShowWindow(hwnd, show_cmd);
   return CJ_SUCCESS;
 }
+
+void cj_plat_bind_window_user_data(uintptr_t handle, void* user) {
+  /* Retrieved again in WM_DESTROY, after the window has been unregistered
+   * from the application. */
+  if (handle) SetWindowLongPtr((HWND)handle, GWLP_USERDATA, (LONG_PTR)user);
+}
+
+void cj_plat_unbind_window_user_data(uintptr_t handle) {
+  HWND hwnd = (HWND)handle;
+  if (hwnd && IsWindow(hwnd)) SetWindowLongPtr(hwnd, GWLP_USERDATA, 0);
+}
+
+void cj_plat_destroy_native_window(uintptr_t handle) {
+  HWND hwnd = (HWND)handle;
+  if (hwnd && IsWindow(hwnd)) DestroyWindow(hwnd);
+}
+
+bool cj_plat_window_is_alive(uintptr_t handle) {
+  HWND hwnd = (HWND)handle;
+  return hwnd != NULL && IsWindow(hwnd);
+}

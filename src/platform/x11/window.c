@@ -388,3 +388,24 @@ cj_result_t cj_plat_set_window_state(uintptr_t handle, cj_window_state_t state) 
   XFlush(cj_x11_display);
   return CJ_SUCCESS;
 }
+
+void cj_plat_bind_window_user_data(uintptr_t handle, void* user) {
+  /* X11 has no per-window user-data slot of its own. Events carry the XID
+   * and the application looks the window up by it. */
+  (void)handle; (void)user;
+}
+
+void cj_plat_unbind_window_user_data(uintptr_t handle) {
+  (void)handle;
+}
+
+void cj_plat_destroy_native_window(uintptr_t handle) {
+  if (!cj_x11_display || !handle) return;
+  XDestroyWindow(cj_x11_display, (Window)handle);
+}
+
+bool cj_plat_window_is_alive(uintptr_t handle) {
+  /* X11 cannot answer this without a round trip that would raise a BadWindow
+   * error on the way, so a non-zero handle is taken as alive. */
+  return handle != 0;
+}

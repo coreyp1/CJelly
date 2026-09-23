@@ -597,13 +597,11 @@ static void plat_cleanupWindow(CJPlatformWindow * win) {
   if (dev && win->swapChain) { vkDestroySwapchainKHR(dev, win->swapChain, NULL); win->swapChain = VK_NULL_HANDLE; }
   if (inst && win->surface) { vkDestroySurfaceKHR(inst, win->surface, NULL); win->surface = VK_NULL_HANDLE; }
 
-#ifdef _WIN32
-  // DestroyWindow is called in cj_window_destroy, not here
-  win->handle = NULL;
-#else
-  if (cj_x11_display && win->handle) XDestroyWindow(cj_x11_display, win->handle);
+  /* The native window itself is destroyed by cj_window_destroy, once this
+   * has finished with its Vulkan objects. X11 used to do it here and Win32
+   * one call later; those are the same point in the sequence, and it is now
+   * written once. */
   win->handle = 0;
-#endif
 }
 /* C library and cjelly headers */
 #include <stdio.h>
@@ -633,7 +631,6 @@ static bool plat_createFramebuffersForWindow(CJPlatformWindow * win);
 static bool createTexturedCommandBuffersForWindowCtx(CJPlatformWindow * win, const CJellyVulkanContext* ctx);
 static void plat_createSyncObjectsForWindow(CJPlatformWindow * win);
 static void plat_drawFrameForWindow(CJPlatformWindow * win);
-static void plat_cleanupWindow(CJPlatformWindow * win);
 
 /* Command buffer recorders using engine/ctx */
 static bool createTexturedCommandBuffersForWindowCtx(CJPlatformWindow * win, const CJellyVulkanContext* ctx);
@@ -738,11 +735,9 @@ CJ_API cj_window_t* cj_window_create(cj_engine_t* engine, const cj_window_desc_t
     return NULL;
   }
 
-#ifdef _WIN32
-  // Store window pointer in window's user data so we can retrieve it in WM_DESTROY
-  // even after unregistering from the application
-  SetWindowLongPtr(win->plat->handle, GWLP_USERDATA, (LONG_PTR)win);
-#endif
+  /* So the platform can find this window again during teardown, where the
+   * window system has somewhere to put it. */
+  cj_plat_bind_window_user_data((uintptr_t)win->plat->handle, win);
 
   return win;
 }
@@ -779,23 +774,14 @@ CJ_API void cj_window_destroy(cj_window_t* win) {
       vkDeviceWaitIdle(dev);
     }
 
-#ifdef _WIN32
-    // Save and clear Windows-specific data before destruction
-    HWND hwnd = win->plat->handle;
-    if (hwnd && IsWindow(hwnd)) {
-      SetWindowLongPtr(hwnd, GWLP_USERDATA, 0);
-    }
-#endif
+    /* Saved because plat_cleanupWindow clears it. */
+    uintptr_t native = (uintptr_t)win->plat->handle;
+    cj_plat_unbind_window_user_data(native);
 
     // Clean up Vulkan resources (swapchain, surfaces, etc.)
     plat_cleanupWindow(win->plat);
 
-#ifdef _WIN32
-    // Destroy the Windows window
-    if (hwnd && IsWindow(hwnd)) {
-      DestroyWindow(hwnd);
-    }
-#endif
+    cj_plat_destroy_native_window(native);
 
     free(win->plat);
   }
@@ -848,12 +834,11 @@ bool cj_window__last_presented_frame(
 CJ_API cj_result_t cj_window_execute(cj_window_t* win) {
   if (!win || win->is_destroyed || !win->plat) return CJ_E_INVALID_ARGUMENT;
 
-#ifdef _WIN32
-  /* Critical: Check if window handle is still valid before using Vulkan resources */
-  if (!win->plat->handle || !IsWindow(win->plat->handle)) {
+  /* Critical: the window may already be gone, and its Vulkan objects with
+   * it. Where the window system can say, ask it. */
+  if (!cj_plat_window_is_alive((uintptr_t)win->plat->handle)) {
     return CJ_E_INVALID_ARGUMENT;
   }
-#endif
 
   /* Check if swapchain needs recreation (deferred from resize event) */
   if (win->plat->needs_swapchain_recreate) {

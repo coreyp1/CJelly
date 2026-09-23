@@ -84,6 +84,23 @@ bool cj_plat_capture_mouse(uintptr_t handle);
  */
 bool cj_plat_release_mouse(void);
 
+/** Attach the library's window pointer to the native window, where the
+ *  window system offers a slot for it. Win32 needs this to find the window
+ *  again in WM_DESTROY; X11 routes events by handle instead and does
+ *  nothing. */
+void cj_plat_bind_window_user_data(uintptr_t handle, void* user);
+
+/** Undo cj_plat_bind_window_user_data, before the window is torn down. */
+void cj_plat_unbind_window_user_data(uintptr_t handle);
+
+/** Destroy the native window. Called once, after its Vulkan objects are
+ *  gone. */
+void cj_plat_destroy_native_window(uintptr_t handle);
+
+/** Whether the window system still has this window.
+ *  @return true if it is usable, or if the window system cannot say. */
+bool cj_plat_window_is_alive(uintptr_t handle);
+
 /** Ask the window system where this window actually is.
  *  @return true if it answered; false leaves the library's cache authoritative.
  */
