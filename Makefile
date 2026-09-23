@@ -347,8 +347,16 @@ UNIT_TEST_EXECUTABLES := $(addprefix $(APP_DIR)/,$(addsuffix $(EXE_EXTENSION),\
 # fixtures through CJELLY_TEST_DIR (see tests/test_helpers.h).
 TEST_INCLUDE := $(INCLUDE) -I src/ -I tests/
 
+# The stamp is a prerequisite here for the same reason it is on the object
+# rules, but the reason is easy to miss: these binaries already rebuild when
+# CFLAGS or CXXFLAGS move, because that rebuilds the library objects, which
+# relinks the archive, which is a normal prerequisite above. That coverage is
+# a side effect of two other decisions rather than something this rule asks
+# for, and it does not extend to TESTFLAGS, which appears only in the recipe
+# below. Without the stamp, `make test TESTFLAGS=...` rebuilt nothing at all
+# and the suite went on running binaries built with the old flags.
 define unit-test-rule
-$(APP_DIR)/$2$(EXE_EXTENSION): $1 $(APP_DIR)/$(STATIC_TARGET) | $(APP_DIR)/$(TARGET)
+$(APP_DIR)/$2$(EXE_EXTENSION): $1 $(APP_DIR)/$(STATIC_TARGET) $(FLAGS_STAMP) | $(APP_DIR)/$(TARGET)
 	@printf "\n### Compiling and linking %s Test ###\n" "$2"
 	@mkdir -p $$(@D)
 	$$(CXX) $$(CXXFLAGS) $$(TEST_INCLUDE) -MMD -MP -MF $$(APP_DIR)/$2.d -o $$@ $$< $$(CJELLYLIBRARY) $$(LDFLAGS) $$(TESTFLAGS)
@@ -789,7 +797,7 @@ $(ASAN_APP_DIR)/$(ASAN_STATIC_TARGET): $(ASAN_LIBOBJECTS)
 # change to library source has to relink the test. Behind a `|` the suite
 # would keep passing against the previous build.
 define asan-unit-test-rule
-$(ASAN_APP_DIR)/$2$(EXE_EXTENSION): $1 $(ASAN_APP_DIR)/$(ASAN_STATIC_TARGET)
+$(ASAN_APP_DIR)/$2$(EXE_EXTENSION): $1 $(ASAN_APP_DIR)/$(ASAN_STATIC_TARGET) $(ASAN_FLAGS_STAMP)
 	@printf "\n### Compiling and linking ASan %s Test ###\n" "$2"
 	@mkdir -p $$(@D)
 	$$(CXX) $$(ASAN_CXXFLAGS) $$(TEST_INCLUDE) -MMD -MP -MF $$(ASAN_APP_DIR)/$2.d -o $$@ $$< $$(ASAN_CJELLYLIBRARY) $$(ASAN_LDFLAGS) $$(TESTFLAGS)
@@ -1120,12 +1128,12 @@ valgrind: all ## Run main under valgrind with suppressions
 
 $(FLAGS_STAMP): force-flags
 	@mkdir -p $(@D)
-	@printf '%s\n' '$(CFLAGS) $(CXXFLAGS) $(LDFLAGS) $(INCLUDE)' > $@.new
+	@printf '%s\n' '$(CFLAGS) $(CXXFLAGS) $(LDFLAGS) $(INCLUDE) $(TESTFLAGS)' > $@.new
 	@cmp -s $@.new $@ 2>/dev/null && rm -f $@.new || mv -f $@.new $@
 
 $(ASAN_FLAGS_STAMP): force-flags
 	@mkdir -p $(@D)
-	@printf '%s\n' '$(ASAN_CFLAGS) $(ASAN_CXXFLAGS) $(ASAN_LDFLAGS) $(INCLUDE)' > $@.new
+	@printf '%s\n' '$(ASAN_CFLAGS) $(ASAN_CXXFLAGS) $(ASAN_LDFLAGS) $(INCLUDE) $(TESTFLAGS)' > $@.new
 	@cmp -s $@.new $@ 2>/dev/null && rm -f $@.new || mv -f $@.new $@
 
 $(FUZZ_FLAGS_STAMP): force-flags
