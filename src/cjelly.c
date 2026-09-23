@@ -43,7 +43,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <ghoti.io/cjelly/platform_internal.h>
+#include <ghoti.io/cjelly/plat_internal.h>
 #include <ghoti.io/cjelly/cjelly.h>
 #include <ghoti.io/cjelly/runtime.h>
 #include <ghoti.io/cjelly/application.h>
@@ -57,9 +57,6 @@
 #include <ghoti.io/cjelly/basic_state_internal.h>
 #include <ghoti.io/cjelly/format/image.h>
 #include <ghoti.io/cjelly/macros.h>
-#ifdef _WIN32
-#include <vulkan/vulkan_win32.h>
-#endif
 #include <shaders/basic.vert.h>
 
 /* textured.vert lives in rgraph.c's translation unit: the generated SPIR-V
@@ -167,7 +164,7 @@ void createTexturedCommandBuffersForWindowCtx(struct CJellyWindow * win, const C
 static void cjelly_atlas_update_descriptor_set_ctx(CJellyTextureAtlas * atlas, const CJellyVulkanContext* ctx);
 
 /* Public wrappers for runtime.h. processWindowEvents is declared in
- * platform_internal.h and defined by whichever platform module was built. */
+ * plat_internal.h and defined by whichever platform module was built. */
 CJ_API void cj_poll_events(void) { processWindowEvents(); }
 
 /* Public convenience setter for demo color updates without exposing struct layout */

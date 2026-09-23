@@ -24,6 +24,7 @@
 #include <stdbool.h>
 #include <stdio.h>
 
+#include <ghoti.io/cjelly/plat_internal.h>
 #include <ghoti.io/cjelly/macros.h>
 #include <ghoti.io/cjelly/cj_engine.h>
 #include <ghoti.io/cjelly/engine_internal.h>
@@ -100,11 +101,7 @@ static int eng_create_instance(cj_engine_t* e, int use_validation) {
   const char* extensions[8];
   uint32_t extCount = 0;
   extensions[extCount++] = "VK_KHR_surface";
-#ifdef _WIN32
-  extensions[extCount++] = "VK_KHR_win32_surface";
-#else
-  extensions[extCount++] = "VK_KHR_xlib_surface";
-#endif
+  extensions[extCount++] = cj_plat_surface_extension_name();
 
   VkInstanceCreateInfo ci = {0};
   ci.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;

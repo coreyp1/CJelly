@@ -508,3 +508,10 @@ void cj_plat_create_window(const char* title, int width, int height,
 
   XFlush(cj_x11_display);
 }
+
+const char* cj_plat_surface_extension_name(void) {
+  return VK_KHR_XLIB_SURFACE_EXTENSION_NAME;
+}
+
+bool cj_plat_open_display(void) { return cj_x11_open_display(); }
+void cj_plat_close_display(void) { cj_x11_close_display(); }

@@ -47,10 +47,10 @@ uint64_t getCurrentTimeInMilliseconds(void) {
 #else
 #include <stdint.h>
 #include <time.h>
-/* The demo asks the library to open its display and never touches the
- * connection itself, so it needs no Xlib header of its own. It used to
- * declare `extern Display * display;` and assign to it. */
-#include <ghoti.io/cjelly/platform_internal.h>
+/* The demo asks the library to open whatever connection its window system
+ * needs, and never touches it. This header names no window system, so the
+ * demo does not either - on any platform. */
+#include <ghoti.io/cjelly/plat_internal.h>
 uint64_t getCurrentTimeInMilliseconds(void) {
   struct timespec ts;
   clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -320,17 +320,12 @@ int main(int argc, char ** argv) {
 #ifndef _WIN32
   fprintf(stderr, "Starting CJelly demo...\n");
 #endif
-#ifdef _WIN32
-  // Windows: hInstance is set in createPlatformWindow.
-#else
-  // Linux: ask the library to open its X display.
-  fprintf(stderr, "Opening X display...\n");
-  if (!cj_x11_open_display()) {
-    fprintf(stderr, "Failed to open X display\n");
+  fprintf(stderr, "Opening the window system connection...\n");
+  if (!cj_plat_open_display()) {
+    fprintf(stderr, "Failed to open the window system connection\n");
     exit(EXIT_FAILURE);
   }
-  fprintf(stderr, "X display opened successfully\n");
-#endif
+  fprintf(stderr, "Window system connection opened successfully\n");
 
   // Create engine (will be bound to legacy globals after init)
   cj_engine_desc_t eng_desc = {0};
@@ -613,9 +608,7 @@ int main(int argc, char ** argv) {
   cj_engine_wait_idle(engine);
   cj_engine_shutdown_device(engine);
 
-#ifndef _WIN32
-  cj_x11_close_display();
-#endif
+  cj_plat_close_display();
   // Free engine last (owns no Vulkan handles)
   cj_engine_shutdown(engine);
   return 0;

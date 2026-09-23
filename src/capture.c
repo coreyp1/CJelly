@@ -28,15 +28,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* window_internal.h declares a helper taking Xlib types on Linux, so the
- * platform headers have to come first - the same order window.c uses. */
-#ifdef _WIN32
-#include <windows.h>
 #include <vulkan/vulkan.h>
-#else
-#include <X11/Xlib.h>
-#include <vulkan/vulkan.h>
-#endif
 
 #include <ghoti.io/cutil/file.h>
 

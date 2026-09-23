@@ -899,3 +899,16 @@ void cj_plat_create_window(const char* title, int width, int height,
 
   out->dpi_scale = cj_win32_dpi_to_scale(cj_win32_window_dpi(hwnd));
 }
+
+const char* cj_plat_surface_extension_name(void) {
+  return VK_KHR_WIN32_SURFACE_EXTENSION_NAME;
+}
+
+bool cj_plat_open_display(void) {
+  /* Win32 has no connection to open; a process talks to the window manager
+   * through its own module handle. */
+  return true;
+}
+
+void cj_plat_close_display(void) {
+}

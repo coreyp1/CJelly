@@ -1688,7 +1688,7 @@ check-aliasing: ## Fail if the strict-aliasing warning is no longer armed
 #
 # Pinned so that a sweep which stops finding headers fails instead of passing
 # on an empty loop. Raise it when a header is added.
-CHECK_HEADERS_EXPECTED := 30
+CHECK_HEADERS_EXPECTED := 31
 
 check-headers: ## Fail if an installed header pulls the window system in with it
 	@mkdir -p $(BUILD_DIR)

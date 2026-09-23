@@ -32,7 +32,7 @@
  * created surfaces. It still has to come before anything else that might
  * pull in vulkan.h, because the VK_USE_PLATFORM_* selection inside it only
  * takes effect before vulkan.h is first seen. */
-#include <ghoti.io/cjelly/platform_internal.h>
+#include <ghoti.io/cjelly/plat_internal.h>
 
 #include <stdio.h>
 #include <assert.h>

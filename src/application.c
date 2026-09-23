@@ -36,7 +36,7 @@
 // cjelly/macros.h, reached through application.h, defines _POSIX_C_SOURCE.
 // It has to be seen before any system header is pulled in, so the CJelly
 // includes come first and everything else follows.
-#include <ghoti.io/cjelly/platform_internal.h>
+#include <ghoti.io/cjelly/plat_internal.h>
 #include <ghoti.io/cjelly/macros.h>
 #include <ghoti.io/cjelly/application.h>
 #include <ghoti.io/cjelly/cj_window.h>
@@ -305,11 +305,7 @@ static bool initialize_options(CJellyApplicationOptions * opts) {
   // (Instance extensions are enabled during vkCreateInstance.)
   const char * instanceExtensions[] = {
       VK_KHR_SURFACE_EXTENSION_NAME,
-#ifdef _WIN32
-      VK_KHR_WIN32_SURFACE_EXTENSION_NAME,
-#else
-      VK_KHR_XLIB_SURFACE_EXTENSION_NAME,
-#endif
+      cj_plat_surface_extension_name(),
   };
   size_t instanceExtCount =
       sizeof(instanceExtensions) / sizeof(instanceExtensions[0]);

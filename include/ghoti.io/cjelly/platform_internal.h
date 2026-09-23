@@ -41,8 +41,8 @@
  */
 #pragma once
 
-#include <ghoti.io/cjelly/macros.h>
-
+/* The VK_USE_PLATFORM_* selection has to be made before anything pulls in
+ * vulkan.h, and plat_internal.h below does, so this block comes first. */
 #ifdef _WIN32
 #define VK_USE_PLATFORM_WIN32_KHR
 #include <windows.h>
@@ -52,108 +52,9 @@
 #include <X11/Xlib.h>
 #endif
 
-#include <vulkan/vulkan.h>
+#include <ghoti.io/cjelly/macros.h>
+#include <ghoti.io/cjelly/plat_internal.h>
 
-#include <stdbool.h>
-#include <stdint.h>
-
-#include <ghoti.io/cjelly/cj_result.h>
-#include <ghoti.io/cjelly/cj_window.h>
-
-/* The seam. Each of these is declared once, with no conditional, and defined
- * by both platform modules. A call site in window.c that uses them needs no
- * #ifdef of its own, which is the whole point: the conditional moves from
- * the middle of portable logic to the choice of which file gets compiled.
- *
- * Native window handles cross as uintptr_t rather than HWND or Window, so
- * that this part of the seam names no window system either. Both fit: a
- * Window is an XID, which is an unsigned long, and an HWND is a pointer.
- */
-
-/** Milliseconds from a monotonic clock. Monotonic rather than wall clock: a
- *  clock adjustment must not make an animation jump or run backwards. */
-uint64_t cj_plat_now_ms(void);
-
-/** Route further mouse events to this window until released.
- *  @return true if the window system took the capture.
- */
-bool cj_plat_capture_mouse(uintptr_t handle);
-
-/** Undo cj_plat_capture_mouse.
- *  @return true if a capture was released.
- */
-bool cj_plat_release_mouse(void);
-
-/** What creating a native window tells the caller. Position and DPI are
- *  outputs because the window manager has the last word on both. */
-typedef struct cj_plat_window_t {
-  uintptr_t handle;    /**< 0 if the window could not be created. */
-  int32_t x;           /**< Where it actually is, in CLIENT coordinates. */
-  int32_t y;
-  float dpi_scale;     /**< 1.0 being 96 DPI. */
-} cj_plat_window_t;
-
-/** Create, show and prepare a native window for rendering.
- *
- *  @param out Filled in on success; handle is 0 on failure. Its x, y and
- *             dpi_scale are read on entry as the values to keep if the
- *             window system does not report better ones.
- */
-void cj_plat_create_window(const char* title, int width, int height,
-    int32_t x, int32_t y, cj_window_state_t initial_state,
-    cj_plat_window_t* out);
-
-/** Create the Vulkan surface for this native window.
- *  @return whatever the window system's vkCreate*SurfaceKHR returned.
- */
-VkResult cj_plat_create_surface(uintptr_t handle, VkInstance instance,
-    VkSurfaceKHR* out_surface);
-
-/** Attach the library's window pointer to the native window, where the
- *  window system offers a slot for it. Win32 needs this to find the window
- *  again in WM_DESTROY; X11 routes events by handle instead and does
- *  nothing. */
-void cj_plat_bind_window_user_data(uintptr_t handle, void* user);
-
-/** Undo cj_plat_bind_window_user_data, before the window is torn down. */
-void cj_plat_unbind_window_user_data(uintptr_t handle);
-
-/** Destroy the native window. Called once, after its Vulkan objects are
- *  gone. */
-void cj_plat_destroy_native_window(uintptr_t handle);
-
-/** Whether the window system still has this window.
- *  @return true if it is usable, or if the window system cannot say. */
-bool cj_plat_window_is_alive(uintptr_t handle);
-
-/** Ask the window system where this window actually is.
- *  @return true if it answered; false leaves the library's cache authoritative.
- */
-bool cj_plat_query_position(uintptr_t handle, int32_t* out_x, int32_t* out_y);
-
-/** Ask the window system what state this window is in.
- *  @return true if it answered; false leaves the library's cache authoritative.
- */
-bool cj_plat_query_state(uintptr_t handle, cj_window_state_t* out_state);
-
-/** Move the window, given the library's cached position for comparison.
- *  @return true if the caller should arm programmatic-move suppression, which
- *          only a window system that reports moves back to us needs.
- */
-bool cj_plat_move_window(uintptr_t handle, int32_t x, int32_t y,
-    int32_t cur_x, int32_t cur_y);
-
-/** Ask the window manager to change this window's state. */
-cj_result_t cj_plat_set_window_state(uintptr_t handle, cj_window_state_t state);
-
-/** Drain the window system's event queue and dispatch to window callbacks.
- *
- *  Defined by whichever module under src/platform was built. Exported, and
- *  declared nowhere public - it was forward-declared inside cjelly.c to stop
- *  an implicit-declaration warning, which is a declaration no other caller
- *  can see.
- */
-CJ_API void processWindowEvents(void);
 
 #ifdef _WIN32
 /** The window procedure, defined in src/platform/win32/window.c. */
