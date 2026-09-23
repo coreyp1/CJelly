@@ -199,10 +199,29 @@ endif
 # Only CFLAGS: the library is C, and the C++ here is test code.
 ALIASING_CFLAGS := -Wstrict-aliasing=1
 
+# `f()` is not an empty parameter list in C17, it is a declaration with no
+# prototype, and C23 redefines it. Seven definitions here were written that
+# way and nothing said so: it is in neither -Wall nor -Wextra. clang rejects
+# them - which is how they were found, when `make CC=clang` could not get past
+# the seventh object - so without this flag the fix stays fixed only for as
+# long as nobody writes another one before the next clang attempt.
+#
+# gcc catches SIX of those seven shapes, not all of them. It suppresses the
+# warning when a prototype for the same function is already in scope, so a
+# definition like processWindowEvents, declared `(void)` earlier in the file
+# and defined `()`, compiles silently here and is an error under clang.
+# Measured both ways by putting each shape back one at a time. So this is a
+# gate against writing a new one, not a claim that gcc sees what clang sees.
+#
+# Only CFLAGS, and for a second reason: g++ rejects it as valid for C but not
+# for C++, so putting it anywhere CXXFLAGS can reach would warn on every C++
+# compile.
+PROTOTYPE_CFLAGS := -Wstrict-prototypes
+
 CXX := g++
 CXXFLAGS := -pedantic-errors -Wall -Wextra -Werror -Wfatal-errors -std=c++20 -O1 -g $(EXTRA_CXXFLAGS)
 CC := cc
-CFLAGS := -pedantic-errors -Wall -Wextra $(ALIASING_CFLAGS) -Werror -Wfatal-errors -std=c17 $(OPT_CFLAGS) -g `PKG_CONFIG_PATH=$(PKG_CONFIG_LOOKUP_PATH) pkg-config --cflags vulkan` $(EXTRA_CFLAGS)
+CFLAGS := -pedantic-errors -Wall -Wextra $(ALIASING_CFLAGS) $(PROTOTYPE_CFLAGS) -Werror -Wfatal-errors -std=c17 $(OPT_CFLAGS) -g `PKG_CONFIG_PATH=$(PKG_CONFIG_LOOKUP_PATH) pkg-config --cflags vulkan` $(EXTRA_CFLAGS)
 # Library-specific compile flags (export symbols on Windows, PIC on Linux)
 # The shipped library exports its public API and nothing else. Tests reach the
 # internals by linking the static archive, which a static link can do even for
