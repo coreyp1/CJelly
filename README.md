@@ -50,6 +50,28 @@ to use your own:
 See [docs/models.md](docs/models.md) for how that is put together, and what it
 does not do yet.
 
+## Diagnostics
+
+The library is quiet unless something failed. To hear more:
+
+```
+CJELLY_LOG=debug ./build/linux/release/apps/main
+```
+
+`CJELLY_LOG` takes `off`, `error` (the default), `warn`, `info`, `debug` or
+`trace`, or the digits `0` to `5`. `trace` includes bulk listings such as
+every extension a device reports, which runs to a few hundred lines per
+device.
+
+An embedding application can set the level itself with `cj_log_set_level`,
+and take the messages rather than letting them reach stderr with
+`cj_log_set_sink`. See
+[cj_log.h](include/ghoti.io/cjelly/cj_log.h).
+
+Vulkan validation messages arrive at the level matching the severity the
+layer gave them, so validation errors are visible by default and the layers'
+own chatter is not.
+
 ## License
 
 LGPL-3.0-only. See [COPYING.LESSER](COPYING.LESSER) for the license, and
