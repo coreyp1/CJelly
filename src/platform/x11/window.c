@@ -27,6 +27,13 @@
  * it places a window.
  */
 
+/* clock_gettime() is POSIX, and platform_internal.h pulls in system headers
+ * before cjelly/macros.h gets a chance to ask for it. Declaring the level
+ * here, above every include, is the only place it takes effect. */
+#ifndef _POSIX_C_SOURCE
+#define _POSIX_C_SOURCE 200809L
+#endif
+
 #include <ghoti.io/cjelly/platform_internal.h>
 
 #include <math.h>
@@ -35,6 +42,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include <X11/Xutil.h>
 
@@ -242,4 +250,27 @@ float cj_window__get_dpi_scale_linux(Display* dpy, Window root, int32_t win_x, i
 
   /* No monitor found - default to 1.0 (96 DPI) */
   return 1.0f;
+}
+
+
+/* === The portable seam, X11 side === */
+
+uint64_t cj_plat_now_ms(void) {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (uint64_t)ts.tv_sec * 1000ULL + (uint64_t)ts.tv_nsec / 1000000ULL;
+}
+
+bool cj_plat_capture_mouse(uintptr_t handle) {
+  if (!cj_x11_display || !handle) return false;
+  XGrabPointer(cj_x11_display, (Window)handle, False,
+      ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
+      GrabModeAsync, GrabModeAsync, None, None, CurrentTime);
+  return true;
+}
+
+bool cj_plat_release_mouse(void) {
+  if (!cj_x11_display) return false;
+  XUngrabPointer(cj_x11_display, CurrentTime);
+  return true;
 }

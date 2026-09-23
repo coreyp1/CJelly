@@ -57,6 +57,30 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+/* The seam. Each of these is declared once, with no conditional, and defined
+ * by both platform modules. A call site in window.c that uses them needs no
+ * #ifdef of its own, which is the whole point: the conditional moves from
+ * the middle of portable logic to the choice of which file gets compiled.
+ *
+ * Native window handles cross as uintptr_t rather than HWND or Window, so
+ * that this part of the seam names no window system either. Both fit: a
+ * Window is an XID, which is an unsigned long, and an HWND is a pointer.
+ */
+
+/** Milliseconds from a monotonic clock. Monotonic rather than wall clock: a
+ *  clock adjustment must not make an animation jump or run backwards. */
+uint64_t cj_plat_now_ms(void);
+
+/** Route further mouse events to this window until released.
+ *  @return true if the window system took the capture.
+ */
+bool cj_plat_capture_mouse(uintptr_t handle);
+
+/** Undo cj_plat_capture_mouse.
+ *  @return true if a capture was released.
+ */
+bool cj_plat_release_mouse(void);
+
 /** Drain the window system's event queue and dispatch to window callbacks.
  *
  *  Defined by whichever module under src/platform was built. Exported, and

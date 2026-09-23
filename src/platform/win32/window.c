@@ -761,3 +761,26 @@ LRESULT CALLBACK cj_win32_wnd_proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM l
       return DefWindowProc(hwnd, uMsg, wParam, lParam);
   }
 }
+
+
+/* === The portable seam, Win32 side === */
+
+uint64_t cj_plat_now_ms(void) {
+  LARGE_INTEGER frequency;
+  LARGE_INTEGER counter;
+  QueryPerformanceFrequency(&frequency);
+  QueryPerformanceCounter(&counter);
+  return (uint64_t)((counter.QuadPart * 1000LL) / frequency.QuadPart);
+}
+
+bool cj_plat_capture_mouse(uintptr_t handle) {
+  HWND hwnd = (HWND)handle;
+  if (!hwnd || !IsWindow(hwnd)) return false;
+  SetCapture(hwnd);
+  return true;
+}
+
+bool cj_plat_release_mouse(void) {
+  ReleaseCapture();
+  return true;
+}

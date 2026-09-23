@@ -829,17 +829,7 @@ CJ_API cj_result_t cj_window_begin_frame(cj_window_t* win, cj_frame_info_t* out_
  * Monotonic rather than wall clock: a clock adjustment must not make a model
  * jump or run backwards. */
 static uint64_t cj_window_now_ms(void) {
-#ifdef _WIN32
-  LARGE_INTEGER frequency;
-  LARGE_INTEGER counter;
-  QueryPerformanceFrequency(&frequency);
-  QueryPerformanceCounter(&counter);
-  return (uint64_t)((counter.QuadPart * 1000LL) / frequency.QuadPart);
-#else
-  struct timespec ts;
-  clock_gettime(CLOCK_MONOTONIC, &ts);
-  return (uint64_t)ts.tv_sec * 1000ULL + (uint64_t)ts.tv_nsec / 1000000ULL;
-#endif
+  return cj_plat_now_ms();
 }
 
 bool cj_window__last_presented_frame(
@@ -1624,39 +1614,17 @@ CJ_API bool cj_mouse_button_is_pressed(cj_window_t* window, cj_mouse_button_t bu
 /* Mouse capture functions */
 CJ_API void cj_window_capture_mouse(cj_window_t* window) {
   if (!window || !window->plat || window->is_destroyed) return;
-#ifdef _WIN32
-  HWND hwnd = window->plat->handle;
-  if (hwnd && IsWindow(hwnd)) {
-    SetCapture(hwnd);
+  if (cj_plat_capture_mouse((uintptr_t)window->plat->handle)) {
     window->has_mouse_capture = true;
   }
-#else
-  /* X11: Use XGrabPointer */
-  if (cj_x11_display && window->plat->handle) {
-    Window xwindow = (Window)window->plat->handle;
-    XGrabPointer(cj_x11_display, xwindow, False,
-                 ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
-                 GrabModeAsync, GrabModeAsync,
-                 None, None, CurrentTime);
-    window->has_mouse_capture = true;
-  }
-#endif
 }
 
 CJ_API void cj_window_release_mouse(cj_window_t* window) {
   if (!window || !window->plat || window->is_destroyed) return;
-#ifdef _WIN32
-  if (window->has_mouse_capture) {
-    ReleaseCapture();
+  if (!window->has_mouse_capture) return;
+  if (cj_plat_release_mouse()) {
     window->has_mouse_capture = false;
   }
-#else
-  /* X11: Use XUngrabPointer */
-  if (window->has_mouse_capture && cj_x11_display) {
-    XUngrabPointer(cj_x11_display, CurrentTime);
-    window->has_mouse_capture = false;
-  }
-#endif
 }
 
 CJ_API bool cj_window_has_mouse_capture(cj_window_t* window) {
