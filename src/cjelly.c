@@ -107,11 +107,9 @@ static inline cj_engine_t* cur_eng(void) { return cj_engine_get_current(); }
 static inline VkDevice cur_device(void) { cj_engine_t* e = cur_eng(); return e ? cj_engine_device(e) : VK_NULL_HANDLE; }
 static inline VkRenderPass cur_render_pass(void) { cj_engine_t* e = cur_eng(); return e ? cj_engine_render_pass(e) : VK_NULL_HANDLE; }
 static inline VkQueue cur_gfx_queue(void) { cj_engine_t* e = cur_eng(); return e ? cj_engine_graphics_queue(e) : VK_NULL_HANDLE; }
-static inline VkQueue cur_present_queue(void) { cj_engine_t* e = cur_eng(); return e ? cj_engine_present_queue(e) : VK_NULL_HANDLE; }
 static inline VkCommandPool cur_cmd_pool(void) { cj_engine_t* e = cur_eng(); return e ? cj_engine_command_pool(e) : VK_NULL_HANDLE; }
 static inline CJellyTexturedResources* cur_tx(void) { cj_engine_t* e = cur_eng(); return e ? cj_engine_textured(e) : NULL; }
 static inline CJellyBindlessState* cur_bl(void) { cj_engine_t* e = cur_eng(); return e ? cj_engine_bindless(e) : NULL; }
-static inline CJellyBasicState* cur_basic(void) { cj_engine_t* e = cur_eng(); return e ? cj_engine_basic(e) : NULL; }
 
 
 // Vertex structure for the square.
@@ -939,7 +937,7 @@ void DestroyDebugUtilsMessengerEXT(VkInstance instance,
 
 #ifdef _WIN32
 
-CJ_API void processWindowEvents() {
+CJ_API void processWindowEvents(void) {
   MSG msg;
   while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE)) {
     // Handle WM_QUIT specially - this is posted when the last window closes
@@ -1078,7 +1076,7 @@ bool select_xinput2_events(Window window) {
   return true;
 }
 
-CJ_API void processWindowEvents() {
+CJ_API void processWindowEvents(void) {
   /* Initialize XInput2 on first call */
   if (xinput2_available == -1) {
     init_xinput2();
@@ -1754,7 +1752,7 @@ CJ_API void processWindowEvents() {
  * This function creates a descriptor pool that can allocate descriptor sets
  * containing combined image samplers.
  */
-void createTextureDescriptorPool() {
+void createTextureDescriptorPool(void) {
   VkDescriptorPoolSize poolSize = {0};
   poolSize.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   poolSize.descriptorCount = 1; // Change this if you need more descriptors.
@@ -1792,7 +1790,7 @@ static void createTextureDescriptorPoolCtx(const CJellyVulkanContext* ctx) {
   }
 }
 
-void createDescriptorSetLayouts() {
+void createDescriptorSetLayouts(void) {
   // Define a descriptor set layout for the texture.
   VkDescriptorSetLayoutBinding layoutBinding = {0};
   layoutBinding.binding = 0;
@@ -1838,7 +1836,7 @@ static void createDescriptorSetLayoutsCtx(const CJellyVulkanContext* ctx) {
  * This function allocates a descriptor set from the descriptor pool using
  * the layout defined by textureDescriptorSetLayout.
  */
-void allocateTextureDescriptorSet() {
+void allocateTextureDescriptorSet(void) {
   VkDescriptorSetAllocateInfo allocInfo = {0};
   allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
   CJellyTexturedResources* tx4 = cur_tx();
@@ -1867,7 +1865,7 @@ static void allocateTextureDescriptorSetCtx(const CJellyVulkanContext* ctx) {
   }
 }
 
-void createTexturedGraphicsPipeline() {
+void createTexturedGraphicsPipeline(void) {
   // Load SPIR-V binaries and create shader modules for texturing.
   VkShaderModule vertShaderModule =
       createShaderModuleFromMemory(cur_device(), textured_vert_spv, textured_vert_spv_len);
@@ -2712,7 +2710,7 @@ void copyBufferToImage(
  * from the global 'verticesTextured' array. The VertexTextured structure
  * includes both position and texture coordinates.
  */
-void createTexturedVertexBuffer() {
+void createTexturedVertexBuffer(void) {
   // Vertices for a textured square.
   VertexTextured verticesTextured[] = {
       {{-0.5f, -0.5f}, {0.0f, 0.0f}}, {{0.5f, -0.5f}, {1.0f, 0.0f}},

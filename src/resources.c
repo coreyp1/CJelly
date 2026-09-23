@@ -26,8 +26,6 @@
 #include <ghoti.io/cjelly/engine_internal.h>
 #include <ghoti.io/cjelly/resource_helpers_internal.h>
 
-static inline cj_handle_t make_handle_from_pair(uint32_t idx, uint32_t gen) { cj_handle_t out; out.idx = idx; out.gen = gen; return out; }
-
 CJ_API cj_handle_t cj_texture_create(cj_engine_t* e, const cj_texture_desc_t* d) {
   if (!e || !d) {
     cj_handle_t null_handle = {0};
