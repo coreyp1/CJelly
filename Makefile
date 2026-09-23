@@ -321,7 +321,7 @@ TESTFLAGS := `PKG_CONFIG_PATH=$(PKG_CONFIG_LOOKUP_PATH) pkg-config --libs --cfla
 # coverage target does, because --coverage links the gcov runtime, whose
 # mangle_path check-symbols is right to reject in a shipping library and
 # wrong to reject in an instrumented one. Spelled as text's TEST_GATES is.
-TEST_GATES ?= check-symbols
+TEST_GATES ?= check-symbols check-stamps
 
 
 
@@ -602,7 +602,7 @@ $(APP_DIR)/main$(EXE_EXTENSION): \
 .PHONY: clean cloc docs docs-pdf coverage
 .PHONY: fuzz fuzz-clean test-asan test-ubsan
 # Release build commands
-.PHONY: all demo install test test-watch uninstall watch check-symbols
+.PHONY: all demo install test test-watch uninstall watch check-symbols check-stamps
 # Debug build commands
 .PHONY: all-debug install-debug test-debug test-watch-debug uninstall-debug watch-debug
 
@@ -1156,3 +1156,240 @@ $(FUZZ_FLAGS_STAMP): force-flags
 	@mkdir -p $(@D)
 	@printf '%s\n' '$(FUZZ_CC) $(FUZZ_CXX) $(FUZZ_SAN) $(FUZZ_LIB_FLAGS) $(FUZZ_BIN_FLAGS) $(INCLUDE) $(MODEL_LIBS) $(CUTIL_LIBS)' > $@.new
 	@cmp -s $@.new $@ 2>/dev/null && rm -f $@.new || mv -f $@.new $@
+
+####################################################################
+# Flags stamp check
+####################################################################
+#
+# An object records nothing about the flags it was built with. If the rule
+# that builds it does not depend on something that changes when those flags
+# change, a flag change rebuilds nothing, and the stale object links into
+# everything downstream while looking exactly like a correct incremental
+# build. The stamps above are that something. This checks that every rule
+# needing one names one, and names the right one.
+#
+# It reads the makefile *text* rather than asking make for its rule database,
+# because a rule inside a false `ifeq` is not in the database at all, and an
+# audit that cannot see a branch reports full coverage of the branches it
+# can. The `src/%.cpp` rule is that case here: cjelly has no C++ under src/
+# today, so nothing in the build reaches it, and it is still a rule waiting
+# for the first file that matches it.
+#
+# Three failures are possible and the gate separates them, because they want
+# different fixes:
+#
+#   BAD         a rule names no stamp, or names another tree's. A rule copied
+#               between trees keeps the old stamp and then misses exactly the
+#               changes it was there to catch. The tree's name is the prefix
+#               of both $(<TREE>_OBJ_DIR) and $(<TREE>_FLAGS_STAMP), so the
+#               pairing is derived, and a fourth tree needs no edit here.
+#   UNRECORDED  a rule names the right stamp but expands a variable the
+#               stamp's own printf does not mention. A stamp only moves when
+#               the text it prints changes, so a flag living only in an
+#               omitted variable still rebuilds nothing. Naming a stamp is
+#               half of the job; the other half is invisible.
+#   UNMODELLED  a compiler invocation this gate does not model. Pinned, so a
+#               new one has to be looked at rather than passing in silence.
+#
+# Recipe lines are joined across backslash continuations before their
+# variables are read. Without that, a wrapped recipe hides every variable
+# past the break - cjelly's fuzz harness link wraps, and $(MODEL_LIBS) and
+# $(CUTIL_LIBS) live on its second line. The control plants that case.
+define stamp-check-awk
+{ L[NR] = $$0 }
+function joinrec(i,   r, k) {
+  r = L[i]; k = i
+  while (k < NR && L[k] ~ /\\[ 	]*$$/) { k++; r = r " " L[k] }
+  RECEND = k
+  return r
+}
+function vars(s, out,   v) {
+  while (match(s, /\$$\([A-Za-z0-9_]+\)/)) {
+    v = substr(s, RSTART + 2, RLENGTH - 3)
+    out[v] = 1
+    s = substr(s, RSTART + RLENGTH)
+  }
+}
+BEGIN {
+  PREREQ_N = split("LIBOBJECTS ASAN_LIBOBJECTS FUZZ_OBJECTS", pa, " ")
+  for (x = 1; x <= PREREQ_N; x++) PREREQ[pa[x]] = 1
+}
+END {
+  total = 0; bad = 0; unmodelled = 0; unrecorded = 0; linked = 0
+  for (i = 1; i <= NR; i++) {
+    if (L[i] !~ /^\$$\([A-Z_]*FLAGS_STAMP\):/) continue
+    name = L[i]; sub(/^\$$\(/, "", name); sub(/\).*/, "", name)
+    for (j = i + 1; j <= NR && j < i + 8; j++) {
+      if (L[j] !~ /printf/) continue
+      delete tmp; vars(L[j], tmp)
+      for (v in tmp) if (v != "") SV[name "|" v] = 1
+      break
+    }
+  }
+  cur = ""; curline = 0; skipto = 0
+  for (i = 1; i <= NR; i++) {
+    if (i <= skipto) continue
+    if (L[i] !~ /^\t/) {
+      if (L[i] ~ /:/ && L[i] !~ /:=/ && L[i] !~ /^\043/ && L[i] !~ /^[ ]/) {
+        cur = L[i]; curline = i; m = i
+        while (m < NR && L[m] ~ /\\[ \t]*$$/) { m++; cur = cur " " L[m] }
+        skipto = m
+      }
+      continue
+    }
+    if (L[i] !~ /-c \$$</) {
+      if (L[i] ~ /^\t[ \t]*\043/) continue
+      if (L[i] ~ /-c \$$\$$</) continue
+      head = L[i]
+      sub(/^\t[ \t]*/, "", head)
+      sub(/^[-@]+[ \t]*/, "", head)
+      sub(/^if[ \t]+/, "", head)
+      sub(/^[-@]+[ \t]*/, "", head)
+      if (head !~ /^\$$\$$?\([A-Z_]*(CC|CXX)\)[ \t]/ &&
+          head !~ /^(gcc|g\+\+|clang|clang\+\+)[ \t]/) continue
+      hdr = cur; j = curline
+      if (hdr !~ /FLAGS_STAMP/) { unmodelled++; continue }
+      linked++
+      match(hdr, /\$$\([A-Z_]*FLAGS_STAMP\)/)
+      sn = substr(hdr, RSTART + 2, RLENGTH - 3)
+      rec = joinrec(i); skipto = RECEND
+      delete rv; vars(rec, rv)
+      for (v in rv) {
+        if (v == "" || v in PREREQ) continue
+        if (!((sn "|" v) in SV)) {
+          unrecorded++
+          printf "  %s:%d: link recipe expands $$(%s), which %s does not record\n", FILENAME, i, v, sn
+        }
+      }
+      continue
+    }
+    total++
+    hdr = cur; j = curline
+    if (hdr !~ /FLAGS_STAMP/) {
+      bad++
+      printf "  %s:%d: compiles with no flags stamp: %s\n", FILENAME, j, hdr
+      continue
+    }
+    tgt = hdr; sub(/:.*/, "", tgt)
+    if (tgt ~ /OBJ_DIR/) {
+      tree = tgt; sub(/.*\$$\(/, "", tree); sub(/OBJ_DIR.*/, "", tree)
+      want = "$$(" tree "FLAGS_STAMP)"
+      if (index(hdr, want) == 0) {
+        bad++
+        printf "  %s:%d: stamped for another tree, wants %s: %s\n", FILENAME, j, want, hdr
+        continue
+      }
+    }
+    match(hdr, /\$$\([A-Z_]*FLAGS_STAMP\)/)
+    sn = substr(hdr, RSTART + 2, RLENGTH - 3)
+    rec = joinrec(i); skipto = RECEND
+    delete rv; vars(rec, rv)
+    for (v in rv) {
+      if (v == "" || v in PREREQ) continue
+      if (!((sn "|" v) in SV)) {
+        unrecorded++
+        printf "  %s:%d: recipe expands $$(%s), which %s does not record\n", FILENAME, i, v, sn
+      }
+    }
+  }
+  printf "TOTAL %d BAD %d UNMODELLED %d UNRECORDED %d LINKED %d PREREQ %d\n", total, bad, unmodelled, unrecorded, linked, PREREQ_N
+}
+endef
+
+STAMP_CHECK_MAKEFILE := $(firstword $(MAKEFILE_LIST))
+
+# What this gate does not model, pinned so the set cannot grow in silence.
+# Zero today: every compiler invocation outside the compile population is a
+# link rule that names its own tree's stamp.
+STAMP_UNMODELLED_EXPECTED := 0
+
+# Variable names the link sweep skips because the rule already lists them as
+# file prerequisites, where mtime is the real check. Pinned so the list
+# cannot grow into an excuse. $(CJELLYLIBRARY) is deliberately not in it: it
+# carries $(IMAGE_LIBS) $(MODEL_LIBS) $(CUTIL_LIBS) as well as the archive
+# path, and those are flags that no file's mtime covers.
+STAMP_LINK_PREREQ_EXPECTED := 3
+
+check-stamps: ## Fail if a compile or link rule has no flags stamp, or the wrong one
+	@mkdir -p $(BUILD_DIR)
+	$(file >$(BUILD_DIR)/stamp_check.awk,$(stamp-check-awk))
+# The control runs first, and is a planted set rather than a single bad rule:
+# a sweep that has stopped matching recipes reports nothing wrong, which is
+# indistinguishable from a clean makefile. So require it to find the planted
+# faults and only those. The wrapped link rule is the arm for continuation
+# joining; without that, the rule reads as clean, which is how this class of
+# checker has already been wrong in two other libraries.
+	@printf '%s\n\t%s\n%s\n\t%s\n%s\n\t%s\n%s\n\t%s\n%s\n\t%s\n%s\n\t%s\n%s\n\t%s\n%s\n\t%s\n\t\t%s\n' \
+		'$$(FLAGS_STAMP): force-flags' \
+		"@printf '%s' '\$$(CFLAGS) \$$(INCLUDE) \$$(LDFLAGS)' > \$$@.new" \
+		'$$(OBJ_DIR)/%.o: src/%.c $$(FLAGS_STAMP)' \
+		'cc $$(CFLAGS) $$(INCLUDE) -c $$< -o $$@' \
+		'$$(OBJ_DIR)/planted_nostamp.o: src/planted.c' \
+		'cc $$(CFLAGS) $$(INCLUDE) -c $$< -o $$@' \
+		'$$(OBJ_DIR)/planted_unrecorded.o: src/planted2.c $$(FLAGS_STAMP)' \
+		'cc $$(CFLAGS) $$(PLANTED_UNRECORDED) $$(INCLUDE) -c $$< -o $$@' \
+		'$$(APP_DIR)/planted_link_ok: planted.o $$(FLAGS_STAMP)' \
+		'g++ $$(LDFLAGS) -o $$@ planted.o' \
+		'$$(APP_DIR)/planted_link_nostamp: planted.o' \
+		'g++ $$(LDFLAGS) -o $$@ planted.o' \
+		'$$(APP_DIR)/planted_link_unrec: planted.o $$(FLAGS_STAMP)' \
+		'g++ $$(LDFLAGS) $$(PLANTED_LINK_UNRECORDED) -o $$@ planted.o' \
+		'$$(APP_DIR)/planted_link_wrapped: planted.o $$(FLAGS_STAMP)' \
+		'g++ $$(LDFLAGS) \\' \
+		'$$(PLANTED_WRAPPED) -o $$@ planted.o' \
+		> $(BUILD_DIR)/stamp_control.mk
+# PREREQ is stripped from the control's line rather than pinned in it. The
+# same sweep produces both numbers, so a control that checked PREREQ too
+# would fail first on any edit to the skip list and the arm below could never
+# be seen to fire - coverage that cannot be demonstrated is not coverage.
+	@ctl=$$(awk -f $(BUILD_DIR)/stamp_check.awk \
+			$(BUILD_DIR)/stamp_control.mk | tail -1 | sed 's/ PREREQ [0-9]*$$//'); \
+	want="TOTAL 3 BAD 1 UNMODELLED 1 UNRECORDED 3 LINKED 3"; \
+	if [ "$$ctl" != "$$want" ]; then \
+		printf "\033[0;31mcheck-stamps: the control says '%s', not '%s' - the sweep is not reading rules the way it thinks it is, so a clean result from it means nothing.\033[0m\n" "$$ctl" "$$want" >&2; \
+		exit 1; \
+	fi
+# Two independent counts of the same population. If the sweep silently stops
+# matching, its total falls away from grep's and the gate fails rather than
+# passing on an empty sweep. Comment lines are dropped first, because the
+# prose above names the marker it looks for and would be counted as a compile
+# recipe itself.
+	@want=$$(grep -v '^#' $(STAMP_CHECK_MAKEFILE) | grep -cF -- '-c $$<'); \
+	out=$$(awk -f $(BUILD_DIR)/stamp_check.awk $(STAMP_CHECK_MAKEFILE)); \
+	got=$$(printf '%s\n' "$$out" | sed -n 's/^TOTAL \([0-9]*\) .*/\1/p'); \
+	bad=$$(printf '%s\n' "$$out" | sed -n 's/^TOTAL [0-9]* BAD \([0-9]*\) .*/\1/p'); \
+	unmodelled=$$(printf '%s\n' "$$out" | sed -n 's/.* UNMODELLED \([0-9]*\) .*/\1/p'); \
+	unrecorded=$$(printf '%s\n' "$$out" | sed -n 's/.* UNRECORDED \([0-9]*\) .*/\1/p'); \
+	linked=$$(printf '%s\n' "$$out" | sed -n 's/.* LINKED \([0-9]*\) .*/\1/p'); \
+	prereq=$$(printf '%s\n' "$$out" | sed -n 's/.* PREREQ \([0-9]*\)$$/\1/p'); \
+	if [ "$$got" != "$$want" ]; then \
+		printf "\033[0;31mcheck-stamps: the sweep saw %s compile recipes and grep found %s. One of them is wrong, so neither count can be trusted.\033[0m\n" "$$got" "$$want" >&2; \
+		exit 1; \
+	fi; \
+	if [ "$$unmodelled" != "$(STAMP_UNMODELLED_EXPECTED)" ]; then \
+		printf "\033[0;31mcheck-stamps: %s compiler invocations are outside what this gate models, not the %s it is pinned to. A rule that compiles or links without naming a stamp goes stale on its own unless something it depends on is stamped, and this gate does not check that - so the change needs a look.\033[0m\n" \
+			"$$unmodelled" "$(STAMP_UNMODELLED_EXPECTED)" >&2; \
+		exit 1; \
+	fi; \
+	if [ "$$prereq" != "$(STAMP_LINK_PREREQ_EXPECTED)" ]; then \
+		printf "\033[0;31mcheck-stamps: the link sweep ignores %s variable names, not the %s it is pinned to. A name is skipped only because the rule already lists it as a file prerequisite, so mtime covers it; a name added for any other reason silences the check for that variable.\033[0m\n" \
+			"$$prereq" "$(STAMP_LINK_PREREQ_EXPECTED)" >&2; \
+		exit 1; \
+	fi; \
+	if [ "$$unrecorded" != "0" ]; then \
+		printf "\033[0;31m\n### %s recipes expand a variable their stamp does not record ###\033[0m\n" "$$unrecorded" >&2; \
+		printf '%s\n' "$$out" | grep 'does not record' >&2; \
+		printf "\nNaming the right stamp is not enough: a stamp only moves when the\n" >&2; \
+		printf "variables inside its own printf change. A flag that lives only in a\n" >&2; \
+		printf "variable the stamp omits rebuilds nothing at all.\n" >&2; \
+		exit 1; \
+	fi; \
+	if [ "$$bad" != "0" ]; then \
+		printf "\033[0;31m\n### %s rules carry the wrong flags stamp, or none ###\033[0m\n" "$$bad" >&2; \
+		printf '%s\n' "$$out" | grep -v '^TOTAL ' >&2; \
+		printf "\nAn object built without its tree's stamp as a prerequisite is never\n" >&2; \
+		printf "rebuilt when the flags change, and it links into everything\n" >&2; \
+		printf "downstream of it.\n" >&2; \
+		exit 1; \
+	fi; \
+	printf "\033[0;32mAll %s compile rules carry the flags stamp for their own tree and %s link rules carry theirs, every variable either recorded or a file prerequisite; %s compiler invocations are outside the model, as pinned.\033[0m\n" "$$got" "$$linked" "$$unmodelled"
