@@ -515,3 +515,17 @@ const char* cj_plat_surface_extension_name(void) {
 
 bool cj_plat_open_display(void) { return cj_x11_open_display(); }
 void cj_plat_close_display(void) { cj_x11_close_display(); }
+
+uint64_t cj_plat_now_us(void) {
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (uint64_t)ts.tv_sec * 1000000ULL + (uint64_t)ts.tv_nsec / 1000ULL;
+}
+
+void cj_plat_sleep_ms(uint32_t ms) {
+  if (ms == 0) return;
+  struct timespec req;
+  req.tv_sec = (time_t)(ms / 1000u);
+  req.tv_nsec = (long)((ms % 1000u) * 1000000u);
+  nanosleep(&req, NULL);
+}

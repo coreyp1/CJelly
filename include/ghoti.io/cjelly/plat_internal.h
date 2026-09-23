@@ -56,6 +56,17 @@
  *  clock adjustment must not make an animation jump or run backwards. */
 uint64_t cj_plat_now_ms(void);
 
+/** Microseconds from the same monotonic clock as cj_plat_now_ms.
+ *
+ *  Both exist because each platform computes them from its own source with
+ *  its own arithmetic, and deriving one from the other would change the
+ *  rounding on a clock the frame pacer reads.
+ */
+uint64_t cj_plat_now_us(void);
+
+/** Sleep for approximately this many milliseconds. Returns at once for 0. */
+void cj_plat_sleep_ms(uint32_t ms);
+
 /** Route further mouse events to this window until released.
  *  @return true if the window system took the capture.
  */

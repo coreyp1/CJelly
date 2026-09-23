@@ -912,3 +912,19 @@ bool cj_plat_open_display(void) {
 
 void cj_plat_close_display(void) {
 }
+
+uint64_t cj_plat_now_us(void) {
+  LARGE_INTEGER frequency, counter;
+  QueryPerformanceFrequency(&frequency);
+  QueryPerformanceCounter(&counter);
+  /* TODO(windows): counter.QuadPart * 1000000 overflows a signed 64-bit
+   * value once the machine has been up long enough - about 106 days at a
+   * 10 MHz performance counter. Pre-existing; it wants the divide split
+   * into whole seconds plus remainder. */
+  return (uint64_t)((counter.QuadPart * 1000000ULL) / frequency.QuadPart);
+}
+
+void cj_plat_sleep_ms(uint32_t ms) {
+  if (ms == 0) return;
+  Sleep((DWORD)ms);
+}

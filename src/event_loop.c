@@ -20,12 +20,7 @@
 
 /* CJelly callback-based event loop implementation */
 
-#ifndef _WIN32
-#ifndef _POSIX_C_SOURCE
-#define _POSIX_C_SOURCE 199309L
-#endif
-#endif
-
+#include <ghoti.io/cjelly/plat_internal.h>
 #include <ghoti.io/cjelly/runtime.h>
 #include <ghoti.io/cjelly/cj_window.h>
 #include <ghoti.io/cjelly/application.h>
@@ -37,24 +32,9 @@
 #include <stdio.h>
 #include <limits.h>
 
-#ifdef _WIN32
-#include <windows.h>
-#else
-#include <time.h>
-#endif
-
 /* High-resolution timer helpers - returns microseconds for better precision */
 static uint64_t cj_get_time_us(void) {
-#ifdef _WIN32
-  LARGE_INTEGER frequency, counter;
-  QueryPerformanceFrequency(&frequency);
-  QueryPerformanceCounter(&counter);
-  return (uint64_t)((counter.QuadPart * 1000000ULL) / frequency.QuadPart);
-#else
-  struct timespec ts;
-  clock_gettime(CLOCK_MONOTONIC, &ts);
-  return (uint64_t)ts.tv_sec * 1000000ULL + ts.tv_nsec / 1000ULL;
-#endif
+  return cj_plat_now_us();
 }
 
 /* Convenience wrapper for milliseconds (for compatibility) */
@@ -66,15 +46,7 @@ static uint64_t cj_get_time_ms(void) {
 static volatile int g_cj_run_stop_requested = 0;
 
 static void cj_sleep_ms(uint32_t ms) {
-  if (ms == 0) return;
-#ifdef _WIN32
-  Sleep((DWORD)ms);
-#else
-  struct timespec req;
-  req.tv_sec = (time_t)(ms / 1000u);
-  req.tv_nsec = (long)((ms % 1000u) * 1000000u);
-  nanosleep(&req, NULL);
-#endif
+  cj_plat_sleep_ms(ms);
 }
 
 CJ_API void cj_request_stop(cj_engine_t* engine) {
