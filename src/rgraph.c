@@ -26,6 +26,7 @@
 #include <math.h>
 
 #include <ghoti.io/cjelly/macros.h>
+#include <ghoti.io/cjelly/cj_log.h>
 #include <ghoti.io/cjelly/cj_rgraph.h>
 #include <ghoti.io/cjelly/cj_engine.h>
 #include <ghoti.io/cjelly/cj_resources.h>
@@ -159,13 +160,13 @@ static void destroy_intermediate_render_target(cj_rgraph_t* graph, cj_rgraph_blu
 CJ_API cj_rgraph_t* cj_rgraph_create(cj_engine_t* engine, const cj_rgraph_desc_t* desc) {
     (void)desc; /* Currently unused, reserved for future use */
     if (!engine) {
-        fprintf(stderr, "cj_rgraph_create: engine is NULL\n");
+        CJ_ERRORF("cj_rgraph_create: engine is NULL");
         return NULL;
     }
 
     cj_rgraph_t* graph = (cj_rgraph_t*)malloc(sizeof(cj_rgraph_t));
     if (!graph) {
-        fprintf(stderr, "cj_rgraph_create: failed to allocate graph\n");
+        CJ_ERRORF("cj_rgraph_create: failed to allocate graph");
         return NULL;
     }
 
@@ -180,7 +181,7 @@ CJ_API cj_rgraph_t* cj_rgraph_create(cj_engine_t* engine, const cj_rgraph_desc_t
     graph->params = (cj_rgraph_param_t*)malloc(sizeof(cj_rgraph_param_t) * graph->max_params);
 
     if (!graph->bindings || !graph->params) {
-        fprintf(stderr, "cj_rgraph_create: failed to allocate binding/param arrays\n");
+        CJ_ERRORF("cj_rgraph_create: failed to allocate binding/param arrays");
         if (graph->bindings) free(graph->bindings);
         if (graph->params) free(graph->params);
         free(graph);
@@ -249,7 +250,7 @@ CJ_API cj_result_t cj_rgraph_bind_texture(cj_rgraph_t* graph, cj_str_t name, cj_
     cj_rgraph_binding_t* binding = find_binding(graph, name.ptr);
     if (!binding) {
         if (graph->binding_count >= graph->max_bindings) {
-            fprintf(stderr, "cj_rgraph_bind_texture: too many bindings\n");
+            CJ_ERRORF("cj_rgraph_bind_texture: too many bindings");
             return CJ_E_OUT_OF_MEMORY;
         }
 
@@ -275,7 +276,7 @@ CJ_API cj_result_t cj_rgraph_set_i32(cj_rgraph_t* graph, cj_str_t name, int32_t 
     cj_rgraph_param_t* param = find_param(graph, name.ptr);
     if (!param) {
         if (graph->param_count >= graph->max_params) {
-            fprintf(stderr, "cj_rgraph_set_i32: too many parameters\n");
+            CJ_ERRORF("cj_rgraph_set_i32: too many parameters");
             return CJ_E_OUT_OF_MEMORY;
         }
 
@@ -295,7 +296,7 @@ CJ_API cj_result_t cj_rgraph_add_textured_node(cj_rgraph_t* graph, const char* n
 
     cj_rgraph_node_t* node = (cj_rgraph_node_t*)malloc(sizeof(cj_rgraph_node_t));
     if (!node) {
-        fprintf(stderr, "cj_rgraph_add_textured_node: failed to allocate node\n");
+        CJ_ERRORF("cj_rgraph_add_textured_node: failed to allocate node");
         return CJ_E_OUT_OF_MEMORY;
     }
 
@@ -321,7 +322,7 @@ CJ_API cj_result_t cj_rgraph_add_color_node(cj_rgraph_t* graph, const char* name
 
     cj_rgraph_node_t* node = (cj_rgraph_node_t*)malloc(sizeof(cj_rgraph_node_t));
     if (!node) {
-        fprintf(stderr, "cj_rgraph_add_color_node: failed to allocate node\n");
+        CJ_ERRORF("cj_rgraph_add_color_node: failed to allocate node");
         return CJ_E_OUT_OF_MEMORY;
     }
 
@@ -351,15 +352,15 @@ CJ_API cj_result_t cj_rgraph_add_model_node(cj_rgraph_t* graph, const char* name
     CJellyModelMeshError mesh_err = cjelly_model_mesh_load(
         obj_path, cj_engine_allocator(graph->engine), &mesh);
     if (mesh_err != CJELLY_MODEL_MESH_SUCCESS) {
-        fprintf(stderr, "cj_rgraph_add_model_node: %s: %s\n", obj_path,
+        CJ_ERRORF("cj_rgraph_add_model_node: %s: %s", obj_path,
                 cjelly_model_mesh_strerror(mesh_err));
         return mesh_err == CJELLY_MODEL_MESH_ERR_OUT_OF_MEMORY
             ? CJ_E_OUT_OF_MEMORY
             : CJ_E_INVALID_ARGUMENT;
     }
     if (mesh->dropped_faces) {
-        fprintf(stderr, "cj_rgraph_add_model_node: %s: skipped %u face(s) "
-                "naming a vertex that does not exist\n",
+        CJ_WARNF("cj_rgraph_add_model_node: %s: skipped %u face(s) "
+                "naming a vertex that does not exist",
                 obj_path, mesh->dropped_faces);
     }
 
@@ -455,7 +456,7 @@ CJ_API cj_result_t cj_rgraph_execute(cj_rgraph_t* graph, VkCommandBuffer cmd, Vk
                 break;
 
             default:
-                fprintf(stderr, "cj_rgraph_execute: unknown node type %u\n", node->type);
+                CJ_ERRORF("cj_rgraph_execute: unknown node type %u", node->type);
                 return CJ_E_UNKNOWN;
         }
 
@@ -485,7 +486,7 @@ static int create_blur_node(cj_rgraph_t* graph, cj_rgraph_node_t* node) {
     layout_info.pBindings = &layout_binding;
 
     if (vkCreateDescriptorSetLayout(device, &layout_info, NULL, &blur->desc_layout) != VK_SUCCESS) {
-        fprintf(stderr, "create_blur_node: failed to create descriptor set layout\n");
+        CJ_ERRORF("create_blur_node: failed to create descriptor set layout");
         return 0;
     }
 
@@ -501,7 +502,7 @@ static int create_blur_node(cj_rgraph_t* graph, cj_rgraph_node_t* node) {
     pool_info.maxSets = 1;
 
     if (vkCreateDescriptorPool(device, &pool_info, NULL, &blur->desc_pool) != VK_SUCCESS) {
-        fprintf(stderr, "create_blur_node: failed to create descriptor pool\n");
+        CJ_ERRORF("create_blur_node: failed to create descriptor pool");
         vkDestroyDescriptorSetLayout(device, blur->desc_layout, NULL);
         return 0;
     }
@@ -514,7 +515,7 @@ static int create_blur_node(cj_rgraph_t* graph, cj_rgraph_node_t* node) {
     alloc_info.pSetLayouts = &blur->desc_layout;
 
     if (vkAllocateDescriptorSets(device, &alloc_info, &blur->desc_set) != VK_SUCCESS) {
-        fprintf(stderr, "create_blur_node: failed to allocate descriptor set\n");
+        CJ_ERRORF("create_blur_node: failed to allocate descriptor set");
         vkDestroyDescriptorPool(device, blur->desc_pool, NULL);
         vkDestroyDescriptorSetLayout(device, blur->desc_layout, NULL);
         return 0;
@@ -523,7 +524,7 @@ static int create_blur_node(cj_rgraph_t* graph, cj_rgraph_node_t* node) {
     // Use the fish texture's descriptor set layout for compatibility
     CJellyTexturedResources* tx = cj_engine_textured(graph->engine);
     if (!tx || tx->descriptorSetLayout == VK_NULL_HANDLE) {
-        fprintf(stderr, "create_blur_node: fish texture not available\n");
+        CJ_ERRORF("create_blur_node: fish texture not available");
         vkDestroyDescriptorPool(device, blur->desc_pool, NULL);
         vkDestroyDescriptorSetLayout(device, blur->desc_layout, NULL);
         return 0;
@@ -543,7 +544,7 @@ static int create_blur_node(cj_rgraph_t* graph, cj_rgraph_node_t* node) {
     pli.pPushConstantRanges = &push_range;
 
     if (vkCreatePipelineLayout(device, &pli, NULL, &blur->pipeline_layout) != VK_SUCCESS) {
-        fprintf(stderr, "create_blur_node: failed to create pipeline layout\n");
+        CJ_ERRORF("create_blur_node: failed to create pipeline layout");
         vkDestroyDescriptorPool(device, blur->desc_pool, NULL);
         vkDestroyDescriptorSetLayout(device, blur->desc_layout, NULL);
         return 0;
@@ -565,7 +566,7 @@ static int create_blur_node(cj_rgraph_t* graph, cj_rgraph_node_t* node) {
     buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
     if (vkCreateBuffer(device, &buffer_info, NULL, &blur->vertex_buffer) != VK_SUCCESS) {
-        fprintf(stderr, "create_blur_node: failed to create vertex buffer\n");
+        CJ_ERRORF("create_blur_node: failed to create vertex buffer");
         vkDestroyPipelineLayout(device, blur->pipeline_layout, NULL);
         vkDestroyDescriptorPool(device, blur->desc_pool, NULL);
         vkDestroyDescriptorSetLayout(device, blur->desc_layout, NULL);
@@ -591,7 +592,7 @@ static int create_blur_node(cj_rgraph_t* graph, cj_rgraph_node_t* node) {
     }
 
     if (memory_type_index == UINT32_MAX) {
-        fprintf(stderr, "create_blur_node: failed to find suitable memory type\n");
+        CJ_ERRORF("create_blur_node: failed to find suitable memory type");
         vkDestroyBuffer(device, blur->vertex_buffer, NULL);
         vkDestroyPipelineLayout(device, blur->pipeline_layout, NULL);
         vkDestroyDescriptorPool(device, blur->desc_pool, NULL);
@@ -605,7 +606,7 @@ static int create_blur_node(cj_rgraph_t* graph, cj_rgraph_node_t* node) {
     alloc_info_mem.memoryTypeIndex = memory_type_index;
 
     if (vkAllocateMemory(device, &alloc_info_mem, NULL, &blur->vertex_buffer_memory) != VK_SUCCESS) {
-        fprintf(stderr, "create_blur_node: failed to allocate vertex buffer memory\n");
+        CJ_ERRORF("create_blur_node: failed to allocate vertex buffer memory");
         vkDestroyBuffer(device, blur->vertex_buffer, NULL);
         vkDestroyPipelineLayout(device, blur->pipeline_layout, NULL);
         vkDestroyDescriptorPool(device, blur->desc_pool, NULL);
@@ -628,9 +629,9 @@ static int create_blur_node(cj_rgraph_t* graph, cj_rgraph_node_t* node) {
     vert_info.pCode = (const uint32_t*)blur_vert_spv;
 
     VkShaderModule vert_shader = VK_NULL_HANDLE;
-    printf("create_blur_node: Creating vertex shader module (size: %u)\n", blur_vert_spv_len);
+    CJ_DEBUGF("create_blur_node: Creating vertex shader module (size: %u)", blur_vert_spv_len);
     if (vkCreateShaderModule(device, &vert_info, NULL, &vert_shader) != VK_SUCCESS) {
-        fprintf(stderr, "create_blur_node: failed to create vertex shader module\n");
+        CJ_ERRORF("create_blur_node: failed to create vertex shader module");
         vkDestroyBuffer(device, blur->vertex_buffer, NULL);
         vkFreeMemory(device, blur->vertex_buffer_memory, NULL);
         vkDestroyPipelineLayout(device, blur->pipeline_layout, NULL);
@@ -638,7 +639,7 @@ static int create_blur_node(cj_rgraph_t* graph, cj_rgraph_node_t* node) {
         vkDestroyDescriptorSetLayout(device, blur->desc_layout, NULL);
         return 0;
     }
-    printf("create_blur_node: Vertex shader module created successfully\n");
+    CJ_DEBUGF("create_blur_node: Vertex shader module created successfully");
 
     VkShaderModuleCreateInfo frag_info = {0};
     frag_info.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
@@ -646,9 +647,9 @@ static int create_blur_node(cj_rgraph_t* graph, cj_rgraph_node_t* node) {
     frag_info.pCode = (const uint32_t*)blur_frag_spv;
 
     VkShaderModule frag_shader = VK_NULL_HANDLE;
-    printf("create_blur_node: Creating fragment shader module (size: %u)\n", blur_frag_spv_len);
+    CJ_DEBUGF("create_blur_node: Creating fragment shader module (size: %u)", blur_frag_spv_len);
     if (vkCreateShaderModule(device, &frag_info, NULL, &frag_shader) != VK_SUCCESS) {
-        fprintf(stderr, "create_blur_node: failed to create fragment shader module\n");
+        CJ_ERRORF("create_blur_node: failed to create fragment shader module");
         vkDestroyShaderModule(device, vert_shader, NULL);
         vkDestroyBuffer(device, blur->vertex_buffer, NULL);
         vkFreeMemory(device, blur->vertex_buffer_memory, NULL);
@@ -657,7 +658,7 @@ static int create_blur_node(cj_rgraph_t* graph, cj_rgraph_node_t* node) {
         vkDestroyDescriptorSetLayout(device, blur->desc_layout, NULL);
         return 0;
     }
-    printf("create_blur_node: Fragment shader module created successfully\n");
+    CJ_DEBUGF("create_blur_node: Fragment shader module created successfully");
 
     // Create graphics pipeline (simplified - same for both horizontal and vertical for now)
     VkPipelineShaderStageCreateInfo stages[2] = {0};
@@ -723,10 +724,10 @@ static int create_blur_node(cj_rgraph_t* graph, cj_rgraph_node_t* node) {
     gp.pVertexInputState = &vi; gp.pInputAssemblyState = &ia; gp.pViewportState = &vps; gp.pRasterizationState = &rs; gp.pMultisampleState = &ms; gp.pColorBlendState = &cb; gp.pDynamicState = &dynamic_state;
     gp.layout = blur->pipeline_layout; gp.renderPass = render_pass; gp.subpass = 0;
 
-    printf("create_blur_node: Creating graphics pipeline...\n");
+    CJ_DEBUGF("create_blur_node: Creating graphics pipeline...");
     VkResult pipeline_result = vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &gp, NULL, &blur->pipeline_horizontal);
     if (pipeline_result != VK_SUCCESS) {
-        fprintf(stderr, "create_blur_node: failed to create graphics pipeline (result: %d)\n", pipeline_result);
+        CJ_ERRORF("create_blur_node: failed to create graphics pipeline (result: %d)", pipeline_result);
         vkDestroyShaderModule(device, vert_shader, NULL);
         vkDestroyShaderModule(device, frag_shader, NULL);
         vkDestroyBuffer(device, blur->vertex_buffer, NULL);
@@ -736,7 +737,7 @@ static int create_blur_node(cj_rgraph_t* graph, cj_rgraph_node_t* node) {
         vkDestroyDescriptorSetLayout(device, blur->desc_layout, NULL);
         return 0;
     }
-    printf("create_blur_node: Graphics pipeline created successfully\n");
+    CJ_DEBUGF("create_blur_node: Graphics pipeline created successfully");
 
     // For now, use the same pipeline for both horizontal and vertical
     blur->pipeline_vertical = blur->pipeline_horizontal;
@@ -881,7 +882,7 @@ static int create_textured_node(cj_rgraph_t* graph, cj_rgraph_node_t* node) {
     layout_info.pBindings = &layout_binding;
 
     if (vkCreateDescriptorSetLayout(device, &layout_info, NULL, &textured->desc_layout) != VK_SUCCESS) {
-        fprintf(stderr, "create_textured_node: failed to create descriptor set layout\n");
+        CJ_ERRORF("create_textured_node: failed to create descriptor set layout");
         return 0;
     }
 
@@ -897,7 +898,7 @@ static int create_textured_node(cj_rgraph_t* graph, cj_rgraph_node_t* node) {
     pool_info.maxSets = 1;
 
     if (vkCreateDescriptorPool(device, &pool_info, NULL, &textured->desc_pool) != VK_SUCCESS) {
-        fprintf(stderr, "create_textured_node: failed to create descriptor pool\n");
+        CJ_ERRORF("create_textured_node: failed to create descriptor pool");
         vkDestroyDescriptorSetLayout(device, textured->desc_layout, NULL);
         return 0;
     }
@@ -910,7 +911,7 @@ static int create_textured_node(cj_rgraph_t* graph, cj_rgraph_node_t* node) {
     alloc_info.pSetLayouts = &textured->desc_layout;
 
     if (vkAllocateDescriptorSets(device, &alloc_info, &textured->desc_set) != VK_SUCCESS) {
-        fprintf(stderr, "create_textured_node: failed to allocate descriptor set\n");
+        CJ_ERRORF("create_textured_node: failed to allocate descriptor set");
         vkDestroyDescriptorPool(device, textured->desc_pool, NULL);
         vkDestroyDescriptorSetLayout(device, textured->desc_layout, NULL);
         return 0;
@@ -923,7 +924,7 @@ static int create_textured_node(cj_rgraph_t* graph, cj_rgraph_node_t* node) {
     pli.pSetLayouts = &textured->desc_layout;
 
     if (vkCreatePipelineLayout(device, &pli, NULL, &textured->pipeline_layout) != VK_SUCCESS) {
-        fprintf(stderr, "create_textured_node: failed to create pipeline layout\n");
+        CJ_ERRORF("create_textured_node: failed to create pipeline layout");
         vkDestroyDescriptorPool(device, textured->desc_pool, NULL);
         vkDestroyDescriptorSetLayout(device, textured->desc_layout, NULL);
         return 0;
@@ -949,7 +950,7 @@ static int create_textured_node(cj_rgraph_t* graph, cj_rgraph_node_t* node) {
     buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
     if (vkCreateBuffer(device, &buffer_info, NULL, &textured->vertex_buffer) != VK_SUCCESS) {
-        fprintf(stderr, "create_textured_node: failed to create vertex buffer\n");
+        CJ_ERRORF("create_textured_node: failed to create vertex buffer");
         vkDestroyPipelineLayout(device, textured->pipeline_layout, NULL);
         vkDestroyDescriptorPool(device, textured->desc_pool, NULL);
         vkDestroyDescriptorSetLayout(device, textured->desc_layout, NULL);
@@ -974,7 +975,7 @@ static int create_textured_node(cj_rgraph_t* graph, cj_rgraph_node_t* node) {
     }
 
     if (memory_type_index == UINT32_MAX) {
-        fprintf(stderr, "create_textured_node: failed to find suitable memory type\n");
+        CJ_ERRORF("create_textured_node: failed to find suitable memory type");
         vkDestroyBuffer(device, textured->vertex_buffer, NULL);
         vkDestroyPipelineLayout(device, textured->pipeline_layout, NULL);
         vkDestroyDescriptorPool(device, textured->desc_pool, NULL);
@@ -988,7 +989,7 @@ static int create_textured_node(cj_rgraph_t* graph, cj_rgraph_node_t* node) {
     alloc_info_mem.memoryTypeIndex = memory_type_index;
 
     if (vkAllocateMemory(device, &alloc_info_mem, NULL, &textured->vertex_buffer_memory) != VK_SUCCESS) {
-        fprintf(stderr, "create_textured_node: failed to allocate vertex buffer memory\n");
+        CJ_ERRORF("create_textured_node: failed to allocate vertex buffer memory");
         vkDestroyBuffer(device, textured->vertex_buffer, NULL);
         vkDestroyPipelineLayout(device, textured->pipeline_layout, NULL);
         vkDestroyDescriptorPool(device, textured->desc_pool, NULL);
@@ -1016,7 +1017,7 @@ static int create_textured_node(cj_rgraph_t* graph, cj_rgraph_node_t* node) {
 
     VkShaderModule vert_shader = VK_NULL_HANDLE;
     if (vkCreateShaderModule(device, &vert_info, NULL, &vert_shader) != VK_SUCCESS) {
-        fprintf(stderr, "create_textured_node: failed to create vertex shader module\n");
+        CJ_ERRORF("create_textured_node: failed to create vertex shader module");
         vkDestroyBuffer(device, textured->vertex_buffer, NULL);
         vkFreeMemory(device, textured->vertex_buffer_memory, NULL);
         vkDestroyPipelineLayout(device, textured->pipeline_layout, NULL);
@@ -1028,7 +1029,7 @@ static int create_textured_node(cj_rgraph_t* graph, cj_rgraph_node_t* node) {
     // Get textured pipeline from engine's textured resources
     CJellyTexturedResources* tx = cj_engine_textured(graph->engine);
     if (!tx || tx->pipeline == VK_NULL_HANDLE) {
-        fprintf(stderr, "create_textured_node: failed to get engine textured pipeline\n");
+        CJ_ERRORF("create_textured_node: failed to get engine textured pipeline");
         vkDestroyShaderModule(device, vert_shader, NULL);
         vkDestroyBuffer(device, textured->vertex_buffer, NULL);
         vkFreeMemory(device, textured->vertex_buffer_memory, NULL);
@@ -1148,7 +1149,7 @@ static int create_color_node(cj_rgraph_t* graph, cj_rgraph_node_t* node) {
     // Get engine's color pipeline resources
     CJellyBindlessResources* engine_cp = cj_engine_color_pipeline(graph->engine);
     if (!engine_cp) {
-        fprintf(stderr, "create_color_node: failed to get engine color pipeline\n");
+        CJ_ERRORF("create_color_node: failed to get engine color pipeline");
         return 0;
     }
 
@@ -1172,7 +1173,7 @@ static int create_color_node(cj_rgraph_t* graph, cj_rgraph_node_t* node) {
     buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
     if (vkCreateBuffer(device, &buffer_info, NULL, &color->vertex_buffer) != VK_SUCCESS) {
-        fprintf(stderr, "create_color_node: failed to create vertex buffer\n");
+        CJ_ERRORF("create_color_node: failed to create vertex buffer");
         return 0;
     }
 
@@ -1194,7 +1195,7 @@ static int create_color_node(cj_rgraph_t* graph, cj_rgraph_node_t* node) {
     }
 
     if (memory_type_index == UINT32_MAX) {
-        fprintf(stderr, "create_color_node: failed to find suitable memory type\n");
+        CJ_ERRORF("create_color_node: failed to find suitable memory type");
         vkDestroyBuffer(device, color->vertex_buffer, NULL);
         return 0;
     }
@@ -1205,7 +1206,7 @@ static int create_color_node(cj_rgraph_t* graph, cj_rgraph_node_t* node) {
     alloc_info.memoryTypeIndex = memory_type_index;
 
     if (vkAllocateMemory(device, &alloc_info, NULL, &color->vertex_buffer_memory) != VK_SUCCESS) {
-        fprintf(stderr, "create_color_node: failed to allocate vertex buffer memory\n");
+        CJ_ERRORF("create_color_node: failed to allocate vertex buffer memory");
         vkDestroyBuffer(device, color->vertex_buffer, NULL);
         return 0;
     }
@@ -1232,7 +1233,7 @@ static int create_color_node(cj_rgraph_t* graph, cj_rgraph_node_t* node) {
     layout_info.pPushConstantRanges = &push_constant_range;
 
     if (vkCreatePipelineLayout(device, &layout_info, NULL, &color->pipeline_layout) != VK_SUCCESS) {
-        fprintf(stderr, "create_color_node: failed to create pipeline layout\n");
+        CJ_ERRORF("create_color_node: failed to create pipeline layout");
         vkFreeMemory(device, color->vertex_buffer_memory, NULL);
         vkDestroyBuffer(device, color->vertex_buffer, NULL);
         return 0;
@@ -1240,13 +1241,13 @@ static int create_color_node(cj_rgraph_t* graph, cj_rgraph_node_t* node) {
 
     // Get color pipeline from engine's color pipeline resources
     if (engine_cp->pipeline == VK_NULL_HANDLE) {
-        fprintf(stderr, "create_color_node: engine color pipeline is NULL\n");
+        CJ_ERRORF("create_color_node: engine color pipeline is NULL");
         vkDestroyPipelineLayout(device, color->pipeline_layout, NULL);
         return 0;
     }
     color->pipeline = engine_cp->pipeline;
 
-    printf("Color node created successfully\n");
+    CJ_DEBUGF("Color node created successfully");
     return 1;
 }
 
@@ -1363,7 +1364,7 @@ CJ_API cj_result_t cj_rgraph_add_blur_node(cj_rgraph_t* graph, const char* name)
 
     cj_rgraph_node_t* node = (cj_rgraph_node_t*)malloc(sizeof(cj_rgraph_node_t));
     if (!node) {
-        fprintf(stderr, "cj_rgraph_add_blur_node: failed to allocate node\n");
+        CJ_ERRORF("cj_rgraph_add_blur_node: failed to allocate node");
         return CJ_E_OUT_OF_MEMORY;
     }
 
@@ -1413,7 +1414,7 @@ static int create_intermediate_render_target(cj_rgraph_t* graph, cj_rgraph_blur_
     image_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
     if (vkCreateImage(device, &image_info, NULL, &blur->intermediate_texture) != VK_SUCCESS) {
-        fprintf(stderr, "create_intermediate_render_target: failed to create intermediate texture\n");
+        CJ_ERRORF("create_intermediate_render_target: failed to create intermediate texture");
         return 0;
     }
 
@@ -1434,7 +1435,7 @@ static int create_intermediate_render_target(cj_rgraph_t* graph, cj_rgraph_blur_
     }
 
     if (memory_type_index == UINT32_MAX) {
-        fprintf(stderr, "create_intermediate_render_target: failed to find suitable memory type\n");
+        CJ_ERRORF("create_intermediate_render_target: failed to find suitable memory type");
         vkDestroyImage(device, blur->intermediate_texture, NULL);
         return 0;
     }
@@ -1445,7 +1446,7 @@ static int create_intermediate_render_target(cj_rgraph_t* graph, cj_rgraph_blur_
     alloc_info.memoryTypeIndex = memory_type_index;
 
     if (vkAllocateMemory(device, &alloc_info, NULL, &blur->intermediate_memory) != VK_SUCCESS) {
-        fprintf(stderr, "create_intermediate_render_target: failed to allocate intermediate texture memory\n");
+        CJ_ERRORF("create_intermediate_render_target: failed to allocate intermediate texture memory");
         vkDestroyImage(device, blur->intermediate_texture, NULL);
         return 0;
     }
@@ -1465,13 +1466,13 @@ static int create_intermediate_render_target(cj_rgraph_t* graph, cj_rgraph_blur_
     view_info.subresourceRange.layerCount = 1;
 
     if (vkCreateImageView(device, &view_info, NULL, &blur->intermediate_view) != VK_SUCCESS) {
-        fprintf(stderr, "create_intermediate_render_target: failed to create intermediate texture view\n");
+        CJ_ERRORF("create_intermediate_render_target: failed to create intermediate texture view");
         vkFreeMemory(device, blur->intermediate_memory, NULL);
         vkDestroyImage(device, blur->intermediate_texture, NULL);
         return 0;
     }
 
-    printf("Intermediate render target created: %dx%d\n", extent.width, extent.height);
+    CJ_DEBUGF("Intermediate render target created: %dx%d", extent.width, extent.height);
     return 1;
 }
 

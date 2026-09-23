@@ -215,6 +215,46 @@ TEST(LogLevelName, EveryLevelHasOne) {
   EXPECT_STREQ(cj_log_level_str((cj_log_level_t)99), "?");
 }
 
+// --- Vulkan validation severities ------------------------------------------
+
+TEST(LogVkSeverity, EachSeverityGetsItsLevel) {
+  EXPECT_EQ(cj_log__level_for_vk_severity(
+                VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT),
+      CJ_LOG_ERROR);
+  EXPECT_EQ(cj_log__level_for_vk_severity(
+                VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT),
+      CJ_LOG_WARN);
+  EXPECT_EQ(cj_log__level_for_vk_severity(
+                VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT),
+      CJ_LOG_DEBUG);
+  EXPECT_EQ(cj_log__level_for_vk_severity(
+                VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT),
+      CJ_LOG_DEBUG);
+}
+
+TEST(LogVkSeverity, SeverityIsABitmaskAndTheWorstBitWins) {
+  // A layer may set more than one bit.  Testing the gentler bit first would
+  // demote a validation error to a warning, which at the default level is
+  // the difference between seeing it and not.
+  auto both = (VkDebugUtilsMessageSeverityFlagBitsEXT)(
+      VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT |
+      VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT);
+  EXPECT_EQ(cj_log__level_for_vk_severity(both), CJ_LOG_ERROR);
+
+  auto warn_and_info = (VkDebugUtilsMessageSeverityFlagBitsEXT)(
+      VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+      VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT);
+  EXPECT_EQ(cj_log__level_for_vk_severity(warn_and_info), CJ_LOG_WARN);
+}
+
+TEST(LogVkSeverity, NoSeverityBitIsNotAnError) {
+  // Nothing should send this, and if something does, inventing an error is
+  // worse than filing it with the chatter.
+  EXPECT_EQ(cj_log__level_for_vk_severity(
+                (VkDebugUtilsMessageSeverityFlagBitsEXT)0),
+      CJ_LOG_DEBUG);
+}
+
 int main(int argc, char ** argv) {
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();

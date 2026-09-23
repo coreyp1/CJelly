@@ -26,6 +26,7 @@
 
 #include <ghoti.io/cjelly/plat_internal.h>
 #include <ghoti.io/cjelly/macros.h>
+#include <ghoti.io/cjelly/cj_log.h>
 #include <ghoti.io/cjelly/cj_engine.h>
 #include <ghoti.io/cjelly/engine_internal.h>
 #include <ghoti.io/cjelly/runtime.h>
@@ -301,7 +302,7 @@ static int eng_create_color_pipeline(cj_engine_t* e) {
   bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
   bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
   if (vkCreateBuffer(e->device, &bufferInfo, NULL, &cp->vertexBuffer) != VK_SUCCESS) {
-    fprintf(stderr, "Failed to create color pipeline vertex buffer\n");
+    CJ_ERRORF("Failed to create color pipeline vertex buffer");
     return 0;
   }
 
@@ -312,7 +313,7 @@ static int eng_create_color_pipeline(cj_engine_t* e) {
   allocInfo.allocationSize = memRequirements.size;
   allocInfo.memoryTypeIndex = eng_find_memory_type(e, memRequirements.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
   if (vkAllocateMemory(e->device, &allocInfo, NULL, &cp->vertexBufferMemory) != VK_SUCCESS) {
-    fprintf(stderr, "Failed to allocate color pipeline vertex buffer memory\n");
+    CJ_ERRORF("Failed to allocate color pipeline vertex buffer memory");
     return 0;
   }
   vkBindBufferMemory(e->device, cp->vertexBuffer, cp->vertexBufferMemory, 0);
@@ -335,7 +336,7 @@ static int eng_create_color_pipeline(cj_engine_t* e) {
   pli.pushConstantRangeCount = 1;
   pli.pPushConstantRanges = &pushRange;
   if (vkCreatePipelineLayout(e->device, &pli, NULL, &cp->pipelineLayout) != VK_SUCCESS) {
-    fprintf(stderr, "Failed to create color pipeline layout\n");
+    CJ_ERRORF("Failed to create color pipeline layout");
     return 0;
   }
 
@@ -347,7 +348,7 @@ static int eng_create_color_pipeline(cj_engine_t* e) {
   vertInfo.pCode = (const uint32_t*)color_vert_spv;
   VkShaderModule vert = VK_NULL_HANDLE;
   if (vkCreateShaderModule(e->device, &vertInfo, NULL, &vert) != VK_SUCCESS) {
-    fprintf(stderr, "Failed to create color vertex shader module\n");
+    CJ_ERRORF("Failed to create color vertex shader module");
     return 0;
   }
 
@@ -357,7 +358,7 @@ static int eng_create_color_pipeline(cj_engine_t* e) {
   fragInfo.pCode = (const uint32_t*)color_frag_spv;
   VkShaderModule frag = VK_NULL_HANDLE;
   if (vkCreateShaderModule(e->device, &fragInfo, NULL, &frag) != VK_SUCCESS) {
-    fprintf(stderr, "Failed to create color fragment shader module\n");
+    CJ_ERRORF("Failed to create color fragment shader module");
     vkDestroyShaderModule(e->device, vert, NULL);
     return 0;
   }
@@ -429,7 +430,7 @@ static int eng_create_color_pipeline(cj_engine_t* e) {
   gp.layout = cp->pipelineLayout; gp.renderPass = e->render_pass; gp.subpass = 0;
 
   if (vkCreateGraphicsPipelines(e->device, VK_NULL_HANDLE, 1, &gp, NULL, &cp->pipeline) != VK_SUCCESS) {
-    fprintf(stderr, "Failed to create color graphics pipeline\n");
+    CJ_ERRORF("Failed to create color graphics pipeline");
     vkDestroyShaderModule(e->device, vert, NULL);
     vkDestroyShaderModule(e->device, frag, NULL);
     return 0;
@@ -453,7 +454,7 @@ CJ_API int cj_engine_init_vulkan(cj_engine_t* engine, int use_validation) {
   if (!eng_create_command_pool(engine)) return 0;
   if (!eng_ensure_bindless_descriptors(engine)) return 0;
   if (!eng_create_color_pipeline(engine)) {
-    fprintf(stderr, "Failed to create color pipeline\n");
+    CJ_ERRORF("Failed to create color pipeline");
     return 0;
   }
   return 1;

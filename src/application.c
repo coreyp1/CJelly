@@ -38,6 +38,8 @@
 // includes come first and everything else follows.
 #include <ghoti.io/cjelly/plat_internal.h>
 #include <ghoti.io/cjelly/macros.h>
+#include <ghoti.io/cjelly/cj_log.h>
+#include <ghoti.io/cjelly/log_internal.h>
 #include <ghoti.io/cjelly/application.h>
 #include <ghoti.io/cjelly/cj_window.h>
 #include <ghoti.io/cjelly/window_internal.h>
@@ -112,13 +114,44 @@ static size_t handle_hash(const void * handle) {
  * @param pUserData A user-defined pointer (unused in this implementation).
  * @return VkBool32 Always returns VK_FALSE.
  */
+/**
+ * @brief Hands a validation layer message to the log at its own severity.
+ *
+ * The severity the layer assigns is the only thing that can decide how loud
+ * one of these is; printing them all at one volume - which this did, at full
+ * volume, whenever the validation layers were on at all - is what made the
+ * layers something to turn off rather than something to read.
+ *
+ * The mapping itself is cj_log__level_for_vk_severity, which is separate so
+ * that it can be tested without provoking a real validation failure.
+ */
 static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
-    CJ_MAYBE_UNUSED(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity),
+    VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
     CJ_MAYBE_UNUSED(VkDebugUtilsMessageTypeFlagsEXT messageTypes),
     const VkDebugUtilsMessengerCallbackDataEXT * pCallbackData,
     CJ_MAYBE_UNUSED(void * pUserData)) {
-  fprintf(stderr, "Validation layer: %s\n", pCallbackData->pMessage);
+  /* %s on a message the layer owns: it is not a format string, and treating
+   * it as one would let a layer's text steer printf. */
+  CJ_LOG_AT(cj_log__level_for_vk_severity(messageSeverity),
+      "validation: %s", pCallbackData->pMessage);
   return VK_FALSE;
+}
+
+cj_log_level_t cj_log__level_for_vk_severity(
+    VkDebugUtilsMessageSeverityFlagBitsEXT severity) {
+  /* Most severe bit first: a message carrying both ERROR and WARNING is an
+   * error, and testing WARNING first would quietly demote it. */
+  if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) {
+    return CJ_LOG_ERROR;
+  }
+  if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) {
+    return CJ_LOG_WARN;
+  }
+  /* VERBOSE and INFO are both the layer narrating its own bookkeeping, and
+   * they differ by less than the gap between DEBUG and TRACE here. A
+   * severity of 0, which is not a thing a layer should send, lands here too
+   * rather than being treated as an error. */
+  return CJ_LOG_DEBUG;
 }
 
 
@@ -211,14 +244,14 @@ static CJellyApplicationError add_extension_generic(
 
   char * dup = strdup(extension);
   if (!dup) {
-    fprintf(stderr, "Failed to duplicate extension name.\n");
+    CJ_ERRORF("Failed to duplicate extension name.");
     return CJELLY_APPLICATION_ERROR_INIT_FAILED;
   }
   if (!gcu_array_append(extensions, &dup)) {
     // The append is what takes ownership, so until it succeeds the copy is
     // still this function's to release.
     free(dup);
-    fprintf(stderr, "Failed to grow the extension array.\n");
+    CJ_ERRORF("Failed to grow the extension array.");
     return CJELLY_APPLICATION_ERROR_INIT_FAILED;
   }
 
@@ -281,15 +314,13 @@ static bool initialize_options(CJellyApplicationOptions * opts) {
   // only avoids a reallocation for the handful of names added below.
   if (!gcu_array_create_in_place(&opts->requiredInstanceExtensions,
           sizeof(char *), INITIAL_EXTENSION_CAPACITY, NULL)) {
-    fprintf(stderr,
-        "Failed to allocate memory for required instance extensions.\n");
+    CJ_ERRORF("Failed to allocate memory for required instance extensions.");
     goto ERROR_FREE_OPTIONS;
   }
 
   if (!gcu_array_create_in_place(&opts->requiredDeviceExtensions,
           sizeof(char *), INITIAL_EXTENSION_CAPACITY, NULL)) {
-    fprintf(
-        stderr, "Failed to allocate memory for required device extensions.\n");
+    CJ_ERRORF("Failed to allocate memory for required device extensions.");
     goto ERROR_FREE_OPTIONS;
   }
 
@@ -304,7 +335,7 @@ static bool initialize_options(CJellyApplicationOptions * opts) {
   for (size_t i = 0; i < instanceExtCount; ++i) {
     if (add_extension_generic(&opts->requiredInstanceExtensions,
             instanceExtensions[i]) != CJELLY_APPLICATION_ERROR_NONE) {
-      fprintf(stderr, "Failed to add required instance extension: %s\n",
+      CJ_ERRORF("Failed to add required instance extension: %s",
           instanceExtensions[i]);
       goto ERROR_FREE_OPTIONS;
     }
@@ -320,7 +351,7 @@ static bool initialize_options(CJellyApplicationOptions * opts) {
   for (size_t i = 0; i < requiredDeviceExtCount; ++i) {
     if (add_extension_generic(&opts->requiredDeviceExtensions,
             requiredDeviceExtensions[i]) != CJELLY_APPLICATION_ERROR_NONE) {
-      fprintf(stderr, "Failed to add required device extension: %s\n",
+      CJ_ERRORF("Failed to add required device extension: %s",
           requiredDeviceExtensions[i]);
       goto ERROR_FREE_OPTIONS;
     }
@@ -508,7 +539,7 @@ CJ_API CJellyApplicationError cjelly_application_init(CJellyApplication * app) {
       (app->physicalDevice != VK_NULL_HANDLE) ||
       (app->graphicsCommandPool != VK_NULL_HANDLE)) {
     // The application has already been initialized.
-    fprintf(stderr, "Application already initialized.\n");
+    CJ_ERRORF("Application already initialized.");
     return CJELLY_APPLICATION_ERROR_INIT_FAILED;
   }
 
@@ -524,18 +555,18 @@ CJ_API CJellyApplicationError cjelly_application_init(CJellyApplication * app) {
   if (pfnEnumerateInstanceVersion) {
     VkResult res = pfnEnumerateInstanceVersion(&installedVulkanVersion);
     if (res != VK_SUCCESS) {
-      fprintf(stderr, "Failed to query Vulkan version. Defaulting to 1.0.\n");
+      CJ_ERRORF("failed to query the Vulkan version");
       return CJELLY_APPLICATION_ERROR_INIT_FAILED;
     }
   }
   else {
-    fprintf(stderr, "vkEnumerateInstanceVersion not supported.\n");
+    CJ_ERRORF("vkEnumerateInstanceVersion not supported.");
     return CJELLY_APPLICATION_ERROR_INIT_FAILED;
   }
 
   // Check if the required Vulkan version is supported.
   if (app->options.requiredVulkanVersion > installedVulkanVersion) {
-    fprintf(stderr, "Required Vulkan version (%u) not supported.\n",
+    CJ_ERRORF("Required Vulkan version (%u) not supported.",
         app->options.requiredVulkanVersion);
     return CJELLY_APPLICATION_ERROR_INVALID_OPTIONS;
   }
@@ -545,7 +576,7 @@ CJ_API CJellyApplicationError cjelly_application_init(CJellyApplication * app) {
     err = cjelly_application_add_instance_extension(
         app, VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
     if (err != CJELLY_APPLICATION_ERROR_NONE) {
-      fprintf(stderr, "Failed to add debug extension.\n");
+      CJ_ERRORF("Failed to add debug extension.");
       return CJELLY_APPLICATION_ERROR_OUT_OF_MEMORY;
     }
   }
@@ -597,7 +628,7 @@ CJ_API CJellyApplicationError cjelly_application_init(CJellyApplication * app) {
   // Create the Vulkan instance.
   VkResult res = vkCreateInstance(&instanceCreateInfo, NULL, &app->instance);
   if (res != VK_SUCCESS || app->instance == VK_NULL_HANDLE) {
-    fprintf(stderr, "Failed to create Vulkan instance.\n");
+    CJ_ERRORF("Failed to create Vulkan instance.");
     err = CJELLY_APPLICATION_ERROR_INIT_FAILED;
     goto ERROR_RETURN;
   }
@@ -606,7 +637,7 @@ CJ_API CJellyApplicationError cjelly_application_init(CJellyApplication * app) {
   uint32_t deviceCount = 0;
   res = vkEnumeratePhysicalDevices(app->instance, &deviceCount, NULL);
   if (res != VK_SUCCESS || deviceCount == 0) {
-    fprintf(stderr, "Failed to enumerate physical devices.\n");
+    CJ_ERRORF("Failed to enumerate physical devices.");
     err = CJELLY_APPLICATION_ERROR_INIT_FAILED;
     goto ERROR_RETURN;
   }
@@ -614,7 +645,7 @@ CJ_API CJellyApplicationError cjelly_application_init(CJellyApplication * app) {
   // Allocate memory for the list of physical devices.
   physicalDevices = malloc(sizeof(VkPhysicalDevice) * deviceCount);
   if (!physicalDevices) {
-    fprintf(stderr, "Memory allocation failure for device list.\n");
+    CJ_ERRORF("Memory allocation failure for device list.");
     goto ERROR_RETURN;
   }
 
@@ -622,7 +653,7 @@ CJ_API CJellyApplicationError cjelly_application_init(CJellyApplication * app) {
   res =
       vkEnumeratePhysicalDevices(app->instance, &deviceCount, physicalDevices);
   if (res != VK_SUCCESS) {
-    fprintf(stderr, "Failed to retrieve physical devices.\n");
+    CJ_ERRORF("Failed to retrieve physical devices.");
     err = CJELLY_APPLICATION_ERROR_INIT_FAILED;
     goto ERROR_RETURN;
   }
@@ -660,7 +691,7 @@ CJ_API CJellyApplicationError cjelly_application_init(CJellyApplication * app) {
     VkQueueFamilyProperties * queueFamilies =
         malloc(sizeof(VkQueueFamilyProperties) * queueFamilyCount);
     if (!queueFamilies) {
-      fprintf(stderr, "Memory allocation failure for queue family list.\n");
+      CJ_ERRORF("Memory allocation failure for queue family list.");
       goto CONTINUE;
     }
     vkGetPhysicalDeviceQueueFamilyProperties(
@@ -713,7 +744,7 @@ CJ_API CJellyApplicationError cjelly_application_init(CJellyApplication * app) {
     VkResult res = vkEnumerateDeviceExtensionProperties(
         physicalDevice, NULL, &availableExtensionCount, NULL);
     if (res != VK_SUCCESS) {
-      fprintf(stderr, "Failed to enumerate device extensions.\n");
+      CJ_ERRORF("Failed to enumerate device extensions.");
       goto CONTINUE;
     }
 
@@ -721,8 +752,7 @@ CJ_API CJellyApplicationError cjelly_application_init(CJellyApplication * app) {
     VkExtensionProperties * availableExtensions =
         malloc(sizeof(VkExtensionProperties) * availableExtensionCount);
     if (!availableExtensions) {
-      fprintf(stderr,
-          "Memory allocation failure while enumerating device extensions.\n");
+      CJ_ERRORF("Memory allocation failure while enumerating device extensions.");
       goto CONTINUE;
     }
 
@@ -730,15 +760,19 @@ CJ_API CJellyApplicationError cjelly_application_init(CJellyApplication * app) {
     res = vkEnumerateDeviceExtensionProperties(
         physicalDevice, NULL, &availableExtensionCount, availableExtensions);
     if (res != VK_SUCCESS) {
-      fprintf(stderr, "Failed to retrieve device extensions.\n");
+      CJ_ERRORF("Failed to retrieve device extensions.");
       goto FREE_AVAILABLE_EXTENSIONS;
     }
 
-    // Print the list of available extensions.
-    // printf("Available device extensions:\n");
-    // for (uint32_t j = 0; j < availableExtensionCount; ++j) {
-    //   printf("  %s\n", availableExtensions[j].extensionName);
-    // }
+    /* Commented out until there was a way to ask for it: a device can
+     * report a couple of hundred extensions, and printing them on every run
+     * of every program is why this was switched off rather than deleted. */
+    if (cj_log_get_level() >= CJ_LOG_TRACE) {
+      CJ_TRACEF("device extensions available (%u):", availableExtensionCount);
+      for (uint32_t j = 0; j < availableExtensionCount; ++j) {
+        CJ_TRACEF("  %s", availableExtensions[j].extensionName);
+      }
+    }
 
     // For each required extension, check if it is present in the device's list.
     bool extensionsSupported = true;
@@ -755,8 +789,8 @@ CJ_API CJellyApplicationError cjelly_application_init(CJellyApplication * app) {
         }
       }
       if (!found) {
-        // fprintf(stderr, "Required extension '%s' is not supported.\n",
-        // reqExt);
+        CJ_DEBUGF("device rejected: required extension '%s' is not supported",
+            reqExt);
         extensionsSupported = false;
         break;
       }
@@ -805,7 +839,7 @@ CJ_API CJellyApplicationError cjelly_application_init(CJellyApplication * app) {
 
   // Check if a suitable physical device was found.
   if (bestPhysicalDevice == VK_NULL_HANDLE) {
-    fprintf(stderr, "No physical device meets the required constraints.\n");
+    CJ_ERRORF("No physical device meets the required constraints.");
     err = CJELLY_APPLICATION_ERROR_INVALID_OPTIONS;
     goto ERROR_RETURN;
   }
@@ -814,14 +848,14 @@ CJ_API CJellyApplicationError cjelly_application_init(CJellyApplication * app) {
   // Create the logical device.
   err = cjelly_application_create_logical_device(app);
   if (err != CJELLY_APPLICATION_ERROR_NONE) {
-    fprintf(stderr, "Failed to create logical device.\n");
+    CJ_ERRORF("Failed to create logical device.");
     goto ERROR_RETURN;
   }
 
   // Create the command pool.
   err = cjelly_application_create_command_pools(app);
   if (err != CJELLY_APPLICATION_ERROR_NONE) {
-    fprintf(stderr, "Failed to create command pool.\n");
+    CJ_ERRORF("Failed to create command pool.");
     goto ERROR_RETURN;
   }
 
@@ -841,7 +875,7 @@ CJ_API CJellyApplicationError cjelly_application_init(CJellyApplication * app) {
     // Create the debug messenger.
     if (CreateDebugUtilsMessengerEXT(app->instance, &createInfo, NULL,
             &app->debugMessenger) != VK_SUCCESS) {
-      fprintf(stderr, "Failed to set up debug messenger!\n");
+      CJ_ERRORF("Failed to set up debug messenger!");
       err = CJELLY_APPLICATION_ERROR_INIT_FAILED;
       goto ERROR_RETURN;
     }
@@ -951,7 +985,7 @@ CJ_API void cjelly_application_destroy(CJellyApplication * app) {
 CJ_API CJellyApplicationError cjelly_application_create_logical_device(
     CJellyApplication * app) {
   if (!app || app->physicalDevice == VK_NULL_HANDLE) {
-    fprintf(stderr, "Invalid application or physical device not set.\n");
+    CJ_ERRORF("Invalid application or physical device not set.");
     return CJELLY_APPLICATION_ERROR_INVALID_OPTIONS;
   }
 
@@ -960,14 +994,14 @@ CJ_API CJellyApplicationError cjelly_application_create_logical_device(
   vkGetPhysicalDeviceQueueFamilyProperties(
       app->physicalDevice, &queueFamilyCount, NULL);
   if (queueFamilyCount == 0) {
-    fprintf(stderr, "No queue families found.\n");
+    CJ_ERRORF("No queue families found.");
     return CJELLY_APPLICATION_ERROR_INIT_FAILED;
   }
 
   VkQueueFamilyProperties * queueFamilies =
       malloc(sizeof(VkQueueFamilyProperties) * queueFamilyCount);
   if (!queueFamilies) {
-    fprintf(stderr, "Memory allocation failure for queue families.\n");
+    CJ_ERRORF("Memory allocation failure for queue families.");
     return CJELLY_APPLICATION_ERROR_OUT_OF_MEMORY;
   }
   vkGetPhysicalDeviceQueueFamilyProperties(
@@ -1081,7 +1115,7 @@ CJ_API CJellyApplicationError cjelly_application_create_logical_device(
   if (descriptorIndexingSupported) {
     if (add_extension_generic(&app->options.requiredDeviceExtensions,
             VK_EXT_DESCRIPTOR_INDEXING_EXTENSION_NAME) != CJELLY_APPLICATION_ERROR_NONE) {
-      fprintf(stderr, "Failed to add descriptor indexing extension\n");
+      CJ_ERRORF("Failed to add descriptor indexing extension");
       free(availableExtensions);
       return CJELLY_APPLICATION_ERROR_INIT_FAILED;
     }
@@ -1127,7 +1161,7 @@ CJ_API CJellyApplicationError cjelly_application_create_logical_device(
   VkResult result = vkCreateDevice(
       app->physicalDevice, &deviceCreateInfo, NULL, &app->logicalDevice);
   if (result != VK_SUCCESS) {
-    fprintf(stderr, "Failed to create logical device. VkResult: %d\n", result);
+    CJ_ERRORF("Failed to create logical device. VkResult: %d", result);
     return CJELLY_APPLICATION_ERROR_INIT_FAILED;
   }
 
@@ -1289,7 +1323,7 @@ CJ_API CJellyApplicationError cjelly_application_create_command_pools(
     CJellyApplication * app) {
 
   if (!app || app->logicalDevice == VK_NULL_HANDLE) {
-    fprintf(stderr, "Invalid application or logical device not set.\n");
+    CJ_ERRORF("Invalid application or logical device not set.");
     return CJELLY_APPLICATION_ERROR_INVALID_OPTIONS;
   }
 
@@ -1304,7 +1338,7 @@ CJ_API CJellyApplicationError cjelly_application_create_command_pools(
   result = vkCreateCommandPool(
       app->logicalDevice, &poolInfo, NULL, &app->graphicsCommandPool);
   if (result != VK_SUCCESS) {
-    fprintf(stderr, "Failed to create graphics command pool. VkResult: %d\n",
+    CJ_ERRORF("Failed to create graphics command pool. VkResult: %d",
         result);
     return CJELLY_APPLICATION_ERROR_INIT_FAILED;
   }
@@ -1320,7 +1354,7 @@ CJ_API CJellyApplicationError cjelly_application_create_command_pools(
     result = vkCreateCommandPool(
         app->logicalDevice, &poolInfo, NULL, &app->transferCommandPool);
     if (result != VK_SUCCESS) {
-      fprintf(stderr, "Failed to create transfer command pool. VkResult: %d\n",
+      CJ_ERRORF("Failed to create transfer command pool. VkResult: %d",
           result);
       return CJELLY_APPLICATION_ERROR_INIT_FAILED;
     }
@@ -1340,7 +1374,7 @@ CJ_API CJellyApplicationError cjelly_application_create_command_pools(
     result = vkCreateCommandPool(
         app->logicalDevice, &poolInfo, NULL, &app->computeCommandPool);
     if (result != VK_SUCCESS) {
-      fprintf(stderr, "Failed to create compute command pool. VkResult: %d\n",
+      CJ_ERRORF("Failed to create compute command pool. VkResult: %d",
           result);
       return CJELLY_APPLICATION_ERROR_INIT_FAILED;
     }

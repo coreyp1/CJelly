@@ -30,6 +30,7 @@
 #include <string.h>
 
 #include <ghoti.io/cjelly/macros.h>
+#include <ghoti.io/cjelly/cj_log.h>
 #include <ghoti.io/cjelly/engine_internal.h>
 #include <ghoti.io/cjelly/mat4.h>
 #include <ghoti.io/cjelly/rgraph_model_internal.h>
@@ -550,7 +551,7 @@ int cj_rgraph_model_create(cj_engine_t * engine,
 
   VkFormat depth_format = choose_depth_format(physical_device);
   if (depth_format == VK_FORMAT_UNDEFINED) {
-    fprintf(stderr, "model node: no usable depth format\n");
+    CJ_ERRORF("model node: no usable depth format");
     return 0;
   }
 
@@ -559,20 +560,20 @@ int cj_rgraph_model_create(cj_engine_t * engine,
           VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
           VK_IMAGE_ASPECT_COLOR_BIT, &model->color_image, &model->color_memory,
           &model->color_view)) {
-    fprintf(stderr, "model node: failed to create the colour target\n");
+    CJ_ERRORF("model node: failed to create the colour target");
     goto failed;
   }
   if (!create_attachment(device, physical_device, model->target_extent,
           depth_format, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
           VK_IMAGE_ASPECT_DEPTH_BIT, &model->depth_image, &model->depth_memory,
           &model->depth_view)) {
-    fprintf(stderr, "model node: failed to create the depth target\n");
+    CJ_ERRORF("model node: failed to create the depth target");
     goto failed;
   }
   if (!create_offscreen_render_pass(
           device, VK_FORMAT_R8G8B8A8_UNORM, depth_format,
           &model->render_pass)) {
-    fprintf(stderr, "model node: failed to create the offscreen render pass\n");
+    CJ_ERRORF("model node: failed to create the offscreen render pass");
     goto failed;
   }
 
@@ -588,13 +589,13 @@ int cj_rgraph_model_create(cj_engine_t * engine,
     framebuffer.layers = 1;
     if (vkCreateFramebuffer(device, &framebuffer, NULL, &model->framebuffer)
         != VK_SUCCESS) {
-      fprintf(stderr, "model node: failed to create the framebuffer\n");
+      CJ_ERRORF("model node: failed to create the framebuffer");
       goto failed;
     }
   }
 
   if (!create_model_pipeline(device, model)) {
-    fprintf(stderr, "model node: failed to create the model pipeline\n");
+    CJ_ERRORF("model node: failed to create the model pipeline");
     goto failed;
   }
 
@@ -602,14 +603,14 @@ int cj_rgraph_model_create(cj_engine_t * engine,
           (VkDeviceSize)mesh->vertex_count * sizeof(CJellyModelVertex),
           VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, &model->vertex_buffer,
           &model->vertex_memory)) {
-    fprintf(stderr, "model node: failed to upload the vertices\n");
+    CJ_ERRORF("model node: failed to upload the vertices");
     goto failed;
   }
   if (!create_filled_buffer(device, physical_device, mesh->indices,
           (VkDeviceSize)mesh->index_count * sizeof(uint32_t),
           VK_BUFFER_USAGE_INDEX_BUFFER_BIT, &model->index_buffer,
           &model->index_memory)) {
-    fprintf(stderr, "model node: failed to upload the indices\n");
+    CJ_ERRORF("model node: failed to upload the indices");
     goto failed;
   }
   model->index_count = mesh->index_count;
@@ -627,7 +628,7 @@ int cj_rgraph_model_create(cj_engine_t * engine,
     if (!create_filled_buffer(device, physical_device, quad, sizeof(quad),
             VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, &model->quad_buffer,
             &model->quad_memory)) {
-      fprintf(stderr, "model node: failed to create the composite quad\n");
+      CJ_ERRORF("model node: failed to create the composite quad");
       goto failed;
     }
   }
@@ -644,7 +645,7 @@ int cj_rgraph_model_create(cj_engine_t * engine,
     sampler.maxLod = 1.0f;
     if (vkCreateSampler(device, &sampler, NULL, &model->sampler)
         != VK_SUCCESS) {
-      fprintf(stderr, "model node: failed to create the sampler\n");
+      CJ_ERRORF("model node: failed to create the sampler");
       goto failed;
     }
   }
@@ -663,7 +664,7 @@ int cj_rgraph_model_create(cj_engine_t * engine,
     if (vkCreateDescriptorSetLayout(
             device, &layout, NULL, &model->composite_desc_layout)
         != VK_SUCCESS) {
-      fprintf(stderr, "model node: failed to create the descriptor layout\n");
+      CJ_ERRORF("model node: failed to create the descriptor layout");
       goto failed;
     }
 
@@ -675,7 +676,7 @@ int cj_rgraph_model_create(cj_engine_t * engine,
     pool.pPoolSizes = &size;
     if (vkCreateDescriptorPool(device, &pool, NULL, &model->composite_desc_pool)
         != VK_SUCCESS) {
-      fprintf(stderr, "model node: failed to create the descriptor pool\n");
+      CJ_ERRORF("model node: failed to create the descriptor pool");
       goto failed;
     }
 
@@ -686,7 +687,7 @@ int cj_rgraph_model_create(cj_engine_t * engine,
     allocation.pSetLayouts = &model->composite_desc_layout;
     if (vkAllocateDescriptorSets(device, &allocation, &model->composite_desc_set)
         != VK_SUCCESS) {
-      fprintf(stderr, "model node: failed to allocate the descriptor set\n");
+      CJ_ERRORF("model node: failed to allocate the descriptor set");
       goto failed;
     }
 
@@ -707,7 +708,7 @@ int cj_rgraph_model_create(cj_engine_t * engine,
 
   if (!create_composite_pipeline(
           device, cj_engine_render_pass(engine), model)) {
-    fprintf(stderr, "model node: failed to create the composite pipeline\n");
+    CJ_ERRORF("model node: failed to create the composite pipeline");
     goto failed;
   }
 

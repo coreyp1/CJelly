@@ -26,6 +26,7 @@
 #include <ghoti.io/cjelly/application.h>
 #include <ghoti.io/cjelly/window_internal.h>
 #include <ghoti.io/cjelly/macros.h>
+#include <ghoti.io/cjelly/cj_log.h>
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -468,7 +469,13 @@ CJ_API void cj_run_with_config(cj_engine_t* engine, const cj_run_config_t* confi
       total_sleep_us += (double)sleep_us;
       total_other_us += (double)profile.other_us;
 
-      /* Print statistics every second. */
+      /* Print statistics every second.
+       *
+       * cj_log_emit, not a level macro: the caller set enable_fps_profiling,
+       * which is the decision.  Filtering this by log level would let a
+       * second, unrelated setting quietly cancel the first, so that a flag
+       * whose whole purpose is to produce output produces none.  See
+       * cj_log.h. */
       uint64_t current_time = cj_get_time_ms();
       if (current_time - fps_last_print_time >= 1000) {
         double elapsed_seconds = ((double)(cj_get_time_us() - fps_start_time_us)) / 1000000.0;
@@ -476,25 +483,25 @@ CJ_API void cj_run_with_config(cj_engine_t* engine, const cj_run_config_t* confi
         double avg_frame_time_us = (fps_frame_count > 0) ?
           (fps_total_frame_time_us / fps_frame_count) : 0.0;
 
-        printf("FPS: %.2f | Frame time: avg=%.3fms min=%.3fms max=%.3fms | Frames: %u\n",
+        cj_log_emit(CJ_LOG_INFO, "FPS: %.2f | Frame time: avg=%.3fms min=%.3fms max=%.3fms | Frames: %u",
                fps, avg_frame_time_us / 1000.0,
                fps_min_frame_time_us / 1000.0, fps_max_frame_time_us / 1000.0,
                fps_frame_count);
 
         /* Print detailed breakdown */
         if (fps_frame_count > 0) {
-          printf("  Breakdown (avg per frame):\n");
-          printf("    Event poll:     %.3fms\n", (total_event_poll_us / fps_frame_count) / 1000.0);
-          printf("    Window list:    %.3fms\n", (total_window_list_us / fps_frame_count) / 1000.0);
-          printf("    Minimized chk: %.3fms\n", (total_minimized_check_us / fps_frame_count) / 1000.0);
-          printf("    Begin frame:   %.3fms\n", (total_begin_frame_us / fps_frame_count) / 1000.0);
-          printf("    Callback:      %.3fms\n", (total_callback_us / fps_frame_count) / 1000.0);
-          printf("    Execute:       %.3fms\n", (total_execute_us / fps_frame_count) / 1000.0);
-          printf("    Present:       %.3fms\n", (total_present_us / fps_frame_count) / 1000.0);
-          printf("    VSync check:   %.3fms\n", (total_vsync_check_us / fps_frame_count) / 1000.0);
-          printf("    Sleep:         %.3fms\n", (total_sleep_us / fps_frame_count) / 1000.0);
-          printf("    Other/VSync:   %.3fms (likely VSync wait in execute)\n", (total_other_us / fps_frame_count) / 1000.0);
-          printf("    Windows:       %u\n", profile.window_count);
+          cj_log_emit(CJ_LOG_INFO, "  Breakdown (avg per frame):");
+          cj_log_emit(CJ_LOG_INFO, "    Event poll:     %.3fms", (total_event_poll_us / fps_frame_count) / 1000.0);
+          cj_log_emit(CJ_LOG_INFO, "    Window list:    %.3fms", (total_window_list_us / fps_frame_count) / 1000.0);
+          cj_log_emit(CJ_LOG_INFO, "    Minimized chk: %.3fms", (total_minimized_check_us / fps_frame_count) / 1000.0);
+          cj_log_emit(CJ_LOG_INFO, "    Begin frame:   %.3fms", (total_begin_frame_us / fps_frame_count) / 1000.0);
+          cj_log_emit(CJ_LOG_INFO, "    Callback:      %.3fms", (total_callback_us / fps_frame_count) / 1000.0);
+          cj_log_emit(CJ_LOG_INFO, "    Execute:       %.3fms", (total_execute_us / fps_frame_count) / 1000.0);
+          cj_log_emit(CJ_LOG_INFO, "    Present:       %.3fms", (total_present_us / fps_frame_count) / 1000.0);
+          cj_log_emit(CJ_LOG_INFO, "    VSync check:   %.3fms", (total_vsync_check_us / fps_frame_count) / 1000.0);
+          cj_log_emit(CJ_LOG_INFO, "    Sleep:         %.3fms", (total_sleep_us / fps_frame_count) / 1000.0);
+          cj_log_emit(CJ_LOG_INFO, "    Other/VSync:   %.3fms (likely VSync wait in execute)", (total_other_us / fps_frame_count) / 1000.0);
+          cj_log_emit(CJ_LOG_INFO, "    Windows:       %u", profile.window_count);
         }
 
         /* Reset profiling counters. */
