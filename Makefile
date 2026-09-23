@@ -90,7 +90,7 @@ else ifeq ($(findstring MINGW32_NT,$(UNAME_S)),MINGW32_NT)  # 32-bit Windows
 	OS_NAME := Windows
 	LIB_EXTENSION := dll
 	OS_SPECIFIC_CXX_FLAGS := -shared
-	OS_SPECIFIC_LIBRARY_NAME_FLAG := -Wl,--out-implib,$(APP_DIR)/$(BASE_NAME_PREFIX).dll.a
+	OS_SPECIFIC_LIBRARY_NAME_FLAG = -Wl,--out-implib,$(APP_DIR)/$(BASE_NAME_PREFIX).dll.a
 	TARGET := $(BASE_NAME_PREFIX).dll
 	EXE_EXTENSION := .exe
 	# Additional Windows-specific variables
@@ -105,7 +105,7 @@ else ifeq ($(findstring MINGW64_NT,$(UNAME_S)),MINGW64_NT)  # 64-bit Windows
 	OS_NAME := Windows
 	LIB_EXTENSION := dll
 	OS_SPECIFIC_CXX_FLAGS := -shared
-	OS_SPECIFIC_LIBRARY_NAME_FLAG := -Wl,--out-implib,$(APP_DIR)/$(BASE_NAME_PREFIX).dll.a
+	OS_SPECIFIC_LIBRARY_NAME_FLAG = -Wl,--out-implib,$(APP_DIR)/$(BASE_NAME_PREFIX).dll.a
 	TARGET := $(BASE_NAME_PREFIX).dll
 	EXE_EXTENSION := .exe
 	# Additional Windows-specific variables
@@ -1111,10 +1111,12 @@ ifeq ($(OS_NAME), Linux)
 	@if [ -n "$(LDCONF_INSTALL_PATH)" ]; then echo "$(LIB_INSTALL_PATH)/$(SUITE)" > $(LDCONF_INSTALL_PATH)/$(SUITE)-$(PROJECT)$(BRANCH).conf; fi
 endif
 ifeq ($(OS_NAME), Windows)
-# The .dll file and the .dll.a file
-	@mkdir -p $(BIN_INSTALL_PATH)/$(SUITE)
-	@cp $(APP_DIR)/$(TARGET).a $(LIB_INSTALL_PATH)
-	@cp $(APP_DIR)/$(TARGET) $(BIN_INSTALL_PATH)
+# The .dll goes in bin/, where the loader finds it once that directory is on
+# PATH - Windows has no rpath. The import library goes where the .pc's -L
+# points, lib/$(SUITE)/, as the .so does on Linux; in lib/ no -L named it.
+	@mkdir -p $(BIN_INSTALL_PATH) $(LIB_INSTALL_PATH)/$(SUITE)
+	@cp $(APP_DIR)/$(TARGET).a $(LIB_INSTALL_PATH)/$(SUITE)/
+	@cp $(APP_DIR)/$(TARGET) $(BIN_INSTALL_PATH)/
 endif
 	# Installing the headers.
 	#
@@ -1149,7 +1151,7 @@ ifeq ($(OS_NAME), Linux)
 	@rm -f $(LDCONF_INSTALL_PATH)/$(SUITE)-$(PROJECT)$(BRANCH).conf
 endif
 ifeq ($(OS_NAME), Windows)
-	@rm -f $(LIB_INSTALL_PATH)/$(TARGET).a
+	@rm -f $(LIB_INSTALL_PATH)/$(SUITE)/$(TARGET).a
 	@rm -f $(BIN_INSTALL_PATH)/$(TARGET)
 endif
 	# Deleting the headers.
