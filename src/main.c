@@ -47,6 +47,10 @@ uint64_t getCurrentTimeInMilliseconds(void) {
 #else
 #include <stdint.h>
 #include <time.h>
+/* The demo opens the X display itself, so it includes Xlib itself. It used
+ * to arrive through application.h, which no longer drags the window system
+ * into every consumer - this is what that change looks like from outside. */
+#include <X11/Xlib.h>
 // Local extern for legacy X11 display pointer used by cjelly internals
 extern Display * display;
 uint64_t getCurrentTimeInMilliseconds(void) {

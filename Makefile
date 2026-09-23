@@ -362,7 +362,7 @@ TESTFLAGS := `PKG_CONFIG_PATH=$(PKG_CONFIG_LOOKUP_PATH) pkg-config --libs --cfla
 # coverage target does, because --coverage links the gcov runtime, whose
 # mangle_path check-symbols is right to reject in a shipping library and
 # wrong to reject in an instrumented one. Spelled as text's TEST_GATES is.
-TEST_GATES ?= check-symbols check-stamps check-aliasing
+TEST_GATES ?= check-symbols check-stamps check-aliasing check-headers
 
 
 
@@ -1594,3 +1594,67 @@ check-aliasing: ## Fail if the strict-aliasing warning is no longer armed
 		exit 1; \
 	fi; \
 	printf "\033[0;32mA planted type-punning violation is still refused by the library's own flags.\033[0m\n"
+
+####################################################################
+# Installed-header platform check
+####################################################################
+
+# Every header under include/ is installed, `*_internal.h` included, so a
+# header that includes <X11/Xlib.h> or <windows.h> puts the whole window
+# system's namespace into every consumer that includes it. application.h did
+# exactly that, which is roughly 1,300 names on Linux and, on Windows, the
+# macros that make `near`, `far` and `Rectangle` unusable as identifiers.
+# cj_platform.h documents the opposite intent in its own first paragraph -
+# "opaque, no platform headers required" - so this is the gate that makes
+# the documented promise true of the rest of the API.
+#
+# The instrument is the PREPROCESSOR, not the compiler. Two states have to be
+# told apart: a header that pulls X11 in, and a header that does not compile
+# standalone at all. `cc -fsyntax-only` fails on both and they read alike -
+# window_internal.h and rgraph_model_internal.h fail it today for missing a
+# vulkan.h of their own, which has nothing to do with this question. `cc -E`
+# type-checks nothing, so it answers only what was included.
+#
+# Pinned so that a sweep which stops finding headers fails instead of passing
+# on an empty loop. Raise it when a header is added.
+CHECK_HEADERS_EXPECTED := 30
+
+check-headers: ## Fail if an installed header pulls the window system in with it
+	@mkdir -p $(BUILD_DIR)
+# The control runs first. A sweep that has stopped matching prints exactly
+# what a clean tree prints, so require it to find a planted inclusion before
+# any clean result from it is believed.
+	@printf '#include <X11/Xlib.h>\n' > $(BUILD_DIR)/hdr_control.h
+	@printf '#include "hdr_control.h"\n' > $(BUILD_DIR)/hdr_probe.c
+	@if ! $(CC) -E $(CFLAGS) $(INCLUDE) -I $(BUILD_DIR) \
+			$(BUILD_DIR)/hdr_probe.c 2>/dev/null | grep -q '/X11/'; then \
+		printf "\033[0;31mcheck-headers: the control header includes X11/Xlib.h and the sweep did not see it, so a clean result from it means nothing.\033[0m\n" >&2; \
+		exit 1; \
+	fi
+	@n=0; bad=0; \
+	for h in $$(cd include && find . -name '*.h' ! -name 'platform_internal.h' \
+			| sed 's|^\./||' | sort); do \
+		n=$$((n+1)); \
+		printf '#include <%s>\n' "$$h" > $(BUILD_DIR)/hdr_probe.c; \
+		if ! $(CC) -E $(CFLAGS) $(INCLUDE) $(BUILD_DIR)/hdr_probe.c \
+				> $(BUILD_DIR)/hdr_probe.i 2>/dev/null; then \
+			printf "  %s: does not preprocess - an include it names is missing\n" "$$h" >&2; \
+			bad=$$((bad+1)); continue; \
+		fi; \
+		if grep -qE '"[^"]*/X11/|"[^"]*[/\\]windows\.h"' $(BUILD_DIR)/hdr_probe.i; then \
+			printf "  %s: pulls the window system in with it\n" "$$h" >&2; \
+			bad=$$((bad+1)); \
+		fi; \
+	done; \
+	if [ "$$n" != "$(CHECK_HEADERS_EXPECTED)" ]; then \
+		printf "\033[0;31mcheck-headers: swept %s headers, not the %s it is pinned to. Either a header was added and the pin wants raising, or the sweep stopped finding them - and an empty sweep reports clean.\033[0m\n" "$$n" "$(CHECK_HEADERS_EXPECTED)" >&2; \
+		exit 1; \
+	fi; \
+	if [ "$$bad" != "0" ]; then \
+		printf "\033[0;31m\n### %s installed headers carry the window system with them ###\033[0m\n" "$$bad" >&2; \
+		printf "\nAn implementation file that needs a native type includes\n" >&2; \
+		printf "<ghoti.io/cjelly/platform_internal.h> first instead; it is the one header\n" >&2; \
+		printf "this gate skips, and the only one allowed to name a window system.\n" >&2; \
+		exit 1; \
+	fi; \
+	printf "\033[0;32mAll %s installed headers keep the window system to themselves.\033[0m\n" "$$n"

@@ -36,6 +36,7 @@
 // cjelly/macros.h, reached through application.h, defines _POSIX_C_SOURCE.
 // It has to be seen before any system header is pulled in, so the CJelly
 // includes come first and everything else follows.
+#include <ghoti.io/cjelly/platform_internal.h>
 #include <ghoti.io/cjelly/macros.h>
 #include <ghoti.io/cjelly/application.h>
 #include <ghoti.io/cjelly/cj_window.h>

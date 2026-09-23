@@ -49,19 +49,10 @@ extern "C" {
 
 #include <ghoti.io/cjelly/types.h>
 
-// Include platform-specific headers for Vulkan and window management first.
-#ifdef _WIN32
-
-#define VK_USE_PLATFORM_WIN32_KHR
-#include <windows.h>
-
-#else
-
-#define VK_USE_PLATFORM_XLIB_KHR
-#include <X11/Xatom.h>
-#include <X11/Xlib.h>
-
-#endif
+// No platform headers here. This header is installed, and including Xlib or
+// windows.h from it put the whole window system's namespace into every
+// consumer. Implementation files that need a native type include
+// cjelly/platform_internal.h first instead.
 
 // Include all other headers.
 #include <stdbool.h>

@@ -27,17 +27,16 @@
 #define _POSIX_C_SOURCE 200809L
 #endif
 
-/* Platform includes */
+/* Platform includes. This has to precede every other include in the file:
+ * it is what selects the VK_USE_PLATFORM_* surface types, and that only
+ * takes effect before vulkan.h is first seen. */
+#include <ghoti.io/cjelly/platform_internal.h>
 #ifdef _WIN32
-#include <windows.h>
-#include <vulkan/vulkan.h>
 #include <vulkan/vulkan_win32.h>
 #else
-#include <X11/Xlib.h>
 #include <X11/Xutil.h>
-#include <vulkan/vulkan.h>
 #include <vulkan/vulkan_xlib.h>
-extern Display* display; /* provided by main on Linux */
+extern Display* display; /* defined in cjelly.c */
 #endif
 
 #include <stdio.h>

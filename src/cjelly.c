@@ -49,6 +49,7 @@
 #endif
 #endif
 
+#include <ghoti.io/cjelly/platform_internal.h>
 #include <ghoti.io/cjelly/cjelly.h>
 #include <ghoti.io/cjelly/runtime.h>
 #include <ghoti.io/cjelly/application.h>
@@ -63,10 +64,8 @@
 #include <ghoti.io/cjelly/format/image.h>
 #include <ghoti.io/cjelly/macros.h>
 #ifdef _WIN32
-#include <windows.h>
 #include <vulkan/vulkan_win32.h>
 #else
-#include <X11/Xlib.h>
 #include <X11/keysym.h>
 #include <math.h>
 #include <X11/extensions/XI.h>
