@@ -1086,6 +1086,16 @@ CJ_API CJellyApplicationError cjelly_application_create_logical_device(
   int usedFamilies[3];
   int usedCount = 0;
 
+  // The priority every queue is created with. It lives here, at function
+  // scope, because the macro below stores its address in
+  // pQueuePriorities and Vulkan does not read through that pointer until
+  // vkCreateDevice, hundreds of lines later. Declared inside the macro's
+  // `do { } while (0)` it was dead by then: three separate objects, each
+  // one gone at the closing brace, and vkCreateDevice read whatever the
+  // frames in between had left on the stack. ASan calls it a
+  // stack-use-after-scope; Vulkan called it a priority.
+  const float queuePriority = 1.0f;
+
   // Macro to add a queue family only once.
 #define ADD_QUEUE_INFO(family)                                                 \
   do {                                                                         \
@@ -1097,14 +1107,14 @@ CJ_API CJellyApplicationError cjelly_application_create_logical_device(
       }                                                                        \
     }                                                                          \
     if (!alreadyAdded) {                                                       \
-      float priority = 1.0f;                                                   \
       queueCreateInfos[queueCreateInfoCount].sType =                           \
           VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;                          \
       queueCreateInfos[queueCreateInfoCount].pNext = NULL;                     \
       queueCreateInfos[queueCreateInfoCount].flags = 0;                        \
       queueCreateInfos[queueCreateInfoCount].queueFamilyIndex = (family);      \
       queueCreateInfos[queueCreateInfoCount].queueCount = 1;                   \
-      queueCreateInfos[queueCreateInfoCount].pQueuePriorities = &priority;     \
+      queueCreateInfos[queueCreateInfoCount].pQueuePriorities =                \
+          &queuePriority;                                                      \
       usedFamilies[usedCount++] = (family);                                    \
       queueCreateInfoCount++;                                                  \
     }                                                                          \
@@ -1157,9 +1167,16 @@ CJ_API CJellyApplicationError cjelly_application_create_logical_device(
       (const char * const *)app->options.requiredDeviceExtensions.data;
 
   // Chain the descriptor indexing features if supported (minimal features only)
+  //
+  // Declared out here, not inside the `if`, for the same reason
+  // queuePriority is declared at the top of the function: vkCreateDevice
+  // walks the pNext chain, and a struct scoped to the `if` is gone by the
+  // time it does. What it read then was whatever had since been written over
+  // that slot, starting with an sType the loader does not recognise - a
+  // segmentation fault inside libvulkan, from a frame that looked correct.
+  VkPhysicalDeviceDescriptorIndexingFeaturesEXT descriptorIndexingFeatures = {0};
   if (descriptorIndexingSupported) {
     // Set up descriptor indexing features
-    VkPhysicalDeviceDescriptorIndexingFeaturesEXT descriptorIndexingFeatures = {0};
     descriptorIndexingFeatures.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES_EXT;
     descriptorIndexingFeatures.pNext = NULL;
 
