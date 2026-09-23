@@ -67,6 +67,22 @@
 CJ_API void processWindowEvents(void);
 
 #ifndef _WIN32
+/** The X display connection, owned by src/platform/x11/events.c.
+ *
+ *  Prefixed because it is a definition with external linkage: as plain
+ *  `display` it squatted on that name in the static archive, where the
+ *  visibility flags that hide it in the shared object do not apply.
+ */
+extern Display * cj_x11_display;
+
+/** Open the X display connection, if it is not open already.
+ *  @return true if a connection is open on return.
+ */
+bool cj_x11_open_display(void);
+
+/** Close the X display connection, if one is open. Idempotent. */
+void cj_x11_close_display(void);
+
 /** Ask the X server for XInput2 events on this window, if XInput2 is there.
  *
  *  window.c calls this after creating a window. It reached it through an
@@ -88,11 +104,11 @@ bool select_xinput2_events(Window window);
  *  #pragma once, nothing defines that macro, so the condition was always
  *  true. The guard here is the real one.
  *
- *  @param display X11 display.
+ *  @param dpy X11 display.
  *  @param root Root window.
  *  @param win_x Window X position.
  *  @param win_y Window Y position.
  *  @return DPI scale factor (1.0 = 96 DPI).
  */
-float cj_window__get_dpi_scale_linux(Display* display, Window root, int32_t win_x, int32_t win_y);
+float cj_window__get_dpi_scale_linux(Display* dpy, Window root, int32_t win_x, int32_t win_y);
 #endif

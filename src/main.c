@@ -47,12 +47,10 @@ uint64_t getCurrentTimeInMilliseconds(void) {
 #else
 #include <stdint.h>
 #include <time.h>
-/* The demo opens the X display itself, so it includes Xlib itself. It used
- * to arrive through application.h, which no longer drags the window system
- * into every consumer - this is what that change looks like from outside. */
-#include <X11/Xlib.h>
-// Local extern for legacy X11 display pointer used by cjelly internals
-extern Display * display;
+/* The demo asks the library to open its display and never touches the
+ * connection itself, so it needs no Xlib header of its own. It used to
+ * declare `extern Display * display;` and assign to it. */
+#include <ghoti.io/cjelly/platform_internal.h>
 uint64_t getCurrentTimeInMilliseconds(void) {
   struct timespec ts;
   clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -325,10 +323,9 @@ int main(int argc, char ** argv) {
 #ifdef _WIN32
   // Windows: hInstance is set in createPlatformWindow.
 #else
-  // Linux: Open X display.
+  // Linux: ask the library to open its X display.
   fprintf(stderr, "Opening X display...\n");
-  display = XOpenDisplay(NULL);
-  if (!display) {
+  if (!cj_x11_open_display()) {
     fprintf(stderr, "Failed to open X display\n");
     exit(EXIT_FAILURE);
   }
@@ -617,7 +614,7 @@ int main(int argc, char ** argv) {
   cj_engine_shutdown_device(engine);
 
 #ifndef _WIN32
-  XCloseDisplay(display);
+  cj_x11_close_display();
 #endif
   // Free engine last (owns no Vulkan handles)
   cj_engine_shutdown(engine);

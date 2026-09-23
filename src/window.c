@@ -36,7 +36,6 @@
 #else
 #include <X11/Xutil.h>
 #include <vulkan/vulkan_xlib.h>
-extern Display* display; /* defined in cjelly.c */
 #endif
 
 #include <stdio.h>
@@ -893,7 +892,7 @@ static int32_t logical_to_physical(int32_t logical, float dpi_scale) {
 
 /**
  * @brief Query window frame extents (decoration sizes) from window manager.
- * @param display X11 display.
+ * @param cj_x11_display X11 cj_x11_display.
  * @param window Window to query.
  * @param out_left Pointer to receive left border width. Can be NULL.
  * @param out_right Pointer to receive right border width. Can be NULL.
@@ -905,7 +904,7 @@ static int32_t logical_to_physical(int32_t logical, float dpi_scale) {
  * If the property is not available (e.g., window not yet mapped or WM doesn't support it),
  * returns false and sets all outputs to 0.
  */
-static bool get_frame_extents(Display* display, Window window,
+static bool get_frame_extents(Display* dpy, Window window,
                               int32_t* out_left, int32_t* out_right,
                               int32_t* out_top, int32_t* out_bottom) {
   if (out_left) *out_left = 0;
@@ -913,7 +912,7 @@ static bool get_frame_extents(Display* display, Window window,
   if (out_top) *out_top = 0;
   if (out_bottom) *out_bottom = 0;
 
-  Atom frame_extents = XInternAtom(display, "_NET_FRAME_EXTENTS", True);
+  Atom frame_extents = XInternAtom(dpy, "_NET_FRAME_EXTENTS", True);
   if (frame_extents == None) {
     return false;  /* Property not supported by WM */
   }
@@ -923,7 +922,7 @@ static bool get_frame_extents(Display* display, Window window,
   unsigned long nitems, bytes_after;
   unsigned char* data = NULL;
 
-  int result = XGetWindowProperty(display, window, frame_extents,
+  int result = XGetWindowProperty(dpy, window, frame_extents,
                                   0, 4, False, XA_CARDINAL,
                                   &actual_type, &actual_format,
                                   &nitems, &bytes_after, &data);
@@ -972,11 +971,11 @@ static int monitor_dpi_count = 0;
 
 /**
  * @brief Query all monitors and cache their DPI
- * @param display X11 display
+ * @param cj_x11_display X11 cj_x11_display
  * @param root Root window
  */
-static void refresh_monitor_dpis(Display* display, Window root) {
-  (void)display;  /* May be unused if XRandR not available */
+static void refresh_monitor_dpis(Display* dpy, Window root) {
+  (void)dpy;  /* May be unused if XRandR not available */
   (void)root;     /* May be unused if XRandR not available */
 
   /* Free old cache */
@@ -989,7 +988,7 @@ static void refresh_monitor_dpis(Display* display, Window root) {
 #if HAVE_XRANDR_HEADERS
   /* Check if XRandR is available */
   int event_base, error_base;
-  if (!XRRQueryExtension(display, &event_base, &error_base)) {
+  if (!XRRQueryExtension(dpy, &event_base, &error_base)) {
     return;  /* XRandR not available */
   }
 #else
@@ -998,7 +997,7 @@ static void refresh_monitor_dpis(Display* display, Window root) {
 
 #if HAVE_XRANDR_HEADERS
   /* Get screen resources */
-  XRRScreenResources* res = XRRGetScreenResources(display, root);
+  XRRScreenResources* res = XRRGetScreenResources(dpy, root);
   if (!res) return;
 #else
   return;
@@ -1014,7 +1013,7 @@ static void refresh_monitor_dpis(Display* display, Window root) {
 
   /* Query each output */
   for (int i = 0; i < res->noutput; i++) {
-    XRROutputInfo* output = XRRGetOutputInfo(display, res, res->outputs[i]);
+    XRROutputInfo* output = XRRGetOutputInfo(dpy, res, res->outputs[i]);
     if (!output || output->connection != RR_Connected) {
       if (output) XRRFreeOutputInfo(output);
       continue;
@@ -1022,7 +1021,7 @@ static void refresh_monitor_dpis(Display* display, Window root) {
 
     /* Get CRTC (monitor) info */
     if (output->crtc != None) {
-      XRRCrtcInfo* crtc = XRRGetCrtcInfo(display, res, output->crtc);
+      XRRCrtcInfo* crtc = XRRGetCrtcInfo(dpy, res, output->crtc);
       if (crtc) {
         MonitorDPI* m = &monitor_dpis[monitor_dpi_count];
         m->x = crtc->x;
@@ -1059,16 +1058,16 @@ static void refresh_monitor_dpis(Display* display, Window root) {
 
 /**
  * @brief Get DPI scale for a window based on its position
- * @param display X11 display
+ * @param cj_x11_display X11 cj_x11_display
  * @param root Root window
  * @param win_x Window X position
  * @param win_y Window Y position
  * @return DPI scale factor (1.0 = 96 DPI)
  */
-float cj_window__get_dpi_scale_linux(Display* display, Window root, int32_t win_x, int32_t win_y) {
+float cj_window__get_dpi_scale_linux(Display* dpy, Window root, int32_t win_x, int32_t win_y) {
   /* Refresh monitor cache if needed */
   if (!monitor_dpis) {
-    refresh_monitor_dpis(display, root);
+    refresh_monitor_dpis(dpy, root);
   }
 
   /* Find which monitor contains the window center */
@@ -1141,13 +1140,13 @@ static void plat_createPlatformWindow(CJPlatformWindow * win, const char * title
   /* Get DPI for this window */
   win->dpi_scale = dpi_to_scale(get_window_dpi(win->handle));
 #else
-  int screen = DefaultScreen(display);
+  int screen = DefaultScreen(cj_x11_display);
   /* Determine window position */
   int win_x = (x == CJ_WINDOW_POSITION_DEFAULT) ? 0 : x;
   int win_y = (y == CJ_WINDOW_POSITION_DEFAULT) ? 0 : y;
 
   /* Use black background to reduce flickering during resize */
-  win->handle = XCreateSimpleWindow(display, RootWindow(display, screen), win_x, win_y, (unsigned)width, (unsigned)height, 0, BlackPixel(display, screen), BlackPixel(display, screen));
+  win->handle = XCreateSimpleWindow(cj_x11_display, RootWindow(cj_x11_display, screen), win_x, win_y, (unsigned)width, (unsigned)height, 0, BlackPixel(cj_x11_display, screen), BlackPixel(cj_x11_display, screen));
 
   /* Set position hint if position was specified */
   if (x != CJ_WINDOW_POSITION_DEFAULT && y != CJ_WINDOW_POSITION_DEFAULT) {
@@ -1156,72 +1155,72 @@ static void plat_createPlatformWindow(CJPlatformWindow * win, const char * title
       hints->flags = USPosition;
       hints->x = x;
       hints->y = y;
-      XSetWMNormalHints(display, win->handle, hints);
+      XSetWMNormalHints(cj_x11_display, win->handle, hints);
       XFree(hints);
     }
   }
 
   /* Set initial maximized state if requested */
   if (initial_state == CJ_WINDOW_STATE_MAXIMIZED) {
-    Atom wm_state = XInternAtom(display, "_NET_WM_STATE", False);
-    Atom max_horz = XInternAtom(display, "_NET_WM_STATE_MAXIMIZED_HORZ", False);
-    Atom max_vert = XInternAtom(display, "_NET_WM_STATE_MAXIMIZED_VERT", False);
+    Atom wm_state = XInternAtom(cj_x11_display, "_NET_WM_STATE", False);
+    Atom max_horz = XInternAtom(cj_x11_display, "_NET_WM_STATE_MAXIMIZED_HORZ", False);
+    Atom max_vert = XInternAtom(cj_x11_display, "_NET_WM_STATE_MAXIMIZED_VERT", False);
     if (wm_state != None && max_horz != None && max_vert != None) {
-      XChangeProperty(display, win->handle, wm_state, XA_ATOM, 32, PropModeReplace,
+      XChangeProperty(cj_x11_display, win->handle, wm_state, XA_ATOM, 32, PropModeReplace,
                       (unsigned char*)&max_horz, 1);
       // Note: We'll set both atoms via ClientMessage after mapping
     }
   }
 
-  XSelectInput(display, win->handle, StructureNotifyMask | KeyPressMask | KeyReleaseMask | ExposureMask |
+  XSelectInput(cj_x11_display, win->handle, StructureNotifyMask | KeyPressMask | KeyReleaseMask | ExposureMask |
                ButtonPressMask | ButtonReleaseMask | PointerMotionMask | EnterWindowMask | LeaveWindowMask | FocusChangeMask | PropertyChangeMask);
 
   /* Try to select XInput2 events for smooth scrolling (falls back to traditional events if unavailable) */
   select_xinput2_events(win->handle);
 
-  Atom wmDelete = XInternAtom(display, "WM_DELETE_WINDOW", False);
-  XStoreName(display, win->handle, title);
-  XSetWMProtocols(display, win->handle, &wmDelete, 1);
+  Atom wmDelete = XInternAtom(cj_x11_display, "WM_DELETE_WINDOW", False);
+  XStoreName(cj_x11_display, win->handle, title);
+  XSetWMProtocols(cj_x11_display, win->handle, &wmDelete, 1);
 
   /* Set window background to None to prevent X11 from drawing background during resize.
    * This reduces flickering as the compositor won't show a solid background between frames. */
-  XSetWindowBackgroundPixmap(display, win->handle, None);
+  XSetWindowBackgroundPixmap(cj_x11_display, win->handle, None);
 
-  XMapWindow(display, win->handle);
+  XMapWindow(cj_x11_display, win->handle);
 
   /* Set maximized state after mapping (via ClientMessage) */
   if (initial_state == CJ_WINDOW_STATE_MAXIMIZED) {
     XEvent ev = {0};
     ev.type = ClientMessage;
     ev.xclient.window = win->handle;
-    ev.xclient.message_type = XInternAtom(display, "_NET_WM_STATE", False);
+    ev.xclient.message_type = XInternAtom(cj_x11_display, "_NET_WM_STATE", False);
     ev.xclient.format = 32;
     ev.xclient.data.l[0] = 1;  // _NET_WM_STATE_ADD
-    ev.xclient.data.l[1] = XInternAtom(display, "_NET_WM_STATE_MAXIMIZED_HORZ", False);
-    ev.xclient.data.l[2] = XInternAtom(display, "_NET_WM_STATE_MAXIMIZED_VERT", False);
+    ev.xclient.data.l[1] = XInternAtom(cj_x11_display, "_NET_WM_STATE_MAXIMIZED_HORZ", False);
+    ev.xclient.data.l[2] = XInternAtom(cj_x11_display, "_NET_WM_STATE_MAXIMIZED_VERT", False);
     ev.xclient.data.l[3] = 1;  // Source indication: application
     ev.xclient.data.l[4] = 0;
-    XSendEvent(display, RootWindow(display, screen), False,
+    XSendEvent(cj_x11_display, RootWindow(cj_x11_display, screen), False,
                SubstructureNotifyMask | SubstructureRedirectMask, &ev);
   } else if (initial_state == CJ_WINDOW_STATE_MINIMIZED) {
-    XIconifyWindow(display, win->handle, screen);
+    XIconifyWindow(cj_x11_display, win->handle, screen);
   }
 
   /* Update cached position to CLIENT coordinates.
    * XMoveWindow expects client coordinates, so we use client coords throughout. */
   Window child;
   int client_x, client_y;
-  if (XTranslateCoordinates(display, win->handle, RootWindow(display, screen),
+  if (XTranslateCoordinates(cj_x11_display, win->handle, RootWindow(cj_x11_display, screen),
                             0, 0, &client_x, &client_y, &child)) {
     win->x = client_x;
     win->y = client_y;
   }
 
   /* Get DPI for this window based on position */
-  Window root = RootWindow(display, screen);
-  win->dpi_scale = cj_window__get_dpi_scale_linux(display, root, win->x, win->y);
+  Window root = RootWindow(cj_x11_display, screen);
+  win->dpi_scale = cj_window__get_dpi_scale_linux(cj_x11_display, root, win->x, win->y);
 
-  XFlush(display);
+  XFlush(cj_x11_display);
 #endif
 }
 
@@ -1231,7 +1230,7 @@ static void plat_createSurfaceForWindow(CJPlatformWindow * win) {
   VkWin32SurfaceCreateInfoKHR ci = {0}; ci.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR; ci.hinstance = GetModuleHandle(NULL); ci.hwnd = win->handle;
   vkCreateWin32SurfaceKHR(cj_engine_instance(cj_engine_get_current()), &ci, NULL, &win->surface);
 #else
-  VkXlibSurfaceCreateInfoKHR ci = {0}; ci.sType = VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR; ci.dpy = display; ci.window = win->handle;
+  VkXlibSurfaceCreateInfoKHR ci = {0}; ci.sType = VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR; ci.dpy = cj_x11_display; ci.window = win->handle;
   vkCreateXlibSurfaceKHR(cj_engine_instance(cj_engine_get_current()), &ci, NULL, &win->surface);
 #endif
 }
@@ -1528,7 +1527,7 @@ static void plat_cleanupWindow(CJPlatformWindow * win) {
   // DestroyWindow is called in cj_window_destroy, not here
   win->handle = NULL;
 #else
-  if (display && win->handle) XDestroyWindow(display, win->handle);
+  if (cj_x11_display && win->handle) XDestroyWindow(cj_x11_display, win->handle);
   win->handle = 0;
 #endif
 }
@@ -2004,19 +2003,18 @@ CJ_API cj_window_state_t cj_window_get_state(const cj_window_t* window) {
   }
 #else
   // Linux: Query _NET_WM_STATE property
-  extern Display* display;
-  Atom wm_state = XInternAtom(display, "_NET_WM_STATE", False);
+  Atom wm_state = XInternAtom(cj_x11_display, "_NET_WM_STATE", False);
   Atom actual_type;
   int actual_format;
   unsigned long nitems, bytes_after;
   unsigned char* prop = NULL;
 
-  if (XGetWindowProperty(display, window->plat->handle, wm_state, 0, 1024, False,
+  if (XGetWindowProperty(cj_x11_display, window->plat->handle, wm_state, 0, 1024, False,
                          XA_ATOM, &actual_type, &actual_format, &nitems, &bytes_after, &prop) == Success) {
     if (prop && nitems > 0) {
       Atom* atoms = (Atom*)prop;
-      Atom max_horz = XInternAtom(display, "_NET_WM_STATE_MAXIMIZED_HORZ", False);
-      Atom max_vert = XInternAtom(display, "_NET_WM_STATE_MAXIMIZED_VERT", False);
+      Atom max_horz = XInternAtom(cj_x11_display, "_NET_WM_STATE_MAXIMIZED_HORZ", False);
+      Atom max_vert = XInternAtom(cj_x11_display, "_NET_WM_STATE_MAXIMIZED_VERT", False);
       bool has_max_horz = false, has_max_vert = false;
       for (unsigned long i = 0; i < nitems; i++) {
         if (atoms[i] == max_horz) has_max_horz = true;
@@ -2027,7 +2025,7 @@ CJ_API cj_window_state_t cj_window_get_state(const cj_window_t* window) {
       } else {
         // Check if minimized (viewable attribute)
         XWindowAttributes attrs;
-        if (XGetWindowAttributes(display, window->plat->handle, &attrs)) {
+        if (XGetWindowAttributes(cj_x11_display, window->plat->handle, &attrs)) {
           if (attrs.map_state == IsUnmapped) {
             window->plat->state = CJ_WINDOW_STATE_MINIMIZED;
           } else {
@@ -2039,7 +2037,7 @@ CJ_API cj_window_state_t cj_window_get_state(const cj_window_t* window) {
     } else {
       // No state atoms, check if minimized
       XWindowAttributes attrs;
-      if (XGetWindowAttributes(display, window->plat->handle, &attrs)) {
+      if (XGetWindowAttributes(cj_x11_display, window->plat->handle, &attrs)) {
         if (attrs.map_state == IsUnmapped) {
           window->plat->state = CJ_WINDOW_STATE_MINIMIZED;
         } else {
@@ -2071,7 +2069,6 @@ CJ_API cj_result_t cj_window_set_position(cj_window_t* window, int32_t x, int32_
   window->plat->x = x;
   window->plat->y = y;
 #else
-  extern Display* display;
 
   // Skip if position hasn't changed (reduces lag from duplicate moves)
   if (x == window->plat->x && y == window->plat->y) {
@@ -2080,7 +2077,7 @@ CJ_API cj_result_t cj_window_set_position(cj_window_t* window, int32_t x, int32_
 
   // Get decoration offset
   int32_t decor_left = 0, decor_top = 0;
-  get_frame_extents(display, window->plat->handle, &decor_left, NULL, &decor_top, NULL);
+  get_frame_extents(cj_x11_display, window->plat->handle, &decor_left, NULL, &decor_top, NULL);
 
   // Empirically determined: WM adds (decor - 32) to our coordinates.
   // To compensate, subtract this offset.
@@ -2094,8 +2091,8 @@ CJ_API cj_result_t cj_window_set_position(cj_window_t* window, int32_t x, int32_
   cj_window__set_programmatic_move(window, true);
 
   // x,y are CLIENT coordinates. Subtract offset to compensate for WM behavior.
-  XMoveWindow(display, window->plat->handle, move_x, move_y);
-  XFlush(display);
+  XMoveWindow(cj_x11_display, window->plat->handle, move_x, move_y);
+  XFlush(cj_x11_display);
 
   // Update cached position immediately (in client coordinates)
   window->plat->x = x;
@@ -2129,12 +2126,11 @@ CJ_API cj_result_t cj_window_set_state(cj_window_t* window, cj_window_state_t st
   window->plat->state = state;
   // State change callback will be invoked by WM_SIZE handler
 #else
-  extern Display* display;
-  int screen = DefaultScreen(display);
+  int screen = DefaultScreen(cj_x11_display);
   XEvent ev = {0};
-  Atom wm_state = XInternAtom(display, "_NET_WM_STATE", False);
-  Atom max_horz = XInternAtom(display, "_NET_WM_STATE_MAXIMIZED_HORZ", False);
-  Atom max_vert = XInternAtom(display, "_NET_WM_STATE_MAXIMIZED_VERT", False);
+  Atom wm_state = XInternAtom(cj_x11_display, "_NET_WM_STATE", False);
+  Atom max_horz = XInternAtom(cj_x11_display, "_NET_WM_STATE_MAXIMIZED_HORZ", False);
+  Atom max_vert = XInternAtom(cj_x11_display, "_NET_WM_STATE_MAXIMIZED_VERT", False);
 
   switch (state) {
     case CJ_WINDOW_STATE_NORMAL:
@@ -2148,7 +2144,7 @@ CJ_API cj_result_t cj_window_set_state(cj_window_t* window, cj_window_state_t st
       ev.xclient.data.l[2] = max_vert;
       ev.xclient.data.l[3] = 1;  // Source indication: application
       ev.xclient.data.l[4] = 0;
-      XSendEvent(display, RootWindow(display, screen), False,
+      XSendEvent(cj_x11_display, RootWindow(cj_x11_display, screen), False,
                  SubstructureNotifyMask | SubstructureRedirectMask, &ev);
       window->plat->state = CJ_WINDOW_STATE_NORMAL;
       break;
@@ -2163,12 +2159,12 @@ CJ_API cj_result_t cj_window_set_state(cj_window_t* window, cj_window_state_t st
       ev.xclient.data.l[2] = max_vert;
       ev.xclient.data.l[3] = 1;  // Source indication: application
       ev.xclient.data.l[4] = 0;
-      XSendEvent(display, RootWindow(display, screen), False,
+      XSendEvent(cj_x11_display, RootWindow(cj_x11_display, screen), False,
                  SubstructureNotifyMask | SubstructureRedirectMask, &ev);
       window->plat->state = CJ_WINDOW_STATE_MAXIMIZED;
       break;
     case CJ_WINDOW_STATE_MINIMIZED:
-      XIconifyWindow(display, window->plat->handle, screen);
+      XIconifyWindow(cj_x11_display, window->plat->handle, screen);
       window->plat->state = CJ_WINDOW_STATE_MINIMIZED;
       break;
     case CJ_WINDOW_STATE_FULLSCREEN:
@@ -2177,7 +2173,7 @@ CJ_API cj_result_t cj_window_set_state(cj_window_t* window, cj_window_state_t st
     default:
       return CJ_E_INVALID_ARGUMENT;
   }
-  XFlush(display);
+  XFlush(cj_x11_display);
   // State change callback will be invoked by PropertyNotify handler
 #endif
   return CJ_SUCCESS;
@@ -2562,9 +2558,9 @@ CJ_API void cj_window_capture_mouse(cj_window_t* window) {
   }
 #else
   /* X11: Use XGrabPointer */
-  if (display && window->plat->handle) {
+  if (cj_x11_display && window->plat->handle) {
     Window xwindow = (Window)window->plat->handle;
-    XGrabPointer(display, xwindow, False,
+    XGrabPointer(cj_x11_display, xwindow, False,
                  ButtonPressMask | ButtonReleaseMask | PointerMotionMask,
                  GrabModeAsync, GrabModeAsync,
                  None, None, CurrentTime);
@@ -2582,8 +2578,8 @@ CJ_API void cj_window_release_mouse(cj_window_t* window) {
   }
 #else
   /* X11: Use XUngrabPointer */
-  if (window->has_mouse_capture && display) {
-    XUngrabPointer(display, CurrentTime);
+  if (window->has_mouse_capture && cj_x11_display) {
+    XUngrabPointer(cj_x11_display, CurrentTime);
     window->has_mouse_capture = false;
   }
 #endif

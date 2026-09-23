@@ -26,8 +26,8 @@
  * compiles one directory under src/platform and not the other, so neither
  * file needs a platform conditional of its own.
  *
- * The XInput2 state and the X display live here because nothing outside this
- * file reads them: all eighteen uses of `display` in cjelly.c were inside
+ * The XInput2 state and the X cj_x11_display live here because nothing outside this
+ * file reads them: all eighteen uses of `cj_x11_display` in cjelly.c were inside
  * this arm, and every xinput2_* use was too.
  */
 
@@ -56,9 +56,25 @@
 #include <ghoti.io/cjelly/cj_window.h>
 #include <ghoti.io/cjelly/window_internal.h>
 
-/* The X display. Opened by the application - the demo does it in main.c -
- * and read by window.c when it creates a surface. */
-Display * display;
+/* The X cj_x11_display. It used to be a global spelled `cj_x11_display`, with external
+ * linkage and no library prefix, which the demo ASSIGNED TO through an
+ * `extern Display * cj_x11_display;` of its own - so a consumer linking the static
+ * archive both collided with the name and drove the library's connection.
+ * Renamed, declared once in platform_internal.h, and opened and closed
+ * through the two functions below. */
+Display * cj_x11_display;
+
+bool cj_x11_open_display(void) {
+  if (cj_x11_display) return true;
+  cj_x11_display = XOpenDisplay(NULL);
+  return cj_x11_display != NULL;
+}
+
+void cj_x11_close_display(void) {
+  if (!cj_x11_display) return;
+  XCloseDisplay(cj_x11_display);
+  cj_x11_display = NULL;
+}
 
 static int xinput2_available = -1; /* -1 = not checked, 0 = unavailable, 1 = available */
 static int xinput2_major = 2;
@@ -78,10 +94,10 @@ static bool init_xinput2(void) {
 
   xinput2_available = 0; /* Assume unavailable until proven otherwise */
 
-  if (!display) return false;
+  if (!cj_x11_display) return false;
 
   int event, error;
-  if (!XQueryExtension(display, "XInputExtension", &xinput2_opcode, &event, &error)) {
+  if (!XQueryExtension(cj_x11_display, "XInputExtension", &xinput2_opcode, &event, &error)) {
     /* XInput extension not available */
     return false;
   }
@@ -123,7 +139,7 @@ static bool init_xinput2(void) {
   }
 
   int major = 2, minor = 0;
-  Status result = xi_query_version(display, &major, &minor);
+  Status result = xi_query_version(cj_x11_display, &major, &minor);
   if (result == BadRequest || result != Success) {
     /* XInput2 not available */
     return false;
@@ -138,7 +154,7 @@ static bool init_xinput2(void) {
 
 /* Select XInput2 events for a window. Returns true if XInput2 events were selected. */
 bool select_xinput2_events(Window window) {
-  if (!init_xinput2() || !display) {
+  if (!init_xinput2() || !cj_x11_display) {
     return false;
   }
 
@@ -177,12 +193,12 @@ bool select_xinput2_events(Window window) {
   /* Note: Scroll events are handled via traditional X11 ButtonPress (Button4/Button5) */
   /* We don't select XI_ButtonPress/XI_ButtonRelease here to avoid consuming scroll events */
 
-  Status result = xi_select_events(display, window, &event_mask, 1);
+  Status result = xi_select_events(cj_x11_display, window, &event_mask, 1);
   if (result != Success) {
     return false;
   }
 
-  XFlush(display);
+  XFlush(cj_x11_display);
   return true;
 }
 
@@ -192,26 +208,26 @@ CJ_API void processWindowEvents(void) {
     init_xinput2();
   }
 
-  while (XPending(display)) {
+  while (XPending(cj_x11_display)) {
     XEvent event;
-    XNextEvent(display, &event);
+    XNextEvent(cj_x11_display, &event);
 
     /* Check for XInput2 events (reserved for future touch support) */
     if (xinput2_available == 1 && event.type == GenericEvent) {
       XGenericEventCookie* cookie = &event.xcookie;
-      if (XGetEventData(display, cookie)) {
+      if (XGetEventData(cj_x11_display, cookie)) {
         if (cookie->extension == xinput2_opcode) {
           /* TODO: Handle XI_TouchBegin, XI_TouchUpdate, XI_TouchEnd for touch support */
           /* For now, just free the event data and let traditional X11 handle everything */
-          XFreeEventData(display, cookie);
+          XFreeEventData(cj_x11_display, cookie);
         } else {
-          XFreeEventData(display, cookie);
+          XFreeEventData(cj_x11_display, cookie);
         }
       }
     }
 
     if (event.type == ClientMessage) {
-      Atom wmDelete = XInternAtom(display, "WM_DELETE_WINDOW", False);
+      Atom wmDelete = XInternAtom(cj_x11_display, "WM_DELETE_WINDOW", False);
       if ((Atom)event.xclient.data.l[0] == wmDelete) {
         // Look up window from handle via application
         CJellyApplication* app = cjelly_application_get_current();
@@ -258,7 +274,7 @@ CJ_API void processWindowEvents(void) {
           // Get CLIENT position for consistency with get_position/set_position.
           Window child;
           int client_x, client_y;
-          if (XTranslateCoordinates(display, event.xconfigure.window, RootWindow(display, DefaultScreen(display)),
+          if (XTranslateCoordinates(cj_x11_display, event.xconfigure.window, RootWindow(cj_x11_display, DefaultScreen(cj_x11_display)),
                                      0, 0, &client_x, &client_y, &child)) {
             // Skip position updates if we're programmatically moving (avoid feedback loops)
             if (cj_window__is_programmatic_move(window)) {
@@ -282,8 +298,8 @@ CJ_API void processWindowEvents(void) {
 
               // Check if DPI changed (window moved to different monitor)
               float old_scale = cj_window__get_dpi_scale(window);
-              Window root = RootWindow(display, DefaultScreen(display));
-              float new_scale = cj_window__get_dpi_scale_linux(display, root, client_x, client_y);
+              Window root = RootWindow(cj_x11_display, DefaultScreen(cj_x11_display));
+              float new_scale = cj_window__get_dpi_scale_linux(cj_x11_display, root, client_x, client_y);
               if (fabsf(new_scale - old_scale) > 0.01f) {  // DPI changed (with small threshold for floating point)
                 cj_window__set_dpi_scale(window, new_scale);
                 // Mark swapchain for recreation (physical size may have changed)
@@ -316,7 +332,7 @@ CJ_API void processWindowEvents(void) {
       if (app) {
         cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)event.xproperty.window);
         if (window) {
-          Atom wm_state = XInternAtom(display, "_NET_WM_STATE", False);
+          Atom wm_state = XInternAtom(cj_x11_display, "_NET_WM_STATE", False);
           if (event.xproperty.atom == wm_state) {
             // _NET_WM_STATE changed, query new state
             cj_window_state_t new_state = cj_window_get_state(window);
@@ -440,9 +456,9 @@ CJ_API void processWindowEvents(void) {
       // X11 auto-repeat detection: When a key is held, X11 generates KeyRelease immediately
       // followed by KeyPress. We detect this by peeking at the next event. If it's a KeyPress
       // for the same key with the same or very close timestamp, skip this KeyRelease (it's fake).
-      if (XPending(display) > 0) {
+      if (XPending(cj_x11_display) > 0) {
         XEvent next_event;
-        XPeekEvent(display, &next_event);
+        XPeekEvent(cj_x11_display, &next_event);
         if (next_event.type == KeyPress &&
             next_event.xkey.keycode == event.xkey.keycode &&
             next_event.xkey.time == event.xkey.time) {
