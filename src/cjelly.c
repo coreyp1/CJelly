@@ -860,47 +860,6 @@ static uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags proper
 }
 
 
-// Debug callback function for validation layers.
-VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
-    CJ_MAYBE_UNUSED(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity),
-    CJ_MAYBE_UNUSED(VkDebugUtilsMessageTypeFlagsEXT messageTypes),
-    const VkDebugUtilsMessengerCallbackDataEXT * pCallbackData,
-    CJ_MAYBE_UNUSED(void * pUserData)) {
-
-  if (getenv("CJELLY_DEBUG")) fprintf(stderr, "Validation layer: %s\n", pCallbackData->pMessage);
-  return VK_FALSE;
-}
-
-
-// Helper functions to load extension functions.
-VkResult CreateDebugUtilsMessengerEXT(VkInstance instance,
-    const VkDebugUtilsMessengerCreateInfoEXT * pCreateInfo,
-    const VkAllocationCallbacks * pAllocator,
-    VkDebugUtilsMessengerEXT * pDebugMessenger) {
-
-  PFN_vkCreateDebugUtilsMessengerEXT func =
-      (PFN_vkCreateDebugUtilsMessengerEXT)vkGetInstanceProcAddr(
-          instance, "vkCreateDebugUtilsMessengerEXT");
-  if (func != NULL) {
-    return func(instance, pCreateInfo, pAllocator, pDebugMessenger);
-  }
-  else {
-    return VK_ERROR_EXTENSION_NOT_PRESENT;
-  }
-}
-
-
-void DestroyDebugUtilsMessengerEXT(VkInstance instance,
-    VkDebugUtilsMessengerEXT debugMessenger,
-    const VkAllocationCallbacks * pAllocator) {
-
-  PFN_vkDestroyDebugUtilsMessengerEXT func =
-      (PFN_vkDestroyDebugUtilsMessengerEXT)vkGetInstanceProcAddr(
-          instance, "vkDestroyDebugUtilsMessengerEXT");
-  if (func != NULL) {
-    func(instance, debugMessenger, pAllocator);
-  }
-}
 
 
 
