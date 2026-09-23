@@ -234,7 +234,13 @@ float cj_win32_dpi_to_scale(UINT dpi) {
 }
 
 /* Forward declarations for helper functions */
-static int32_t logical_to_physical(int32_t logical, float dpi_scale);
+/* Logical to physical pixels, rounding to nearest. The same conversion as
+ * window.c's, which is static there: this file used to reach it through a
+ * forward declaration of its own, which linked only while the two were one
+ * translation unit. */
+static int32_t logical_to_physical(int32_t logical, float dpi_scale) {
+  return (int32_t)(logical * dpi_scale + 0.5f);
+}
 
 /*
  * Windows window procedure.
@@ -257,17 +263,10 @@ LRESULT CALLBACK cj_win32_wnd_proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM l
       CJellyApplication* app = cjelly_application_get_current();
       if (app) {
         cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)hwnd);
-        if (window && !window->is_destroyed) {
-          // Invoke close callback if present
-          cj_window_close_response_t response = CJ_WINDOW_CLOSE_ALLOW;
-          if (window->close_callback) {
-            response = window->close_callback(window, true, window->close_callback_user_data);
-          }
-
-          if (response == CJ_WINDOW_CLOSE_ALLOW) {
-            // Destroy window - this handles all cleanup
-            cj_window_destroy(window);
-          }
+        if (window) {
+          // User-initiated, so cancellable: the close callback may refuse.
+          // Destroys the window (and all its cleanup) only if allowed.
+          cj_window_close_with_callback(window, true);
           // Return 0 to indicate we handled the message (whether closed or not)
           return 0;
         }
@@ -296,7 +295,7 @@ LRESULT CALLBACK cj_win32_wnd_proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM l
         CJellyApplication* app = cjelly_application_get_current();
         if (app) {
           cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)hwnd);
-          if (window && !window->is_destroyed) {
+          if (window) {
             cj_window__render_frame_immediate(window);
           }
         }
@@ -310,11 +309,10 @@ LRESULT CALLBACK cj_win32_wnd_proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM l
       CJellyApplication* app = cjelly_application_get_current();
       if (app) {
         cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)hwnd);
-        if (window && window->plat) {
+        if (window) {
           // wParam contains new DPI (low word = X, high word = Y)
           UINT new_dpi = LOWORD(wParam);
-          float new_scale = cj_win32_dpi_to_scale(new_dpi);
-          window->plat->dpi_scale = new_scale;
+          cj_window__set_dpi_scale(window, cj_win32_dpi_to_scale(new_dpi));
 
           // lParam contains suggested new window rect in logical pixels
           // This rect accounts for the DPI change and maintains the same physical size
@@ -328,18 +326,17 @@ LRESULT CALLBACK cj_win32_wnd_proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM l
                       suggested_rect->bottom - suggested_rect->top,
                       SWP_NOZORDER | SWP_NOACTIVATE);
 
-          // Update cached position and size
+          // Update the cached position, which like WM_MOVE's is the frame's.
           cj_window__set_position(window, suggested_rect->left, suggested_rect->top);
-          window->plat->width = suggested_rect->right - suggested_rect->left;
-          window->plat->height = suggested_rect->bottom - suggested_rect->top;
 
-          // Mark swapchain for recreation (physical size may have changed)
-          window->plat->needs_swapchain_recreate = true;
+          // The swapchain's extent follows the new DPI even if the logical
+          // size does not change.
+          cj_window__mark_swapchain_for_recreation(window);
 
-          // Dispatch resize callback (size in logical pixels may have changed)
-          cj_window__dispatch_resize_callback(window,
-                                              (uint32_t)(suggested_rect->right - suggested_rect->left),
-                                              (uint32_t)(suggested_rect->bottom - suggested_rect->top));
+          // The size is left to the WM_SIZE that SetWindowPos sends. The
+          // suggested rect is the outer frame, and the cached size is the
+          // client area's, so storing it here recorded the wrong one - and
+          // WM_SIZE then compared against that, and reports the client area.
         }
       }
       return 0;
@@ -350,14 +347,16 @@ LRESULT CALLBACK cj_win32_wnd_proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM l
       CJellyApplication* app = cjelly_application_get_current();
       if (app) {
         cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)hwnd);
-        if (window && window->plat) {
+        if (window) {
           // WM_MOVE provides client area position, use GetWindowRect for frame position
           RECT rect;
           if (GetWindowRect(hwnd, &rect)) {
             int32_t new_x = rect.left;
             int32_t new_y = rect.top;
             // GetWindowRect returns logical pixels for DPI-aware apps
-            if (new_x != window->plat->x || new_y != window->plat->y) {
+            int32_t cur_x, cur_y;
+            cj_window__get_position(window, &cur_x, &cur_y);
+            if (new_x != cur_x || new_y != cur_y) {
               cj_window__set_position(window, new_x, new_y);
               cj_window__dispatch_move_callback(window, new_x, new_y);
             }
@@ -372,9 +371,10 @@ LRESULT CALLBACK cj_win32_wnd_proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM l
       CJellyApplication* app = cjelly_application_get_current();
       if (app) {
         cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)hwnd);
-        if (window && window->plat) {
+        if (window) {
           // wParam: SIZE_MINIMIZED, SIZE_MAXIMIZED, SIZE_RESTORED, SIZE_MAXSHOW, SIZE_MAXHIDE
-          cj_window_state_t new_state = window->plat->state;
+          cj_window_state_t old_state = cj_window__get_state(window);
+          cj_window_state_t new_state = old_state;
           if (wParam == SIZE_MINIMIZED) {
             cj_window__set_minimized(window, true);
             new_state = CJ_WINDOW_STATE_MINIMIZED;
@@ -385,13 +385,12 @@ LRESULT CALLBACK cj_win32_wnd_proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM l
             cj_window__set_minimized(window, false);
             new_state = CJ_WINDOW_STATE_NORMAL;
             /* Mark window dirty when restored from minimized */
-            window->plat->needsRedraw = 1;
-            window->pending_render_reason = CJ_RENDER_REASON_EXPOSE;
+            cj_window_mark_dirty_with_reason(window, CJ_RENDER_REASON_EXPOSE);
           }
 
           // Dispatch state change callback if state changed
-          if (new_state != window->plat->state) {
-            window->plat->state = new_state;
+          if (new_state != old_state) {
+            cj_window__set_state(window, new_state);
             cj_window__dispatch_state_callback(window, new_state);
           }
 
@@ -400,7 +399,9 @@ LRESULT CALLBACK cj_win32_wnd_proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM l
           uint32_t new_height = (uint32_t)(HIWORD(lParam));
 
           // Only update if size actually changed
-          if ((int)new_width != window->plat->width || (int)new_height != window->plat->height) {
+          uint32_t cur_width = 0, cur_height = 0;
+          cj_window_get_size(window, &cur_width, &cur_height);
+          if (new_width != cur_width || new_height != cur_height) {
             // Update size and mark swapchain for recreation
             cj_window__update_size_and_mark_recreate(window, new_width, new_height);
 
@@ -418,7 +419,7 @@ LRESULT CALLBACK cj_win32_wnd_proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM l
       CJellyApplication* app = cjelly_application_get_current();
       if (app) {
         cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)hwnd);
-        if (window && !window->is_destroyed) {
+        if (window) {
           cj_keycode_t keycode = map_windows_keycode(wParam);
           cj_scancode_t scancode = (cj_scancode_t)((lParam >> 16) & 0xFF);  /* Extract scancode from lParam */
           cj_modifiers_t modifiers = get_windows_modifiers();
@@ -441,7 +442,7 @@ LRESULT CALLBACK cj_win32_wnd_proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM l
       CJellyApplication* app = cjelly_application_get_current();
       if (app) {
         cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)hwnd);
-        if (window && !window->is_destroyed) {
+        if (window) {
           cj_keycode_t keycode = map_windows_keycode(wParam);
           cj_scancode_t scancode = (cj_scancode_t)((lParam >> 16) & 0xFF);  /* Extract scancode from lParam */
           cj_modifiers_t modifiers = get_windows_modifiers();
@@ -461,7 +462,7 @@ LRESULT CALLBACK cj_win32_wnd_proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM l
       CJellyApplication* app = cjelly_application_get_current();
       if (app) {
         cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)hwnd);
-        if (window && !window->is_destroyed) {
+        if (window) {
           cj_window__dispatch_focus_callback(window, CJ_FOCUS_GAINED);
         }
       }
@@ -473,7 +474,7 @@ LRESULT CALLBACK cj_win32_wnd_proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM l
       CJellyApplication* app = cjelly_application_get_current();
       if (app) {
         cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)hwnd);
-        if (window && !window->is_destroyed) {
+        if (window) {
           cj_window__dispatch_focus_callback(window, CJ_FOCUS_LOST);
         }
       }
@@ -485,11 +486,13 @@ LRESULT CALLBACK cj_win32_wnd_proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM l
       CJellyApplication* app = cjelly_application_get_current();
       if (app) {
         cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)hwnd);
-        if (window && !window->is_destroyed) {
+        if (window) {
           int32_t x = (int32_t)(short)LOWORD(lParam);
           int32_t y = (int32_t)(short)HIWORD(lParam);
-          int32_t dx = x - window->mouse_x;
-          int32_t dy = y - window->mouse_y;
+          int32_t old_x, old_y;
+          cj_window__get_mouse_position(window, &old_x, &old_y);
+          int32_t dx = x - old_x;
+          int32_t dy = y - old_y;
           cj_modifiers_t modifiers = get_windows_modifiers();
 
           // Convert to screen coordinates (logical pixels)
@@ -497,7 +500,7 @@ LRESULT CALLBACK cj_win32_wnd_proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM l
           ClientToScreen(hwnd, &screen_pt);
 
           // Get DPI scale for physical pixel conversion
-          float dpi_scale = window->plat->dpi_scale;
+          float dpi_scale = cj_window__get_dpi_scale(window);
 
           cj_mouse_event_t event = {0};
           event.type = CJ_MOUSE_MOVE;
@@ -523,7 +526,7 @@ LRESULT CALLBACK cj_win32_wnd_proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM l
       CJellyApplication* app = cjelly_application_get_current();
       if (app) {
         cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)hwnd);
-        if (window && !window->is_destroyed) {
+        if (window) {
           int32_t x = (int32_t)(short)LOWORD(lParam);
           int32_t y = (int32_t)(short)HIWORD(lParam);
           cj_modifiers_t modifiers = get_windows_modifiers();
@@ -533,7 +536,7 @@ LRESULT CALLBACK cj_win32_wnd_proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM l
           ClientToScreen(hwnd, &screen_pt);
 
           // Get DPI scale for physical pixel conversion
-          float dpi_scale = window->plat->dpi_scale;
+          float dpi_scale = cj_window__get_dpi_scale(window);
 
           cj_mouse_event_t event = {0};
           event.type = CJ_MOUSE_BUTTON_DOWN;
@@ -563,7 +566,7 @@ LRESULT CALLBACK cj_win32_wnd_proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM l
       CJellyApplication* app = cjelly_application_get_current();
       if (app) {
         cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)hwnd);
-        if (window && !window->is_destroyed) {
+        if (window) {
           cj_mouse_button_t button = CJ_MOUSE_BUTTON_LEFT;
           if (uMsg == WM_MBUTTONDOWN) button = CJ_MOUSE_BUTTON_MIDDLE;
           else if (uMsg == WM_RBUTTONDOWN) button = CJ_MOUSE_BUTTON_RIGHT;
@@ -581,7 +584,7 @@ LRESULT CALLBACK cj_win32_wnd_proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM l
           ClientToScreen(hwnd, &screen_pt);
 
           // Get DPI scale for physical pixel conversion
-          float dpi_scale = window->plat->dpi_scale;
+          float dpi_scale = cj_window__get_dpi_scale(window);
 
           cj_mouse_event_t event = {0};
           event.type = CJ_MOUSE_BUTTON_DOWN;
@@ -609,7 +612,7 @@ LRESULT CALLBACK cj_win32_wnd_proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM l
       CJellyApplication* app = cjelly_application_get_current();
       if (app) {
         cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)hwnd);
-        if (window && !window->is_destroyed) {
+        if (window) {
           cj_mouse_button_t button = CJ_MOUSE_BUTTON_LEFT;
           if (uMsg == WM_MBUTTONUP) button = CJ_MOUSE_BUTTON_MIDDLE;
           else if (uMsg == WM_RBUTTONUP) button = CJ_MOUSE_BUTTON_RIGHT;
@@ -627,7 +630,7 @@ LRESULT CALLBACK cj_win32_wnd_proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM l
           ClientToScreen(hwnd, &screen_pt);
 
           // Get DPI scale for physical pixel conversion
-          float dpi_scale = window->plat->dpi_scale;
+          float dpi_scale = cj_window__get_dpi_scale(window);
 
           cj_mouse_event_t event = {0};
           event.type = CJ_MOUSE_BUTTON_UP;
@@ -652,14 +655,14 @@ LRESULT CALLBACK cj_win32_wnd_proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM l
       CJellyApplication* app = cjelly_application_get_current();
       if (app) {
         cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)hwnd);
-        if (window && !window->is_destroyed) {
+        if (window) {
           POINT pt = {LOWORD(lParam), HIWORD(lParam)};
           ScreenToClient(hwnd, &pt);
           float delta = (float)(short)HIWORD(wParam) / (float)WHEEL_DELTA;
           cj_modifiers_t modifiers = get_windows_modifiers();
 
           // Get DPI scale for physical pixel conversion
-          float dpi_scale = window->plat->dpi_scale;
+          float dpi_scale = cj_window__get_dpi_scale(window);
 
           // Convert to screen coordinates for screen_x/screen_y
           POINT screen_pt = {pt.x, pt.y};
@@ -688,14 +691,14 @@ LRESULT CALLBACK cj_win32_wnd_proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM l
       CJellyApplication* app = cjelly_application_get_current();
       if (app) {
         cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)hwnd);
-        if (window && !window->is_destroyed) {
+        if (window) {
           POINT pt = {LOWORD(lParam), HIWORD(lParam)};
           ScreenToClient(hwnd, &pt);
           float delta = (float)(short)HIWORD(wParam) / (float)WHEEL_DELTA;
           cj_modifiers_t modifiers = get_windows_modifiers();
 
           // Get DPI scale for physical pixel conversion
-          float dpi_scale = window->plat->dpi_scale;
+          float dpi_scale = cj_window__get_dpi_scale(window);
 
           // Convert to screen coordinates for screen_x/screen_y
           POINT screen_pt = {pt.x, pt.y};
@@ -724,24 +727,26 @@ LRESULT CALLBACK cj_win32_wnd_proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM l
       CJellyApplication* app = cjelly_application_get_current();
       if (app) {
         cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)hwnd);
-        if (window && !window->is_destroyed) {
+        if (window) {
           cj_modifiers_t modifiers = get_windows_modifiers();
 
           // Get DPI scale for physical pixel conversion
-          float dpi_scale = window->plat->dpi_scale;
+          float dpi_scale = cj_window__get_dpi_scale(window);
 
           // Convert cached mouse position to screen coordinates
-          POINT screen_pt = {window->mouse_x, window->mouse_y};
+          int32_t mouse_x, mouse_y;
+          cj_window__get_mouse_position(window, &mouse_x, &mouse_y);
+          POINT screen_pt = {mouse_x, mouse_y};
           ClientToScreen(hwnd, &screen_pt);
 
           cj_mouse_event_t event = {0};
           event.type = CJ_MOUSE_LEAVE;
-          event.x = window->mouse_x;  // Logical pixels (Windows DPI-aware)
-          event.y = window->mouse_y;  // Logical pixels (Windows DPI-aware)
+          event.x = mouse_x;  // Logical pixels (Windows DPI-aware)
+          event.y = mouse_y;  // Logical pixels (Windows DPI-aware)
           event.screen_x = screen_pt.x;  // Logical pixels (Windows DPI-aware)
           event.screen_y = screen_pt.y;  // Logical pixels (Windows DPI-aware)
-          event.x_physical = logical_to_physical(window->mouse_x, dpi_scale);
-          event.y_physical = logical_to_physical(window->mouse_y, dpi_scale);
+          event.x_physical = logical_to_physical(mouse_x, dpi_scale);
+          event.y_physical = logical_to_physical(mouse_y, dpi_scale);
           event.screen_x_physical = logical_to_physical(screen_pt.x, dpi_scale);
           event.screen_y_physical = logical_to_physical(screen_pt.y, dpi_scale);
           event.modifiers = modifiers;
