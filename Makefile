@@ -359,7 +359,7 @@ define unit-test-rule
 $(APP_DIR)/$2$(EXE_EXTENSION): $1 $(APP_DIR)/$(STATIC_TARGET) $(FLAGS_STAMP) | $(APP_DIR)/$(TARGET)
 	@printf "\n### Compiling and linking %s Test ###\n" "$2"
 	@mkdir -p $$(@D)
-	$$(CXX) $$(CXXFLAGS) $$(TEST_INCLUDE) -MMD -MP -MF $$(APP_DIR)/$2.d -o $$@ $$< $$(CJELLYLIBRARY) $$(LDFLAGS) $$(TESTFLAGS)
+	$$(CXX) $$(CXXFLAGS) $$(TEST_INCLUDE) -MMD -MP -MF $$(@D)/$2.d -o $$@ $$< $$(CJELLYLIBRARY) $$(LDFLAGS) $$(TESTFLAGS)
 endef
 $(foreach pair,$(UNIT_TEST_PAIRS),$(eval $(call unit-test-rule,$(word 1,$(subst |, ,$(pair))),$(word 2,$(subst |, ,$(pair))))))
 
@@ -546,11 +546,25 @@ $(APP_DIR)/$(STATIC_TARGET): $(LIBOBJECTS)
 	@rm -f $@
 	ar rcs $@ $^
 
+# The objects are named rather than spelled $^ because the flags stamp is a
+# prerequisite here, and $^ would hand the stamp file to the linker as though
+# it were an object.
+#
+# The stamp is needed because this recipe expands
+# $(OS_SPECIFIC_LIBRARY_NAME_FLAG), which no object recipe expands and no
+# stamp recorded. Every other variable on this line reaches the library
+# through the objects - they depend on the stamp, so a change to CXXFLAGS or
+# LDFLAGS rebuilds them and the relink follows - which is coverage inherited
+# from another rule's prerequisites rather than asked for here, and it does
+# not extend to a variable only this recipe uses. Measured: with the soname
+# flag changed on the command line, `make` rebuilt 0 of 33 artifacts and the
+# library kept its old SONAME, while a forced relink under the same flag
+# writes the new one and a forced relink without it writes the old one back.
 $(APP_DIR)/$(TARGET): \
-		$(LIBOBJECTS)
+		$(LIBOBJECTS) $(FLAGS_STAMP)
 	@printf "\n### Compiling CJelly Library ###\n"
 	@mkdir -p $(@D)
-	$(CXX) $(CXXFLAGS) -shared -o $@ $^ $(LDFLAGS) $(OS_SPECIFIC_LIBRARY_NAME_FLAG)
+	$(CXX) $(CXXFLAGS) -shared -o $@ $(LIBOBJECTS) $(LDFLAGS) $(OS_SPECIFIC_LIBRARY_NAME_FLAG)
 
 ifeq ($(OS_NAME), Linux)
 	@ln -f -s $(TARGET) $(APP_DIR)/$(SO_NAME)
@@ -801,7 +815,7 @@ define asan-unit-test-rule
 $(ASAN_APP_DIR)/$2$(EXE_EXTENSION): $1 $(ASAN_APP_DIR)/$(ASAN_STATIC_TARGET) $(ASAN_FLAGS_STAMP)
 	@printf "\n### Compiling and linking ASan %s Test ###\n" "$2"
 	@mkdir -p $$(@D)
-	$$(CXX) $$(ASAN_CXXFLAGS) $$(TEST_INCLUDE) -MMD -MP -MF $$(ASAN_APP_DIR)/$2.d -o $$@ $$< $$(ASAN_CJELLYLIBRARY) $$(ASAN_LDFLAGS) $$(TESTFLAGS)
+	$$(CXX) $$(ASAN_CXXFLAGS) $$(TEST_INCLUDE) -MMD -MP -MF $$(@D)/$2.d -o $$@ $$< $$(ASAN_CJELLYLIBRARY) $$(ASAN_LDFLAGS) $$(TESTFLAGS)
 endef
 $(foreach pair,$(UNIT_TEST_PAIRS),$(eval $(call asan-unit-test-rule,$(word 1,$(subst |, ,$(pair))),$(word 2,$(subst |, ,$(pair))))))
 
@@ -904,7 +918,8 @@ define fuzz-rule
 fuzz-$2: ## Build the $2 fuzz harness (requires clang)
 fuzz-$2: $$(FUZZ_APP_DIR)/$1
 
-$$(FUZZ_APP_DIR)/$1: tests/fuzz/$1.cpp tests/fuzz/fuzz_mesh_invariants.h $$(FUZZ_OBJECTS)
+$$(FUZZ_APP_DIR)/$1: tests/fuzz/$1.cpp tests/fuzz/fuzz_mesh_invariants.h $$(FUZZ_OBJECTS) \
+		$$(FUZZ_FLAGS_STAMP)
 	@if [ -z "$$(FUZZ_CC_OK)" ]; then \
 		echo "fuzzing requires $$(FUZZ_CXX); install clang or set FUZZ_CC/FUZZ_CXX"; \
 		exit 1; \
@@ -1129,7 +1144,7 @@ valgrind: all ## Run main under valgrind with suppressions
 
 $(FLAGS_STAMP): force-flags
 	@mkdir -p $(@D)
-	@printf '%s\n' '$(CC) $(CXX) $(LIB_CFLAGS) $(CFLAGS) $(CXXFLAGS) $(LDFLAGS) $(INCLUDE) $(TEST_INCLUDE) $(CJELLYLIBRARY) $(TESTFLAGS)' > $@.new
+	@printf '%s\n' '$(CC) $(CXX) $(LIB_CFLAGS) $(CFLAGS) $(CXXFLAGS) $(LDFLAGS) $(INCLUDE) $(TEST_INCLUDE) $(CJELLYLIBRARY) $(TESTFLAGS) $(OS_SPECIFIC_LIBRARY_NAME_FLAG)' > $@.new
 	@cmp -s $@.new $@ 2>/dev/null && rm -f $@.new || mv -f $@.new $@
 
 $(ASAN_FLAGS_STAMP): force-flags
@@ -1139,5 +1154,5 @@ $(ASAN_FLAGS_STAMP): force-flags
 
 $(FUZZ_FLAGS_STAMP): force-flags
 	@mkdir -p $(@D)
-	@printf '%s\n' '$(FUZZ_CC) $(FUZZ_SAN) $(FUZZ_LIB_FLAGS) $(FUZZ_BIN_FLAGS) $(INCLUDE)' > $@.new
+	@printf '%s\n' '$(FUZZ_CC) $(FUZZ_CXX) $(FUZZ_SAN) $(FUZZ_LIB_FLAGS) $(FUZZ_BIN_FLAGS) $(INCLUDE) $(MODEL_LIBS) $(CUTIL_LIBS)' > $@.new
 	@cmp -s $@.new $@ 2>/dev/null && rm -f $@.new || mv -f $@.new $@
