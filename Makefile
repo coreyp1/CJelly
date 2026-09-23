@@ -177,10 +177,32 @@ else
 OPT_CFLAGS := -O2
 endif
 
+# -Wall sets -Wstrict-aliasing to 3, which is silent on an ordinary type pun;
+# level 1 is the only one that diagnoses one. Naming it is therefore not
+# adding a warning to a build that had none - it is replacing a level that
+# reports nothing with the level that reports. Verified with
+# `gcc -Q --help=warnings`: bare gives 0, -Wall gives 3, and this gives 1.
+#
+# What can disarm it is a LATER EXPLICIT LEVEL, and only that. CFLAGS ends
+# with $(EXTRA_CFLAGS), so `EXTRA_CFLAGS=-Wstrict-aliasing=3` switches the
+# warning off from the command line with every flag still on the line and
+# every comment here still true. check-aliasing is what notices.
+#
+# Its position relative to -Wall does NOT matter, which is worth writing down
+# because the opposite is easy to assume and was believed in this suite until
+# it was measured. -Wall's 3 is a default that any explicit level beats from
+# either side: `-Wall -Wstrict-aliasing=1` and `-Wstrict-aliasing=1 -Wall`
+# both resolve to 1 and both diagnose the control. Only explicit-against-
+# explicit is positional - `=3` after `=1` gives 3, and `=1` after `=3`
+# gives 1.
+#
+# Only CFLAGS: the library is C, and the C++ here is test code.
+ALIASING_CFLAGS := -Wstrict-aliasing=1
+
 CXX := g++
 CXXFLAGS := -pedantic-errors -Wall -Wextra -Werror -Wfatal-errors -std=c++20 -O1 -g $(EXTRA_CXXFLAGS)
 CC := cc
-CFLAGS := -pedantic-errors -Wall -Wextra -Werror -Wfatal-errors -std=c17 $(OPT_CFLAGS) -g `PKG_CONFIG_PATH=$(PKG_CONFIG_LOOKUP_PATH) pkg-config --cflags vulkan` $(EXTRA_CFLAGS)
+CFLAGS := -pedantic-errors -Wall -Wextra $(ALIASING_CFLAGS) -Werror -Wfatal-errors -std=c17 $(OPT_CFLAGS) -g `PKG_CONFIG_PATH=$(PKG_CONFIG_LOOKUP_PATH) pkg-config --cflags vulkan` $(EXTRA_CFLAGS)
 # Library-specific compile flags (export symbols on Windows, PIC on Linux)
 # The shipped library exports its public API and nothing else. Tests reach the
 # internals by linking the static archive, which a static link can do even for
@@ -321,7 +343,7 @@ TESTFLAGS := `PKG_CONFIG_PATH=$(PKG_CONFIG_LOOKUP_PATH) pkg-config --libs --cfla
 # coverage target does, because --coverage links the gcov runtime, whose
 # mangle_path check-symbols is right to reject in a shipping library and
 # wrong to reject in an instrumented one. Spelled as text's TEST_GATES is.
-TEST_GATES ?= check-symbols check-stamps
+TEST_GATES ?= check-symbols check-stamps check-aliasing
 
 
 
@@ -602,7 +624,7 @@ $(APP_DIR)/main$(EXE_EXTENSION): \
 .PHONY: clean cloc docs docs-pdf coverage
 .PHONY: fuzz fuzz-clean test-asan test-ubsan
 # Release build commands
-.PHONY: all demo install test test-watch uninstall watch check-symbols check-stamps
+.PHONY: all demo install test test-watch uninstall watch check-symbols check-stamps check-aliasing
 # Debug build commands
 .PHONY: all-debug install-debug test-debug test-watch-debug uninstall-debug watch-debug
 
@@ -1299,9 +1321,15 @@ endef
 STAMP_CHECK_MAKEFILE := $(firstword $(MAKEFILE_LIST))
 
 # What this gate does not model, pinned so the set cannot grow in silence.
-# Zero today: every compiler invocation outside the compile population is a
-# link rule that names its own tree's stamp.
-STAMP_UNMODELLED_EXPECTED := 0
+# Three today, all of them check-aliasing's: it compiles a generated control
+# with -fsyntax-only, twice more in its failure branch to work out why. Those
+# produce no artifact and run from scratch every time, so there is nothing
+# for a stamp to keep current. Every other compiler invocation in this file
+# is a compile or link rule that names its own tree's stamp.
+#
+# The pin earned itself immediately: it was 0, and adding check-aliasing in
+# the next commit failed this gate rather than passing in silence.
+STAMP_UNMODELLED_EXPECTED := 3
 
 # Variable names the link sweep skips because the rule already lists them as
 # file prerequisites, where mtime is the real check. Pinned so the list
@@ -1393,3 +1421,96 @@ check-stamps: ## Fail if a compile or link rule has no flags stamp, or the wrong
 		exit 1; \
 	fi; \
 	printf "\033[0;32mAll %s compile rules carry the flags stamp for their own tree and %s link rules carry theirs, every variable either recorded or a file prerequisite; %s compiler invocations are outside the model, as pinned.\033[0m\n" "$$got" "$$linked" "$$unmodelled"
+
+####################################################################
+# Strict aliasing check
+####################################################################
+#
+# No sanitizer detects a strict-aliasing violation at any -O level: the
+# instrumented binary runs the miscompiled code and exits 0. The compile-time
+# warning is the only instrument there is, and it is silent unless
+# -fstrict-aliasing is in effect, which gcc turns on from -O2.
+#
+# A real violation fails the build, because $(ALIASING_CFLAGS) sits under
+# -Werror. So no sweep is needed for the findings - only for the instrument.
+# A disarmed warning fails nothing and is indistinguishable from a clean
+# library, which is the whole problem. This compiles a planted violation with
+# the library's OWN flags and fails if it is accepted.
+#
+# THE SHAPE OF THE CONTROL IS LOAD-BEARING. Measured here at -O2, count of
+# the diagnostic by level:
+#
+#                                          L0  L1  L2  L3
+#   *(int *)f   where f is a PARAMETER      0   1   0   0
+#   *(int *)&local, a known object          0   1   1   1
+#   punning through a void *                0   0   0   0
+#
+# A control for a gate at level N must be caught at N and MISSED at N+1. One
+# that survives into the weaker level still passes after the gate has fallen
+# back to it, which is indistinguishable from working. This control is a
+# parameter cast - caught at 1, missed at 2 - so it certifies level 1 and
+# nothing else. The "simpler" spelling, punning a local whose address is
+# taken, fires from level 1 upward and so would certify nothing at all.
+#
+# The last row is the standing limit: no level catches punning through a
+# void *, so a clean build is not evidence about that class.
+#
+# WHY THE FAILURE BRANCH RE-COMPILES INSTEAD OF READING FLAGS. A warning that
+# is switched off and a compiler that does not implement it look identical
+# from the outside and want opposite fixes - repair the makefile, or stop
+# believing this build has aliasing coverage. clang is the live case: it
+# accepts -fstrict-aliasing -Wstrict-aliasing=1 in silence and implements no
+# such diagnostic, so `make CC=clang` prints the flags on every compile line
+# and detects nothing. So the branch asks the same compiler two more
+# questions, empirically, rather than parsing what it was told.
+check-aliasing: ## Fail if the strict-aliasing warning is no longer armed
+	@mkdir -p $(BUILD_DIR)
+	@printf '%s\n' \
+		'#include <stdint.h>' \
+		'int32_t cj_alias_control(float * f);' \
+		'int32_t cj_alias_control(float * f) {' \
+		'  return *(int32_t *)f;' \
+		'}' > $(BUILD_DIR)/alias_control.c
+	@if $(CC) $(LIB_CFLAGS) $(INCLUDE) -fsyntax-only \
+			$(BUILD_DIR)/alias_control.c 2> $(BUILD_DIR)/alias_control.log; then \
+		cc_name=$$($(CC) --version 2>/dev/null | head -1); \
+		$(CC) $(LIB_CFLAGS) -O2 $(INCLUDE) -fsyntax-only \
+			$(BUILD_DIR)/alias_control.c 2> $(BUILD_DIR)/alias_o2.log; \
+		o2=$$?; \
+		$(CC) $(LIB_CFLAGS) -O2 -Wstrict-aliasing=1 $(INCLUDE) -fsyntax-only \
+			$(BUILD_DIR)/alias_control.c 2> $(BUILD_DIR)/alias_lvl.log; \
+		lvl=$$?; \
+		if [ "$$o2" != "0" ] && grep -q 'strict-aliasing' $(BUILD_DIR)/alias_o2.log; then \
+			printf "\033[0;33mcheck-aliasing: %s accepted the planted violation, and the same flags plus -O2 diagnose it - so the warning is armed and the optimisation is not.\033[0m\n" "$$cc_name"; \
+			printf '%s\n' \
+				'  gcc enables -fstrict-aliasing from -O2 and the warning is silent without it, so' \
+				'  this is what BUILD=debug looks like, where $$(OPT_CFLAGS) is -O0. Not a defect:' \
+				'  the assumption is off, so there is nothing to miscompile. This build has no' \
+				'  aliasing coverage either, which is why it is said out loud rather than passed' \
+				'  in silence.'; \
+			exit 0; \
+		fi; \
+		printf "\033[0;31mcheck-aliasing: %s accepted a planted type-punning violation.\033[0m\n" "$$cc_name" >&2; \
+		if [ "$$lvl" != "0" ] && grep -q 'strict-aliasing' $(BUILD_DIR)/alias_lvl.log; then \
+			printf '%s\n' \
+				'  Adding -Wstrict-aliasing=1 explicitly does diagnose it, so the compiler has the' \
+				'  warning and the library flags are not asking for it. A later explicit level is' \
+				'  what overrides an earlier one, so this is $$(ALIASING_CFLAGS) removed or emptied,' \
+				'  or a level passed in EXTRA_CFLAGS, which ends the line. Not a reordering against' \
+				'  -Wall: its implied 3 loses to an explicit level from either side.' >&2; \
+			exit 1; \
+		else \
+			printf '%s\n' \
+				'  Adding -Wstrict-aliasing=1 explicitly changes nothing, so this compiler does not' \
+				'  implement the warning - the flags are not the problem. Expect clang, which accepts' \
+				'  -fstrict-aliasing -Wstrict-aliasing=1 in silence and diagnoses nothing under any' \
+				'  spelling, -Weverything included. cjelly aliasing coverage is gcc-only, and this' \
+				'  build does not have it.' >&2; \
+			exit 1; \
+		fi; \
+	elif ! grep -q 'strict-aliasing' $(BUILD_DIR)/alias_control.log; then \
+		printf "\033[0;31mcheck-aliasing: the control failed to compile, but not for aliasing - so this says nothing about whether the warning is armed:\033[0m\n" >&2; \
+		cat $(BUILD_DIR)/alias_control.log >&2; \
+		exit 1; \
+	fi; \
+	printf "\033[0;32mA planted type-punning violation is still refused by the library's own flags.\033[0m\n"
