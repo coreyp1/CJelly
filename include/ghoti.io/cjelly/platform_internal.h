@@ -84,6 +84,31 @@ bool cj_plat_capture_mouse(uintptr_t handle);
  */
 bool cj_plat_release_mouse(void);
 
+/** What creating a native window tells the caller. Position and DPI are
+ *  outputs because the window manager has the last word on both. */
+typedef struct cj_plat_window_t {
+  uintptr_t handle;    /**< 0 if the window could not be created. */
+  int32_t x;           /**< Where it actually is, in CLIENT coordinates. */
+  int32_t y;
+  float dpi_scale;     /**< 1.0 being 96 DPI. */
+} cj_plat_window_t;
+
+/** Create, show and prepare a native window for rendering.
+ *
+ *  @param out Filled in on success; handle is 0 on failure. Its x, y and
+ *             dpi_scale are read on entry as the values to keep if the
+ *             window system does not report better ones.
+ */
+void cj_plat_create_window(const char* title, int width, int height,
+    int32_t x, int32_t y, cj_window_state_t initial_state,
+    cj_plat_window_t* out);
+
+/** Create the Vulkan surface for this native window.
+ *  @return whatever the window system's vkCreate*SurfaceKHR returned.
+ */
+VkResult cj_plat_create_surface(uintptr_t handle, VkInstance instance,
+    VkSurfaceKHR* out_surface);
+
 /** Attach the library's window pointer to the native window, where the
  *  window system offers a slot for it. Win32 needs this to find the window
  *  again in WM_DESTROY; X11 routes events by handle instead and does

@@ -849,3 +849,53 @@ bool cj_plat_window_is_alive(uintptr_t handle) {
   HWND hwnd = (HWND)handle;
   return hwnd != NULL && IsWindow(hwnd);
 }
+
+VkResult cj_plat_create_surface(uintptr_t handle, VkInstance instance,
+    VkSurfaceKHR* out_surface) {
+  VkWin32SurfaceCreateInfoKHR ci = {0};
+  ci.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
+  ci.hinstance = GetModuleHandle(NULL);
+  ci.hwnd = (HWND)handle;
+  return vkCreateWin32SurfaceKHR(instance, &ci, NULL, out_surface);
+}
+
+void cj_plat_create_window(const char* title, int width, int height,
+    int32_t x, int32_t y, cj_window_state_t initial_state,
+    cj_plat_window_t* out) {
+  if (!out) return;
+  HINSTANCE hInstance = GetModuleHandle(NULL);
+  WNDCLASS wc = {0};
+  wc.lpfnWndProc = cj_win32_wnd_proc;
+  wc.hInstance = hInstance;
+  wc.lpszClassName = "CJellyWindow";
+  wc.style = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS; /* CS_DBLCLKS for double-click support */
+  RegisterClass(&wc);
+
+  int win_x = (x == CJ_WINDOW_POSITION_DEFAULT) ? CW_USEDEFAULT : x;
+  int win_y = (y == CJ_WINDOW_POSITION_DEFAULT) ? CW_USEDEFAULT : y;
+
+  /* TODO(windows): width/height here size the whole frame and the client area
+   * is fitted inside it, where X11 sizes the client area and the window
+   * manager hangs decoration outside. The same cj_window_desc_t therefore
+   * gives a smaller drawable on Windows. AdjustWindowRectEx() is the fix, but
+   * it changes the size of every window in every application using CJelly, so
+   * it should land on a machine that can verify it. Same split applies to
+   * win_x/win_y. See WINDOWS-TODO.md items 1 and 2. */
+  HWND hwnd = CreateWindowEx(0, "CJellyWindow", title, WS_OVERLAPPEDWINDOW,
+      win_x, win_y, width, height, NULL, NULL, hInstance, NULL);
+  if (!hwnd) return;
+  out->handle = (uintptr_t)hwnd;
+
+  int show_cmd = SW_SHOWNORMAL;
+  if (initial_state == CJ_WINDOW_STATE_MAXIMIZED)      show_cmd = SW_SHOWMAXIMIZED;
+  else if (initial_state == CJ_WINDOW_STATE_MINIMIZED) show_cmd = SW_SHOWMINIMIZED;
+  ShowWindow(hwnd, show_cmd);
+
+  RECT rect;
+  if (GetWindowRect(hwnd, &rect)) {
+    out->x = rect.left;
+    out->y = rect.top;
+  }
+
+  out->dpi_scale = cj_win32_dpi_to_scale(cj_win32_window_dpi(hwnd));
+}

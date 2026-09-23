@@ -409,3 +409,102 @@ bool cj_plat_window_is_alive(uintptr_t handle) {
    * error on the way, so a non-zero handle is taken as alive. */
   return handle != 0;
 }
+
+VkResult cj_plat_create_surface(uintptr_t handle, VkInstance instance,
+    VkSurfaceKHR* out_surface) {
+  VkXlibSurfaceCreateInfoKHR ci = {0};
+  ci.sType = VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR;
+  ci.dpy = cj_x11_display;
+  ci.window = (Window)handle;
+  return vkCreateXlibSurfaceKHR(instance, &ci, NULL, out_surface);
+}
+
+void cj_plat_create_window(const char* title, int width, int height,
+    int32_t x, int32_t y, cj_window_state_t initial_state,
+    cj_plat_window_t* out) {
+  if (!out || !cj_x11_display) return;
+  int screen = DefaultScreen(cj_x11_display);
+  Window root = RootWindow(cj_x11_display, screen);
+
+  int win_x = (x == CJ_WINDOW_POSITION_DEFAULT) ? 0 : x;
+  int win_y = (y == CJ_WINDOW_POSITION_DEFAULT) ? 0 : y;
+
+  /* Black background to reduce flickering during resize */
+  Window w = XCreateSimpleWindow(cj_x11_display, root, win_x, win_y,
+      (unsigned)width, (unsigned)height, 0,
+      BlackPixel(cj_x11_display, screen), BlackPixel(cj_x11_display, screen));
+  if (!w) return;
+  out->handle = (uintptr_t)w;
+
+  /* Position hint, if a position was asked for */
+  if (x != CJ_WINDOW_POSITION_DEFAULT && y != CJ_WINDOW_POSITION_DEFAULT) {
+    XSizeHints* hints = XAllocSizeHints();
+    if (hints) {
+      hints->flags = USPosition;
+      hints->x = x;
+      hints->y = y;
+      XSetWMNormalHints(cj_x11_display, w, hints);
+      XFree(hints);
+    }
+  }
+
+  Atom wm_state = XInternAtom(cj_x11_display, "_NET_WM_STATE", False);
+  Atom max_horz = XInternAtom(cj_x11_display, "_NET_WM_STATE_MAXIMIZED_HORZ", False);
+  Atom max_vert = XInternAtom(cj_x11_display, "_NET_WM_STATE_MAXIMIZED_VERT", False);
+
+  if (initial_state == CJ_WINDOW_STATE_MAXIMIZED
+      && wm_state != None && max_horz != None && max_vert != None) {
+    XChangeProperty(cj_x11_display, w, wm_state, XA_ATOM, 32, PropModeReplace,
+        (unsigned char*)&max_horz, 1);
+    /* Both atoms go on via ClientMessage after mapping, below. */
+  }
+
+  XSelectInput(cj_x11_display, w,
+      StructureNotifyMask | KeyPressMask | KeyReleaseMask | ExposureMask |
+      ButtonPressMask | ButtonReleaseMask | PointerMotionMask |
+      EnterWindowMask | LeaveWindowMask | FocusChangeMask | PropertyChangeMask);
+
+  /* Smooth scrolling if XInput2 is there; traditional events if not. */
+  cj_x11_select_xinput2_events(w);
+
+  Atom wmDelete = XInternAtom(cj_x11_display, "WM_DELETE_WINDOW", False);
+  XStoreName(cj_x11_display, w, title);
+  XSetWMProtocols(cj_x11_display, w, &wmDelete, 1);
+
+  /* No background pixmap, so X does not paint one between frames during a
+   * resize. */
+  XSetWindowBackgroundPixmap(cj_x11_display, w, None);
+
+  XMapWindow(cj_x11_display, w);
+
+  if (initial_state == CJ_WINDOW_STATE_MAXIMIZED) {
+    XEvent ev = {0};
+    ev.type = ClientMessage;
+    ev.xclient.window = w;
+    ev.xclient.message_type = wm_state;
+    ev.xclient.format = 32;
+    ev.xclient.data.l[0] = 1; /* _NET_WM_STATE_ADD */
+    ev.xclient.data.l[1] = (long)max_horz;
+    ev.xclient.data.l[2] = (long)max_vert;
+    ev.xclient.data.l[3] = 1; /* Source indication: application */
+    ev.xclient.data.l[4] = 0;
+    XSendEvent(cj_x11_display, root, False,
+        SubstructureNotifyMask | SubstructureRedirectMask, &ev);
+  } else if (initial_state == CJ_WINDOW_STATE_MINIMIZED) {
+    XIconifyWindow(cj_x11_display, w, screen);
+  }
+
+  /* CLIENT coordinates, because XMoveWindow takes client coordinates and the
+   * library uses them throughout. */
+  Window child;
+  int client_x, client_y;
+  if (XTranslateCoordinates(cj_x11_display, w, root, 0, 0,
+          &client_x, &client_y, &child)) {
+    out->x = client_x;
+    out->y = client_y;
+  }
+
+  out->dpi_scale = cj_window__get_dpi_scale_linux(cj_x11_display, root, out->x, out->y);
+
+  XFlush(cj_x11_display);
+}

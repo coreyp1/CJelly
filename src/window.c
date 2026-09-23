@@ -27,16 +27,12 @@
 #define _POSIX_C_SOURCE 200809L
 #endif
 
-/* Platform includes. This has to precede every other include in the file:
- * it is what selects the VK_USE_PLATFORM_* surface types, and that only
+/* The platform seam, and Vulkan through it. This file no longer names a
+ * window system: the surface-creation headers went with the code that
+ * created surfaces. It still has to come before anything else that might
+ * pull in vulkan.h, because the VK_USE_PLATFORM_* selection inside it only
  * takes effect before vulkan.h is first seen. */
 #include <ghoti.io/cjelly/platform_internal.h>
-#ifdef _WIN32
-#include <vulkan/vulkan_win32.h>
-#else
-#include <X11/Xutil.h>
-#include <vulkan/vulkan_xlib.h>
-#endif
 
 #include <stdio.h>
 #include <assert.h>
@@ -62,11 +58,10 @@ typedef struct CJPlatformWindow CJPlatformWindow;
 
 /* Platform window struct - defined early so window procedure can access it */
 typedef struct CJPlatformWindow {
-#ifdef _WIN32
-  HWND handle;
-#else
-  Window handle;
-#endif
+  /* The native window, as uintptr_t rather than HWND or Window, so that this
+   * struct names no window system and the casts stay in the platform
+   * modules. A Window is an XID, an unsigned long; an HWND is a pointer. */
+  uintptr_t handle;
   VkSurfaceKHR surface;
   VkSwapchainKHR swapChain;
   uint32_t swapChainImageCount;
@@ -174,139 +169,20 @@ static void plat_createPlatformWindow(CJPlatformWindow * win, const char * title
   win->last_mouse_root_y = 0;
   win->has_seen_mouse_move = false;
   win->state = initial_state;
-  win->dpi_scale = 1.0f;  /* Will be updated after window creation */
-#ifdef _WIN32
-  HINSTANCE hInstance = GetModuleHandle(NULL);
-  WNDCLASS wc = {0};
-  wc.lpfnWndProc = cj_win32_wnd_proc; wc.hInstance = hInstance; wc.lpszClassName = "CJellyWindow";
-  wc.style = CS_HREDRAW | CS_VREDRAW | CS_DBLCLKS;  /* Add CS_DBLCLKS for double-click support */
-  RegisterClass(&wc);
+  win->dpi_scale = 1.0f;  /* Replaced below if the window system knows better */
 
-  /* Determine window position */
-  int win_x = (x == CJ_WINDOW_POSITION_DEFAULT) ? CW_USEDEFAULT : x;
-  int win_y = (y == CJ_WINDOW_POSITION_DEFAULT) ? CW_USEDEFAULT : y;
-
-  /* TODO(windows): width/height here size the whole frame and the client area
-   * is fitted inside it, where X11 below sizes the client area and the window
-   * manager hangs decoration outside. The same cj_window_desc_t therefore
-   * gives a smaller drawable on Windows. AdjustWindowRectEx() is the fix, but
-   * it changes the size of every window in every application using CJelly, so
-   * it should land on a machine that can verify it. Same split applies to
-   * win_x/win_y. See WINDOWS-TODO.md items 1 and 2. */
-  win->handle = CreateWindowEx(0, "CJellyWindow", title, WS_OVERLAPPEDWINDOW, win_x, win_y, width, height, NULL, NULL, hInstance, NULL);
-
-  /* Set initial window state */
-  int show_cmd = SW_SHOWNORMAL;
-  if (initial_state == CJ_WINDOW_STATE_MAXIMIZED) {
-    show_cmd = SW_SHOWMAXIMIZED;
-  } else if (initial_state == CJ_WINDOW_STATE_MINIMIZED) {
-    show_cmd = SW_SHOWMINIMIZED;
-  }
-  ShowWindow(win->handle, show_cmd);
-
-  /* Update cached position from actual window position */
-  RECT rect;
-  if (GetWindowRect(win->handle, &rect)) {
-    win->x = rect.left;
-    win->y = rect.top;
-  }
-
-  /* Get DPI for this window */
-  win->dpi_scale = cj_win32_dpi_to_scale(cj_win32_window_dpi(win->handle));
-#else
-  int screen = DefaultScreen(cj_x11_display);
-  /* Determine window position */
-  int win_x = (x == CJ_WINDOW_POSITION_DEFAULT) ? 0 : x;
-  int win_y = (y == CJ_WINDOW_POSITION_DEFAULT) ? 0 : y;
-
-  /* Use black background to reduce flickering during resize */
-  win->handle = XCreateSimpleWindow(cj_x11_display, RootWindow(cj_x11_display, screen), win_x, win_y, (unsigned)width, (unsigned)height, 0, BlackPixel(cj_x11_display, screen), BlackPixel(cj_x11_display, screen));
-
-  /* Set position hint if position was specified */
-  if (x != CJ_WINDOW_POSITION_DEFAULT && y != CJ_WINDOW_POSITION_DEFAULT) {
-    XSizeHints* hints = XAllocSizeHints();
-    if (hints) {
-      hints->flags = USPosition;
-      hints->x = x;
-      hints->y = y;
-      XSetWMNormalHints(cj_x11_display, win->handle, hints);
-      XFree(hints);
-    }
-  }
-
-  /* Set initial maximized state if requested */
-  if (initial_state == CJ_WINDOW_STATE_MAXIMIZED) {
-    Atom wm_state = XInternAtom(cj_x11_display, "_NET_WM_STATE", False);
-    Atom max_horz = XInternAtom(cj_x11_display, "_NET_WM_STATE_MAXIMIZED_HORZ", False);
-    Atom max_vert = XInternAtom(cj_x11_display, "_NET_WM_STATE_MAXIMIZED_VERT", False);
-    if (wm_state != None && max_horz != None && max_vert != None) {
-      XChangeProperty(cj_x11_display, win->handle, wm_state, XA_ATOM, 32, PropModeReplace,
-                      (unsigned char*)&max_horz, 1);
-      // Note: We'll set both atoms via ClientMessage after mapping
-    }
-  }
-
-  XSelectInput(cj_x11_display, win->handle, StructureNotifyMask | KeyPressMask | KeyReleaseMask | ExposureMask |
-               ButtonPressMask | ButtonReleaseMask | PointerMotionMask | EnterWindowMask | LeaveWindowMask | FocusChangeMask | PropertyChangeMask);
-
-  /* Try to select XInput2 events for smooth scrolling (falls back to traditional events if unavailable) */
-  cj_x11_select_xinput2_events(win->handle);
-
-  Atom wmDelete = XInternAtom(cj_x11_display, "WM_DELETE_WINDOW", False);
-  XStoreName(cj_x11_display, win->handle, title);
-  XSetWMProtocols(cj_x11_display, win->handle, &wmDelete, 1);
-
-  /* Set window background to None to prevent X11 from drawing background during resize.
-   * This reduces flickering as the compositor won't show a solid background between frames. */
-  XSetWindowBackgroundPixmap(cj_x11_display, win->handle, None);
-
-  XMapWindow(cj_x11_display, win->handle);
-
-  /* Set maximized state after mapping (via ClientMessage) */
-  if (initial_state == CJ_WINDOW_STATE_MAXIMIZED) {
-    XEvent ev = {0};
-    ev.type = ClientMessage;
-    ev.xclient.window = win->handle;
-    ev.xclient.message_type = XInternAtom(cj_x11_display, "_NET_WM_STATE", False);
-    ev.xclient.format = 32;
-    ev.xclient.data.l[0] = 1;  // _NET_WM_STATE_ADD
-    ev.xclient.data.l[1] = XInternAtom(cj_x11_display, "_NET_WM_STATE_MAXIMIZED_HORZ", False);
-    ev.xclient.data.l[2] = XInternAtom(cj_x11_display, "_NET_WM_STATE_MAXIMIZED_VERT", False);
-    ev.xclient.data.l[3] = 1;  // Source indication: application
-    ev.xclient.data.l[4] = 0;
-    XSendEvent(cj_x11_display, RootWindow(cj_x11_display, screen), False,
-               SubstructureNotifyMask | SubstructureRedirectMask, &ev);
-  } else if (initial_state == CJ_WINDOW_STATE_MINIMIZED) {
-    XIconifyWindow(cj_x11_display, win->handle, screen);
-  }
-
-  /* Update cached position to CLIENT coordinates.
-   * XMoveWindow expects client coordinates, so we use client coords throughout. */
-  Window child;
-  int client_x, client_y;
-  if (XTranslateCoordinates(cj_x11_display, win->handle, RootWindow(cj_x11_display, screen),
-                            0, 0, &client_x, &client_y, &child)) {
-    win->x = client_x;
-    win->y = client_y;
-  }
-
-  /* Get DPI for this window based on position */
-  Window root = RootWindow(cj_x11_display, screen);
-  win->dpi_scale = cj_window__get_dpi_scale_linux(cj_x11_display, root, win->x, win->y);
-
-  XFlush(cj_x11_display);
-#endif
+  cj_plat_window_t created = { 0, win->x, win->y, win->dpi_scale };
+  cj_plat_create_window(title, width, height, x, y, initial_state, &created);
+  win->handle = created.handle;
+  win->x = created.x;
+  win->y = created.y;
+  win->dpi_scale = created.dpi_scale;
 }
 
 static void plat_createSurfaceForWindow(CJPlatformWindow * win) {
   if (!win) return;
-#ifdef _WIN32
-  VkWin32SurfaceCreateInfoKHR ci = {0}; ci.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR; ci.hinstance = GetModuleHandle(NULL); ci.hwnd = win->handle;
-  vkCreateWin32SurfaceKHR(cj_engine_instance(cj_engine_get_current()), &ci, NULL, &win->surface);
-#else
-  VkXlibSurfaceCreateInfoKHR ci = {0}; ci.sType = VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR; ci.dpy = cj_x11_display; ci.window = win->handle;
-  vkCreateXlibSurfaceKHR(cj_engine_instance(cj_engine_get_current()), &ci, NULL, &win->surface);
-#endif
+  cj_plat_create_surface((uintptr_t)win->handle,
+      cj_engine_instance(cj_engine_get_current()), &win->surface);
 }
 
 static void plat_createSwapChainForWindow(CJPlatformWindow * win) {
@@ -561,10 +437,9 @@ static void plat_createSyncObjectsForWindow(CJPlatformWindow * win) {
 static void plat_drawFrameForWindow(CJPlatformWindow * win) {
   if (!win) return;
   VkDevice dev = cj_engine_device(cj_engine_get_current());
-#ifdef _WIN32
-  /* Skip draw if window has been destroyed */
-  if (!win->handle || !IsWindow(win->handle)) return;
-#endif
+  /* Skip the draw if the window is already gone, where the window system
+   * can say so. */
+  if (!cj_plat_window_is_alive((uintptr_t)win->handle)) return;
   vkWaitForFences(dev, 1, &win->inFlightFence, VK_TRUE, UINT64_MAX);
   vkResetFences(dev, 1, &win->inFlightFence);
   uint32_t imageIndex; vkAcquireNextImageKHR(dev, win->swapChain, UINT64_MAX, win->imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
