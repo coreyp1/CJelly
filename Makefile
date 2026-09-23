@@ -1290,6 +1290,13 @@ END {
 # while the pin, the message and the makefile all still say 3. So the link
 # arm still walks physical lines, and only the compile arm claims its
 # record.
+#
+# The stamped-link arm does consume its record, so LINKED counts records
+# there rather than invocations. It is the same collapse, and it is only
+# harmless because a second invocation inside one stamped link recipe would
+# be covered by that rule's stamp anyway. Measured: walking physical lines
+# there too leaves LINKED at 5, so nothing in this makefile has that shape
+# today.
     iscompile = (L[i] ~ /-c \$$</)
     if (!iscompile) {
       if (L[i] ~ /^\t[ \t]*\043/) continue
@@ -1376,13 +1383,28 @@ STAMP_LINK_PREREQ_EXPECTED := 3
 check-stamps: ## Fail if a compile or link rule has no flags stamp, or the wrong one
 	@mkdir -p $(BUILD_DIR)
 	$(file >$(BUILD_DIR)/stamp_check.awk,$(stamp-check-awk))
+# An arm has to keep failing after the sweep is restructured, and one here did
+# not: when the wrapped compile rule was the wrong-tree one, the compile arm
+# exits before reading variables, so nothing in the control ever exercised
+# joining on the compile side. Breaking it left the control green. There are
+# now two wrapped compile rules - one wrong-tree, which arms the marker, and
+# one correct-tree carrying an unrecorded variable on EACH side of the break,
+# which arms the join twice over: lose the marker join and the rule is filed
+# as a link, lose the variable join and only the name before the break is
+# seen. An arm that has stopped failing reads exactly like an arm that passes.
+#
+# planted_link_ok is spelled c++ on purpose. The head pattern learned bare
+# cc/c++ names, and every planted COMPILE rule is found by its -c $$< marker
+# without ever reaching that pattern, so the addition was undemonstrable
+# until one planted LINK rule used one.
+#
 # The control runs first, and is a planted set rather than a single bad rule:
 # a sweep that has stopped matching recipes reports nothing wrong, which is
 # indistinguishable from a clean makefile. So require it to find the planted
 # faults and only those. The wrapped link rule is the arm for continuation
 # joining; without that, the rule reads as clean, which is how this class of
 # checker has already been wrong in two other libraries.
-	@printf '%s\n\t%s\n\t\t%s\n%s\n\t%s\n%s\n\t%s\n%s\n\t%s\n%s\n\t%s\n%s\n\t%s\n%s\n\t%s\n%s\n\t%s\n\t\t%s\n%s\n\t%s\n\t\t%s\n' \
+	@printf '%s\n\t%s\n\t\t%s\n%s\n\t%s\n%s\n\t%s\n%s\n\t%s\n%s\n\t%s\n%s\n\t%s\n%s\n\t%s\n%s\n\t%s\n\t\t%s\n%s\n\t%s\n\t\t%s\n%s\n\t%s\n\t\t%s\n' \
 		'$$(FLAGS_STAMP): force-flags' \
 		"@printf '%s' \\\\" \
 		"'\$$(CFLAGS) \$$(INCLUDE) \$$(LDFLAGS)' > \$$@.new" \
@@ -1393,7 +1415,7 @@ check-stamps: ## Fail if a compile or link rule has no flags stamp, or the wrong
 		'$$(OBJ_DIR)/planted_unrecorded.o: src/planted2.c $$(FLAGS_STAMP)' \
 		'cc $$(CFLAGS) $$(PLANTED_UNRECORDED) $$(INCLUDE) -c $$< -o $$@' \
 		'$$(APP_DIR)/planted_link_ok: planted.o $$(FLAGS_STAMP)' \
-		'g++ $$(LDFLAGS) -o $$@ planted.o' \
+		'c++ $$(LDFLAGS) -o $$@ planted.o' \
 		'$$(APP_DIR)/planted_link_nostamp: planted.o' \
 		'g++ $$(LDFLAGS) -o $$@ planted.o' \
 		'$$(APP_DIR)/planted_link_unrec: planted.o $$(FLAGS_STAMP)' \
@@ -1404,6 +1426,9 @@ check-stamps: ## Fail if a compile or link rule has no flags stamp, or the wrong
 		'$$(ASAN_OBJ_DIR)/planted_wrapped_compile.o: src/p3.c $$(FLAGS_STAMP)' \
 		'$$(CC) $$(CFLAGS) \\' \
 		'$$(INCLUDE) -c $$< -o $$@' \
+		'$$(OBJ_DIR)/planted_wrapped_vars.o: src/p4.c $$(FLAGS_STAMP)' \
+		'cc $$(CFLAGS) $$(PLANTED_BEFORE_BREAK) \\' \
+		'$$(PLANTED_PAST_BREAK) $$(INCLUDE) -c $$< -o $$@' \
 		> $(BUILD_DIR)/stamp_control.mk
 # PREREQ is stripped from the control's line rather than pinned in it. The
 # same sweep produces both numbers, so a control that checked PREREQ too
@@ -1411,7 +1436,7 @@ check-stamps: ## Fail if a compile or link rule has no flags stamp, or the wrong
 # be seen to fire - coverage that cannot be demonstrated is not coverage.
 	@ctl=$$(awk -f $(BUILD_DIR)/stamp_check.awk \
 			$(BUILD_DIR)/stamp_control.mk | tail -1 | sed 's/ PREREQ [0-9]*$$//'); \
-	want="TOTAL 4 BAD 2 UNMODELLED 1 UNRECORDED 3 LINKED 3"; \
+	want="TOTAL 5 BAD 2 UNMODELLED 1 UNRECORDED 5 LINKED 3"; \
 	if [ "$$ctl" != "$$want" ]; then \
 		printf "\033[0;31mcheck-stamps: the control says '%s', not '%s' - the sweep is not reading rules the way it thinks it is, so a clean result from it means nothing.\033[0m\n" "$$ctl" "$$want" >&2; \
 		exit 1; \
