@@ -66,7 +66,24 @@
  */
 CJ_API void processWindowEvents(void);
 
+#ifdef _WIN32
+/** The window procedure, defined in src/platform/win32/window.c. */
+LRESULT CALLBACK cj_win32_wnd_proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
+
+/** Per-monitor DPI for the monitor this window is on. */
+UINT cj_win32_window_dpi(HWND hwnd);
+
+/** Convert a DPI value to a scale factor, 1.0 being 96 DPI. */
+float cj_win32_dpi_to_scale(UINT dpi);
+#endif
+
 #ifndef _WIN32
+/** Ask the window manager for a window's frame extents (decoration sizes).
+ *  @return true if the window manager answered.
+ */
+bool cj_x11_get_frame_extents(Display* dpy, Window window,
+    int32_t* left, int32_t* right, int32_t* top, int32_t* bottom);
+
 /** The X display connection, owned by src/platform/x11/events.c.
  *
  *  Prefixed because it is a definition with external linkage: as plain
