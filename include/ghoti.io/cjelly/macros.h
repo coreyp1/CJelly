@@ -169,6 +169,24 @@ typedef struct CJellyModelMesh CJellyModelMesh;
  * which has no %zu and no %lld, so a correct call would be diagnosed. The
  * `gnu_printf` archetype names the format the library actually writes.
  */
+/**
+ * @def CJ_MUST_CHECK
+ * @brief Make ignoring a function's result a compile error.
+ *
+ * For the functions whose result is the only way a caller learns that
+ * something failed. Several of these used to call exit() instead, which at
+ * least could not be ignored; turning them into return values is only an
+ * improvement if the returns are read, and the compiler is the one thing that
+ * can promise that across every call site at once.
+ *
+ * With -Werror, as this library builds, an unchecked call does not compile.
+ */
+#if defined(__GNUC__) || defined(__clang__)
+#define CJ_MUST_CHECK __attribute__((warn_unused_result))
+#else
+#define CJ_MUST_CHECK
+#endif
+
 #if defined(__MINGW32__) || defined(__MINGW64__)
 #define CJ_PRINTF_FORMAT(FMT, ARG) __attribute__((format(gnu_printf, FMT, ARG)))
 

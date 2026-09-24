@@ -415,7 +415,7 @@ TESTFLAGS := `PKG_CONFIG_PATH=$(PKG_CONFIG_LOOKUP_PATH) pkg-config --libs --cfla
 # coverage target does, because --coverage links the gcov runtime, whose
 # mangle_path check-symbols is right to reject in a shipping library and
 # wrong to reject in an instrumented one. Spelled as text's TEST_GATES is.
-TEST_GATES ?= check-symbols check-stamps check-aliasing check-headers check-quiet
+TEST_GATES ?= check-symbols check-stamps check-aliasing check-headers check-quiet check-no-exit
 
 
 
@@ -696,7 +696,7 @@ $(APP_DIR)/main$(EXE_EXTENSION): \
 .PHONY: fuzz fuzz-clean test-asan test-ubsan
 # Release build commands
 .PHONY: all demo install test test-watch uninstall watch check-symbols check-stamps check-aliasing
-.PHONY: check-headers check-quiet check-render
+.PHONY: check-headers check-quiet check-render check-no-exit
 # Debug build commands
 .PHONY: all-debug install-debug test-debug test-watch-debug uninstall-debug watch-debug
 
@@ -1893,6 +1893,51 @@ CHECK_QUIET_SOURCES = $(shell find src -type f -name '*.c' \
 # Spelled once and used by both the control and the sweep, so that a pattern
 # which stops matching cannot do so for the sweep alone.
 CHECK_QUIET_PATTERN := (^|[^_[:alnum:]])(printf|fprintf|vfprintf|vprintf|puts|fputs|fputc|putchar|perror)[[:space:]]*\(|(^|[^_[:alnum:]])(stdout|stderr)([^_[:alnum:]]|$$)
+
+# Every library source is swept: unlike check-quiet, there is no file with a
+# licence to end the process. main.c is the demo, which is a program.
+CHECK_NO_EXIT_EXPECTED := 21
+CHECK_NO_EXIT_SOURCES = $(shell find src -type f -name '*.c' ! -name 'main.c' | sort)
+# A text sweep cannot tell a call from the same word in a comment, and that is
+# the harmless direction: a false positive is loud, and a call has to be
+# spelled out to compile, so it cannot be missed.
+CHECK_NO_EXIT_PATTERN := (^|[^_[:alnum:]])(exit|_Exit|quick_exit|abort)[[:space:]]*\(
+
+check-no-exit: ## Fail if a library source can end the host process
+	@mkdir -p $(BUILD_DIR)
+# The control first, for the same reason as check-quiet's: grep here is ugrep,
+# and a pattern that has stopped matching prints what a clean tree prints.
+	@printf 'void c(void);\nvoid c(void) { if (1) exit(1); abort(); }\n' \
+		> $(BUILD_DIR)/no_exit_control.c
+	@found=$$(grep -cE '$(CHECK_NO_EXIT_PATTERN)' $(BUILD_DIR)/no_exit_control.c || true); \
+	if [ "$$found" = "0" ]; then \
+		printf "\033[0;31mcheck-no-exit: the control file calls exit() and abort() and the sweep did not see it, so a clean result from it means nothing.\033[0m\n" >&2; \
+		exit 1; \
+	fi
+	@n=0; bad=0; \
+	for f in $(CHECK_NO_EXIT_SOURCES); do \
+		n=$$((n+1)); \
+		hits=$$(grep -nE '$(CHECK_NO_EXIT_PATTERN)' "$$f" || true); \
+		if [ -n "$$hits" ]; then \
+			bad=$$((bad+1)); \
+			printf "  %s:\n" "$$f" >&2; \
+			printf "%s\n" "$$hits" | sed 's/^/    /' >&2; \
+		fi; \
+	done; \
+	if [ "$$n" != "$(CHECK_NO_EXIT_EXPECTED)" ]; then \
+		printf "\033[0;31mcheck-no-exit: swept %s sources, not the %s it is pinned to. Either a source was added and the pin wants raising, or the sweep stopped finding them - and an empty sweep reports clean.\033[0m\n" "$$n" "$(CHECK_NO_EXIT_EXPECTED)" >&2; \
+		exit 1; \
+	fi; \
+	if [ "$$bad" != "0" ]; then \
+		printf "\033[0;31m\n### %s library sources can end the host process ###\033[0m\n" "$$bad" >&2; \
+		printf "\nReturn the failure instead. A program that calls into this library\n" >&2; \
+		printf "to open one window, and loses the whole process because a texture\n" >&2; \
+		printf "would not load, has no way to prevent that and nothing to catch.\n" >&2; \
+		printf "CJ_MUST_CHECK on the new return value makes the compiler find every\n" >&2; \
+		printf "caller that would otherwise ignore it.\n" >&2; \
+		exit 1; \
+	fi; \
+	printf "\033[0;32mAll %s library sources leave the exiting to the caller.\033[0m\n" "$$n"
 
 check-quiet: ## Fail if a library source writes to stdout or stderr itself
 	@mkdir -p $(BUILD_DIR)

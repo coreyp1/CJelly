@@ -162,7 +162,7 @@ static void plat_createSwapChainForWindow(CJPlatformWindow * win);
 static void plat_recreateSwapChainForWindow(CJPlatformWindow * win);
 static bool plat_createImageViewsForWindow(CJPlatformWindow * win);
 static bool plat_createFramebuffersForWindow(CJPlatformWindow * win);
-static bool createTexturedCommandBuffersForWindowCtx(CJPlatformWindow * win, const CJellyVulkanContext* ctx);
+static CJ_MUST_CHECK bool createTexturedCommandBuffersForWindowCtx(CJPlatformWindow * win, const CJellyVulkanContext* ctx);
 
 /* Keycode mapping functions */
 
@@ -816,7 +816,7 @@ static void plat_cleanupWindow(CJPlatformWindow * win) {
 #include <ghoti.io/cjelly/textured_internal.h>
 
 /* textured pipeline helper (defined in cjelly.c) */
-void cjelly_init_textured_pipeline_ctx(const CJellyVulkanContext* ctx);
+CJ_MUST_CHECK bool cjelly_init_textured_pipeline_ctx(const CJellyVulkanContext* ctx);
 
 
 /* Internal helpers (static) */
@@ -826,13 +826,13 @@ static void plat_createSwapChainForWindow(CJPlatformWindow * win);
 static void plat_recreateSwapChainForWindow(CJPlatformWindow * win);
 static bool plat_createImageViewsForWindow(CJPlatformWindow * win);
 static bool plat_createFramebuffersForWindow(CJPlatformWindow * win);
-static bool createTexturedCommandBuffersForWindowCtx(CJPlatformWindow * win, const CJellyVulkanContext* ctx);
+static CJ_MUST_CHECK bool createTexturedCommandBuffersForWindowCtx(CJPlatformWindow * win, const CJellyVulkanContext* ctx);
 static void plat_createSyncObjectsForWindow(CJPlatformWindow * win);
 static void plat_drawFrameForWindow(CJPlatformWindow * win);
 
 /* Command buffer recorders using engine/ctx */
-static bool createTexturedCommandBuffersForWindowCtx(CJPlatformWindow * win, const CJellyVulkanContext* ctx);
-static void createBindlessCommandBuffersForWindowCtx(CJPlatformWindow * win, const CJellyBindlessResources* resources, const CJellyVulkanContext* ctx);
+static CJ_MUST_CHECK bool createTexturedCommandBuffersForWindowCtx(CJPlatformWindow * win, const CJellyVulkanContext* ctx);
+static CJ_MUST_CHECK bool createBindlessCommandBuffersForWindowCtx(CJPlatformWindow * win, const CJellyBindlessResources* resources, const CJellyVulkanContext* ctx);
 
 /* Bridge wrapper: implement cj_window_t in terms of legacy CJellyWindow
  * so we can migrate callers incrementally. */
@@ -887,7 +887,11 @@ CJ_API cj_window_t* cj_window_create(cj_engine_t* engine, const cj_window_desc_t
   ctx.presentQueue = cj_engine_present_queue(e);
   ctx.renderPass = cj_engine_render_pass(e);
   ctx.commandPool = cj_engine_command_pool(e);
-  cjelly_init_textured_pipeline_ctx(&ctx);
+  if (!cjelly_init_textured_pipeline_ctx(&ctx)) {
+    CJ_ERRORF("Error: the textured path could not be built for this window");
+    cj_window_destroy(win);
+    return NULL;
+  }
 
   /* Record textured command buffers using ctx variants */
   if (!createTexturedCommandBuffersForWindowCtx(win->plat, &ctx)) {
@@ -1856,11 +1860,13 @@ CJ_API void cj_window_rerecord_bindless_color(cj_window_t* win,
     free(win->plat->commandBuffers);
     win->plat->commandBuffers = NULL;
   }
-  createBindlessCommandBuffersForWindowCtx(win->plat, r, ctx);
+  if (!createBindlessCommandBuffersForWindowCtx(win->plat, r, ctx)) {
+    CJ_ERRORF("Error: the bindless colour path could not be recorded for this window");
+  }
 }
 
 /* Per-window textured command buffer recording using explicit ctx */
-static bool createTexturedCommandBuffersForWindowCtx(CJPlatformWindow * win, const CJellyVulkanContext* ctx) {
+static CJ_MUST_CHECK bool createTexturedCommandBuffersForWindowCtx(CJPlatformWindow * win, const CJellyVulkanContext* ctx) {
   if (!win || !ctx || ctx->device == VK_NULL_HANDLE || ctx->commandPool == VK_NULL_HANDLE || ctx->renderPass == VK_NULL_HANDLE) return false;
   win->commandBuffers =
       (VkCommandBuffer*)malloc(sizeof(VkCommandBuffer) * win->swapChainImageCount);
@@ -1887,7 +1893,7 @@ static bool createTexturedCommandBuffersForWindowCtx(CJPlatformWindow * win, con
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     if (vkBeginCommandBuffer(win->commandBuffers[i], &beginInfo) != VK_SUCCESS) {
       CJ_ERRORF("Failed to begin textured (ctx) command buffer");
-      exit(EXIT_FAILURE);
+      return false;
     }
 
     VkRenderPassBeginInfo renderPassInfo = {0};
@@ -1945,15 +1951,14 @@ static bool createTexturedCommandBuffersForWindowCtx(CJPlatformWindow * win, con
 }
 
 /* Per-window bindless command buffer recording using explicit ctx */
-static void createBindlessCommandBuffersForWindowCtx(CJPlatformWindow * win, const CJellyBindlessResources* resources, const CJellyVulkanContext* ctx) {
-  if (!win || !ctx || !resources) return;
-  if (!ctx->device || !ctx->commandPool || !ctx->renderPass) return;
+static CJ_MUST_CHECK bool createBindlessCommandBuffersForWindowCtx(CJPlatformWindow * win, const CJellyBindlessResources* resources, const CJellyVulkanContext* ctx) {
+  if (!win || !ctx || !resources) return false;
+  if (!ctx->device || !ctx->commandPool || !ctx->renderPass) return false;
 
   if (!resources->pipeline) {
     CJ_WARNF("Bindless pipeline is NULL, falling back to textured");
     /* Fallback to textured recorder if bindless pipeline missing */
-    createTexturedCommandBuffersForWindowCtx(win, ctx);
-    return;
+    return createTexturedCommandBuffersForWindowCtx(win, ctx);
   }
 
   win->commandBuffers = (VkCommandBuffer*)malloc(sizeof(VkCommandBuffer) * win->swapChainImageCount);
@@ -1962,8 +1967,9 @@ static void createBindlessCommandBuffersForWindowCtx(CJPlatformWindow * win, con
     // Fallback to textured
     if (!createTexturedCommandBuffersForWindowCtx(win, ctx)) {
       CJ_ERRORF("Error: Failed to create textured command buffers (fallback)");
+      return false;
     }
-    return;
+    return true;
   }
 
   VkCommandBufferAllocateInfo allocInfo = {0};
@@ -1978,8 +1984,9 @@ static void createBindlessCommandBuffersForWindowCtx(CJPlatformWindow * win, con
     win->commandBuffers = NULL;
     if (!createTexturedCommandBuffersForWindowCtx(win, ctx)) {
       CJ_ERRORF("Error: Failed to create textured command buffers (fallback)");
+      return false;
     }
-    return;
+    return true;
   }
 
   for (uint32_t i = 0; i < win->swapChainImageCount; i++) {
@@ -1987,7 +1994,7 @@ static void createBindlessCommandBuffersForWindowCtx(CJPlatformWindow * win, con
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     if (vkBeginCommandBuffer(win->commandBuffers[i], &beginInfo) != VK_SUCCESS) {
       CJ_ERRORF("Failed to begin bindless command buffer");
-      exit(EXIT_FAILURE);
+      return false;
     }
 
     VkRenderPassBeginInfo renderPassInfo = {0};
@@ -2013,10 +2020,6 @@ static void createBindlessCommandBuffersForWindowCtx(CJPlatformWindow * win, con
     scissor.extent = win->swapChainExtent;
     vkCmdSetScissor(win->commandBuffers[i], 0, 1, &scissor);
 
-    if (ctx->renderPass == VK_NULL_HANDLE) { CJ_ERRORF("ERROR: renderPass is NULL!"); exit(EXIT_FAILURE); }
-    if (ctx->device == VK_NULL_HANDLE) { CJ_ERRORF("ERROR: device is NULL!"); exit(EXIT_FAILURE); }
-    if (ctx->commandPool == VK_NULL_HANDLE) { CJ_ERRORF("ERROR: commandPool is NULL!"); exit(EXIT_FAILURE); }
-
     vkCmdBindPipeline(win->commandBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, resources->pipeline);
 
     float push[8] = { resources->uv[0], resources->uv[1], resources->uv[2], resources->uv[3],
@@ -2032,7 +2035,8 @@ static void createBindlessCommandBuffersForWindowCtx(CJPlatformWindow * win, con
 
     if (vkEndCommandBuffer(win->commandBuffers[i]) != VK_SUCCESS) {
       CJ_ERRORF("Failed to record bindless command buffer");
-      exit(EXIT_FAILURE);
+      return false;
     }
   }
+  return true;
 }

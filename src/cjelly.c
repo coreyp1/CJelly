@@ -108,13 +108,13 @@ typedef struct VertexBindless {
 
 
 // Forward declarations for helper functions still in use:
-static void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
+static CJ_MUST_CHECK bool createBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
     VkMemoryPropertyFlags properties, VkBuffer * buffer,
     VkDeviceMemory * bufferMemory);
-static void transitionImageLayout(VkImage image, VkFormat format,
+static CJ_MUST_CHECK bool transitionImageLayout(VkImage image, VkFormat format,
     VkImageLayout oldLayout, VkImageLayout newLayout);
-static void createBindlessVertexBuffer(VkDevice device, VkCommandPool commandPool);
-static void createBindlessGraphicsPipeline(VkDevice device, VkRenderPass renderPass);
+static CJ_MUST_CHECK bool createBindlessVertexBuffer(VkDevice device, VkCommandPool commandPool);
+static CJ_MUST_CHECK bool createBindlessGraphicsPipeline(VkDevice device, VkRenderPass renderPass);
 static VkShaderModule createShaderModuleFromMemory(VkDevice device, const unsigned char * code, size_t codeSize);
 
 // Forward declarations/definitions for texture atlas and application
@@ -217,11 +217,14 @@ static uint32_t findMemoryTypeCtx(const CJellyVulkanContext* ctx, uint32_t typeF
       return i;
     }
   }
+  /* A sentinel, rather than ending the process. A memory type this device
+   * cannot offer is a refusal the caller can act on, and which of its own
+   * windows to give up on is not a decision a library gets to make. */
   CJ_ERRORF("Failed to find suitable memory type (ctx)!");
-  exit(EXIT_FAILURE);
+  return UINT32_MAX;
 }
 
-static void createImageCtx(const CJellyVulkanContext* ctx, uint32_t width, uint32_t height, VkFormat format,
+static CJ_MUST_CHECK bool createImageCtx(const CJellyVulkanContext* ctx, uint32_t width, uint32_t height, VkFormat format,
     VkImageTiling tiling, VkImageUsageFlags usage, VkMemoryPropertyFlags properties,
     VkImage * image, VkDeviceMemory * imageMemory) {
   VkImageCreateInfo imageInfo = {0};
@@ -241,7 +244,7 @@ static void createImageCtx(const CJellyVulkanContext* ctx, uint32_t width, uint3
 
   if (vkCreateImage(ctx->device, &imageInfo, NULL, image) != VK_SUCCESS) {
     CJ_ERRORF("Failed to create image (ctx)");
-    exit(EXIT_FAILURE);
+    return false;
   }
 
   VkMemoryRequirements memRequirements;
@@ -251,13 +254,21 @@ static void createImageCtx(const CJellyVulkanContext* ctx, uint32_t width, uint3
   allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
   allocInfo.allocationSize = memRequirements.size;
   allocInfo.memoryTypeIndex = findMemoryTypeCtx(ctx, memRequirements.memoryTypeBits, properties);
+  if (allocInfo.memoryTypeIndex == UINT32_MAX) {
+    vkDestroyImage(ctx->device, *image, NULL);
+    *image = VK_NULL_HANDLE;
+    return false;
+  }
 
   if (vkAllocateMemory(ctx->device, &allocInfo, NULL, imageMemory) != VK_SUCCESS) {
     CJ_ERRORF("Failed to allocate image memory (ctx)");
-    exit(EXIT_FAILURE);
+    vkDestroyImage(ctx->device, *image, NULL);
+    *image = VK_NULL_HANDLE;
+    return false;
   }
 
   vkBindImageMemory(ctx->device, *image, *imageMemory, 0);
+  return true;
 }
 
 static VkCommandBuffer beginSingleTimeCommandsCtx(const CJellyVulkanContext* ctx) {
@@ -292,7 +303,7 @@ static void endSingleTimeCommandsCtx(const CJellyVulkanContext* ctx, VkCommandBu
   vkFreeCommandBuffers(ctx->device, ctx->commandPool, 1, &commandBuffer);
 }
 
-static void transitionImageLayoutCtx(const CJellyVulkanContext* ctx, VkImage image, VkFormat format,
+static CJ_MUST_CHECK bool transitionImageLayoutCtx(const CJellyVulkanContext* ctx, VkImage image, VkFormat format,
     VkImageLayout oldLayout, VkImageLayout newLayout) {
   (void)format;
   VkCommandBuffer commandBuffer = beginSingleTimeCommandsCtx(ctx);
@@ -324,13 +335,18 @@ static void transitionImageLayoutCtx(const CJellyVulkanContext* ctx, VkImage ima
     sourceStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
     destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
   } else {
+    /* The command buffer is already open. Ending it submits an empty one,
+     * which is the cheapest way to give it back - a bare return here would
+     * leak it out of the pool on a path that already went wrong. */
     CJ_ERRORF("Unsupported layout transition (ctx)!");
-    exit(EXIT_FAILURE);
+    endSingleTimeCommandsCtx(ctx, commandBuffer);
+    return false;
   }
 
   vkCmdPipelineBarrier(commandBuffer, sourceStage, destinationStage, 0, 0, NULL, 0, NULL, 1, &barrier);
 
   endSingleTimeCommandsCtx(ctx, commandBuffer);
+  return true;
 }
 
 static void copyBufferToImageCtx(const CJellyVulkanContext* ctx, VkBuffer buffer, VkImage image, uint32_t width, uint32_t height) {
@@ -352,7 +368,7 @@ static void copyBufferToImageCtx(const CJellyVulkanContext* ctx, VkBuffer buffer
   endSingleTimeCommandsCtx(ctx, commandBuffer);
 }
 // Context-friendly vertex buffer creation for bindless vertices
-static void createBindlessVertexBufferCtx(
+static CJ_MUST_CHECK bool createBindlessVertexBufferCtx(
     VkDevice device,
     VkCommandPool commandPool,
     VkBuffer* outBuffer,
@@ -367,13 +383,16 @@ static void createBindlessVertexBufferCtx(
     {{-0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, 1},
   };
   VkDeviceSize bufferSize = sizeof(verticesBindless);
-  createBuffer(bufferSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-               outBuffer, outMemory);
+  if (!createBuffer(bufferSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+          outBuffer, outMemory)) {
+    return false;
+  }
   void* data = NULL;
   vkMapMemory(device, *outMemory, 0, bufferSize, 0, &data);
   memcpy(data, verticesBindless, (size_t)bufferSize);
   vkUnmapMemory(device, *outMemory);
+  return true;
 }
 
 // Forward decl for context-friendly pipeline helper
@@ -427,15 +446,24 @@ CJellyBindlessResources* cjelly_create_bindless_resources(void) {
 
     CJ_DEBUGF("Transition atlas to SHADER_READ_ONLY");
     // The atlas image was filled per texture by the upload path; ensure final layout
-    transitionImageLayout(atlas->atlasImage, VK_FORMAT_R8G8B8A8_UNORM,
-        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    if (!transitionImageLayout(atlas->atlasImage, VK_FORMAT_R8G8B8A8_UNORM,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)) {
+        cjelly_destroy_texture_atlas(atlas);
+        free(resources);
+        return NULL;
+    }
     CJ_DEBUGF("Update descriptor set");
     // Update descriptor set
     cjelly_atlas_update_descriptor_set(atlas);
 
     // Create vertex buffer
     CJ_DEBUGF("Create bindless vertex buffer");
-    createBindlessVertexBuffer(cur_device(), cur_cmd_pool());
+    if (!createBindlessVertexBuffer(cur_device(), cur_cmd_pool())) {
+        cjelly_destroy_texture_atlas(atlas);
+        free(resources);
+        return NULL;
+    }
     CJellyBindlessState* bl = cur_bl();
     resources->vertexBuffer = bl->vertexBuffer;
     resources->vertexBufferMemory = bl->vertexBufferMemory;
@@ -449,7 +477,11 @@ CJellyBindlessResources* cjelly_create_bindless_resources(void) {
     if (stage >= 2) {
       // Create graphics pipeline
       CJ_DEBUGF("Create bindless graphics pipeline");
-      createBindlessGraphicsPipeline(cur_device(), cur_render_pass());
+      if (!createBindlessGraphicsPipeline(cur_device(), cur_render_pass())) {
+        cjelly_destroy_texture_atlas(atlas);
+        free(resources);
+        return NULL;
+      }
       CJellyBindlessState* bl2 = cur_bl();
       CJ_DEBUGF("After pipeline creation, bindless pipeline=%p layout=%p", (void*)bl2->pipeline, (void*)bl2->pipelineLayout);
       resources->pipeline = bl2->pipeline;
@@ -492,14 +524,22 @@ CJ_API CJellyBindlessResources* cjelly_create_bindless_resources_ctx(const CJell
         return NULL;
     }
     // Transition atlas to shader-read after all copies
-    transitionImageLayoutCtx(ctx, atlas->atlasImage, VK_FORMAT_R8G8B8A8_UNORM,
-                              VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                              VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    if (!transitionImageLayoutCtx(ctx, atlas->atlasImage, VK_FORMAT_R8G8B8A8_UNORM,
+            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)) {
+        cjelly_destroy_texture_atlas_ctx(atlas, ctx);
+        free(resources);
+        return NULL;
+    }
     cjelly_atlas_update_descriptor_set_ctx(atlas, ctx);
 
     // Create vertex buffer into resources using context
     VkBuffer vb = VK_NULL_HANDLE; VkDeviceMemory vm = VK_NULL_HANDLE;
-    createBindlessVertexBufferCtx(ctx->device, ctx->commandPool, &vb, &vm);
+    if (!createBindlessVertexBufferCtx(ctx->device, ctx->commandPool, &vb, &vm)) {
+        cjelly_destroy_texture_atlas_ctx(atlas, ctx);
+        free(resources);
+        return NULL;
+    }
     resources->vertexBuffer = vb;
     resources->vertexBufferMemory = vm;
   /* Optionally mirror into engine bindless state for fallback paths */
@@ -574,9 +614,12 @@ CJellyBindlessResources* cjelly_create_bindless_color_square_resources(void) {
       {{-0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, 0},
     };
     VkDeviceSize vbSize = sizeof(verticesBindless);
-    createBuffer(vbSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                 &resources->vertexBuffer, &resources->vertexBufferMemory);
+    if (!createBuffer(vbSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            &resources->vertexBuffer, &resources->vertexBufferMemory)) {
+        free(resources);
+        return NULL;
+    }
     void* vdata = NULL;
     vkMapMemory(cur_device(), resources->vertexBufferMemory, 0, vbSize, 0, &vdata);
     memcpy(vdata, verticesBindless, (size_t)vbSize);
@@ -708,9 +751,12 @@ CJ_API CJellyBindlessResources* cjelly_create_bindless_color_square_resources_ct
       {{-0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, 0},
     };
     VkDeviceSize vbSize = sizeof(verticesBindless);
-    createBuffer(vbSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-                 &resources->vertexBuffer, &resources->vertexBufferMemory);
+    if (!createBuffer(vbSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+            VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+            &resources->vertexBuffer, &resources->vertexBufferMemory)) {
+        free(resources);
+        return NULL;
+    }
     void* vdata = NULL;
     vkMapMemory(ctx->device, resources->vertexBufferMemory, 0, vbSize, 0, &vdata);
     memcpy(vdata, verticesBindless, (size_t)vbSize);
@@ -813,13 +859,13 @@ CJ_API CJellyBindlessResources* cjelly_create_bindless_color_square_resources_ct
     resources->colorMul[0]=1.0f; resources->colorMul[1]=1.0f; resources->colorMul[2]=1.0f; resources->colorMul[3]=1.0f;
     return resources;
 }
-static void createImage(uint32_t width, uint32_t height, VkFormat format,
+static CJ_MUST_CHECK bool createImage(uint32_t width, uint32_t height, VkFormat format,
     VkImageTiling tiling, VkImageUsageFlags usage,
     VkMemoryPropertyFlags properties, VkImage * image,
     VkDeviceMemory * imageMemory);
 static VkCommandBuffer beginSingleTimeCommands(void);
 static void endSingleTimeCommands(VkCommandBuffer commandBuffer);
-static void transitionImageLayout(VkImage image, VkFormat format,
+static CJ_MUST_CHECK bool transitionImageLayout(VkImage image, VkFormat format,
     VkImageLayout oldLayout, VkImageLayout newLayout);
 
 
@@ -858,7 +904,7 @@ static uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags proper
     }
   }
   CJ_ERRORF("Failed to find suitable memory type!");
-  exit(EXIT_FAILURE);
+  return UINT32_MAX;
 }
 
 
@@ -883,7 +929,7 @@ static uint32_t findMemoryType(uint32_t typeFilter, VkMemoryPropertyFlags proper
 
 
 // Context-based textured helpers (transition away from globals)
-static void createTextureDescriptorPoolCtx(const CJellyVulkanContext* ctx) {
+static CJ_MUST_CHECK bool createTextureDescriptorPoolCtx(const CJellyVulkanContext* ctx) {
   VkDescriptorPoolSize poolSize = {0};
   poolSize.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
   poolSize.descriptorCount = 1;
@@ -897,12 +943,13 @@ static void createTextureDescriptorPoolCtx(const CJellyVulkanContext* ctx) {
   CJellyTexturedResources* tx1 = cur_tx();
   if (vkCreateDescriptorPool(ctx->device, &poolInfo, NULL, &tx1->descriptorPool) != VK_SUCCESS) {
     CJ_ERRORF("Failed to create texture descriptor pool (ctx)!");
-    exit(EXIT_FAILURE);
+    return false;
   }
+  return true;
 }
 
 
-static void createDescriptorSetLayoutsCtx(const CJellyVulkanContext* ctx) {
+static CJ_MUST_CHECK bool createDescriptorSetLayoutsCtx(const CJellyVulkanContext* ctx) {
   VkDescriptorSetLayoutBinding layoutBinding = {0};
   layoutBinding.binding = 0;
   layoutBinding.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
@@ -917,12 +964,13 @@ static void createDescriptorSetLayoutsCtx(const CJellyVulkanContext* ctx) {
   CJellyTexturedResources* tx3 = cur_tx();
   if (vkCreateDescriptorSetLayout(ctx->device, &layoutInfo, NULL, &tx3->descriptorSetLayout) != VK_SUCCESS) {
     CJ_ERRORF("Failed to create texture descriptor set layout (ctx)");
-    exit(EXIT_FAILURE);
+    return false;
   }
+  return true;
 }
 
 
-static void allocateTextureDescriptorSetCtx(const CJellyVulkanContext* ctx) {
+static CJ_MUST_CHECK bool allocateTextureDescriptorSetCtx(const CJellyVulkanContext* ctx) {
   VkDescriptorSetAllocateInfo allocInfo = {0};
   allocInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
   CJellyTexturedResources* tx5 = cur_tx();
@@ -932,19 +980,20 @@ static void allocateTextureDescriptorSetCtx(const CJellyVulkanContext* ctx) {
 
   if (vkAllocateDescriptorSets(ctx->device, &allocInfo, &tx5->descriptorSet) != VK_SUCCESS) {
     CJ_ERRORF("Failed to allocate texture descriptor set (ctx)!");
-    exit(EXIT_FAILURE);
+    return false;
   }
+  return true;
 }
 
 
-static void createTexturedGraphicsPipelineCtx(const CJellyVulkanContext* ctx) {
+static CJ_MUST_CHECK bool createTexturedGraphicsPipelineCtx(const CJellyVulkanContext* ctx) {
   VkShaderModule vertShaderModule =
       createShaderModuleFromMemory(ctx->device, textured_vert_spv, textured_vert_spv_len);
   VkShaderModule fragShaderModule = createShaderModuleFromMemory(
       ctx->device, textured_frag_spv, textured_frag_spv_len);
   if (vertShaderModule == VK_NULL_HANDLE || fragShaderModule == VK_NULL_HANDLE) {
     CJ_ERRORF("Failed to create textured shader modules (ctx)");
-    exit(EXIT_FAILURE);
+    return false;
   }
 
   VkPipelineShaderStageCreateInfo shaderStages[2] = {0};
@@ -1014,7 +1063,7 @@ static void createTexturedGraphicsPipelineCtx(const CJellyVulkanContext* ctx) {
   pipelineLayoutInfo.pSetLayouts = descriptorSetLayouts;
   if (vkCreatePipelineLayout(ctx->device, &pipelineLayoutInfo, NULL, &tx7->pipelineLayout) != VK_SUCCESS) {
     CJ_ERRORF("Failed to create textured pipeline layout (ctx)");
-    exit(EXIT_FAILURE);
+    return false;
   }
 
   VkGraphicsPipelineCreateInfo pipelineInfo = {0};
@@ -1032,14 +1081,15 @@ static void createTexturedGraphicsPipelineCtx(const CJellyVulkanContext* ctx) {
   pipelineInfo.subpass = 0;
   if (vkCreateGraphicsPipelines(ctx->device, VK_NULL_HANDLE, 1, &pipelineInfo, NULL, &tx7->pipeline) != VK_SUCCESS) {
     CJ_ERRORF("Failed to create textured graphics pipeline (ctx)");
-    exit(EXIT_FAILURE);
+    return false;
   }
 
   vkDestroyShaderModule(ctx->device, vertShaderModule, NULL);
   vkDestroyShaderModule(ctx->device, fragShaderModule, NULL);
+  return true;
 }
 
-static void createBindlessGraphicsPipeline(VkDevice device __attribute__((unused)), VkRenderPass renderPass) {
+static CJ_MUST_CHECK bool createBindlessGraphicsPipeline(VkDevice device __attribute__((unused)), VkRenderPass renderPass) {
   CJ_DEBUGF("enter createBindlessGraphicsPipeline");
   // Load SPIR-V binaries and create shader modules for bindless rendering.
   VkShaderModule vertShaderModule =
@@ -1050,7 +1100,7 @@ static void createBindlessGraphicsPipeline(VkDevice device __attribute__((unused
   if (vertShaderModule == VK_NULL_HANDLE ||
       fragShaderModule == VK_NULL_HANDLE) {
     CJ_ERRORF("Failed to create bindless shader modules");
-    exit(EXIT_FAILURE);
+    return false;
   }
   CJ_DEBUGF("shader modules created");
 
@@ -1173,7 +1223,7 @@ static void createBindlessGraphicsPipeline(VkDevice device __attribute__((unused
   if (vkCreatePipelineLayout(cur_device(), &pipelineLayoutInfo, NULL,
           &bl->pipelineLayout) != VK_SUCCESS) {
     CJ_ERRORF("Failed to create bindless pipeline layout");
-    exit(EXIT_FAILURE);
+    return false;
   }
   CJ_DEBUGF("pipeline layout created");
 
@@ -1195,12 +1245,13 @@ static void createBindlessGraphicsPipeline(VkDevice device __attribute__((unused
   if (vkCreateGraphicsPipelines(cur_device(), VK_NULL_HANDLE, 1, &pipelineInfo, NULL,
           &bl->pipeline) != VK_SUCCESS) {
     CJ_ERRORF("Failed to create bindless graphics pipeline");
-    exit(EXIT_FAILURE);
+    return false;
   }
 
   vkDestroyShaderModule(cur_device(), vertShaderModule, NULL);
   vkDestroyShaderModule(cur_device(), fragShaderModule, NULL);
   CJ_DEBUGF("exit createBindlessGraphicsPipeline");
+  return true;
 }
 
 // Context-friendly pipeline creation that does not touch globals for layout or atlas
@@ -1323,7 +1374,7 @@ static VkResult createBindlessGraphicsPipelineWithLayout(
 }
 
 /// Creates a texture image from a BMP file.
-static void createTextureImageCtx(const CJellyVulkanContext* ctx, const char * filePath) {
+static CJ_MUST_CHECK bool createTextureImageCtx(const CJellyVulkanContext* ctx, const char * filePath) {
   // Load BMP data (assumed to be in 24-bit RGB format)
   CJellyFormatImage * image;
   CJellyFormatImageError error = cjelly_format_image_load(filePath, NULL, &image);
@@ -1332,7 +1383,7 @@ static void createTextureImageCtx(const CJellyVulkanContext* ctx, const char * f
      * two calls, which a sink receiving them separately could not reunite. */
     CJ_ERRORF("failed to load image %s: %s", filePath,
         cjelly_format_image_strerror(error));
-    exit(EXIT_FAILURE);
+    return false;
   }
 
   int texWidth = image->raw->width;
@@ -1340,7 +1391,8 @@ static void createTextureImageCtx(const CJellyVulkanContext* ctx, const char * f
   unsigned char * pixels = image->raw->data;
   if (!pixels) {
     CJ_ERRORF("Failed to load image file: %s", filePath);
-    exit(EXIT_FAILURE);
+    cjelly_format_image_free(image);
+    return false;
   }
 
   // The loader already hands back tightly packed RGBA8, which is exactly the
@@ -1351,10 +1403,13 @@ static void createTextureImageCtx(const CJellyVulkanContext* ctx, const char * f
   // Create a staging buffer to hold the pixel data.
   VkBuffer stagingBuffer;
   VkDeviceMemory stagingBufferMemory;
-  createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-          VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-      &stagingBuffer, &stagingBufferMemory);
+  if (!createBuffer(bufferSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+              VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+          &stagingBuffer, &stagingBufferMemory)) {
+    cjelly_format_image_free(image);
+    return false;
+  }
 
   // Map memory and copy the pixel data.
   void * data;
@@ -1366,27 +1421,46 @@ static void createTextureImageCtx(const CJellyVulkanContext* ctx, const char * f
   // Create the Vulkan texture image.
   // We choose VK_FORMAT_R8G8B8A8_UNORM for the RGBA data.
   CJellyTexturedResources* tx = cur_tx();
-  createImageCtx(ctx, texWidth, texHeight, VK_FORMAT_R8G8B8A8_UNORM,
+  bool ok = createImageCtx(ctx, texWidth, texHeight, VK_FORMAT_R8G8B8A8_UNORM,
       VK_IMAGE_TILING_OPTIMAL, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
       VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, &tx->image, &tx->imageMemory);
 
   // Transition image layout to prepare for the data copy.
-  transitionImageLayoutCtx(ctx, tx->image, VK_FORMAT_R8G8B8A8_UNORM,
-      VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+  if (ok) {
+    ok = transitionImageLayoutCtx(ctx, tx->image, VK_FORMAT_R8G8B8A8_UNORM,
+        VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+  }
 
   // Copy the pixel data from the staging buffer into the texture image.
-  copyBufferToImageCtx(ctx, stagingBuffer, tx->image, texWidth, texHeight);
+  if (ok) {
+    copyBufferToImageCtx(ctx, stagingBuffer, tx->image, texWidth, texHeight);
 
-  // Transition the image layout for shader access.
-  transitionImageLayoutCtx(ctx, tx->image, VK_FORMAT_R8G8B8A8_UNORM,
-      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    // Transition the image layout for shader access.
+    ok = transitionImageLayoutCtx(ctx, tx->image, VK_FORMAT_R8G8B8A8_UNORM,
+        VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+  }
 
   vkDestroyBuffer(ctx->device, stagingBuffer, NULL);
   vkFreeMemory(ctx->device, stagingBufferMemory, NULL);
+
+  if (!ok) {
+    /* Leave nothing half-built behind: the next caller checks these handles
+     * against VK_NULL_HANDLE to decide whether the textured path is set up. */
+    if (tx->image != VK_NULL_HANDLE) {
+      vkDestroyImage(ctx->device, tx->image, NULL);
+      tx->image = VK_NULL_HANDLE;
+    }
+    if (tx->imageMemory != VK_NULL_HANDLE) {
+      vkFreeMemory(ctx->device, tx->imageMemory, NULL);
+      tx->imageMemory = VK_NULL_HANDLE;
+    }
+    return false;
+  }
+  return true;
 }
 
 /// Creates an image view for the texture image.
-static void createTextureImageViewCtx(const CJellyVulkanContext* ctx) {
+static CJ_MUST_CHECK bool createTextureImageViewCtx(const CJellyVulkanContext* ctx) {
   VkImageViewCreateInfo viewInfo = {0};
   viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
   CJellyTexturedResources* tx = cur_tx();
@@ -1402,12 +1476,13 @@ static void createTextureImageViewCtx(const CJellyVulkanContext* ctx) {
   if (vkCreateImageView(ctx->device, &viewInfo, NULL, &tx->imageView) !=
       VK_SUCCESS) {
     CJ_ERRORF("Failed to create texture image view");
-    exit(EXIT_FAILURE);
+    return false;
   }
+  return true;
 }
 
 /// Creates a texture sampler.
-static void createTextureSamplerCtx(const CJellyVulkanContext* ctx) {
+static CJ_MUST_CHECK bool createTextureSamplerCtx(const CJellyVulkanContext* ctx) {
   VkSamplerCreateInfo samplerInfo = {0};
   samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
   samplerInfo.magFilter = VK_FILTER_LINEAR;
@@ -1435,8 +1510,9 @@ static void createTextureSamplerCtx(const CJellyVulkanContext* ctx) {
   if (vkCreateSampler(ctx->device, &samplerInfo, NULL, &tx2->sampler) !=
       VK_SUCCESS) {
     CJ_ERRORF("Failed to create texture sampler");
-    exit(EXIT_FAILURE);
+    return false;
   }
+  return true;
 }
 
 /// Updates a descriptor set with the texture image view and sampler.
@@ -1460,7 +1536,7 @@ static void updateTextureDescriptorSetCtx(const CJellyVulkanContext* ctx, VkDesc
   vkUpdateDescriptorSets(ctx->device, 1, &descriptorWrite, 0, NULL);
 }
 
-static void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
+static CJ_MUST_CHECK bool createBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
     VkMemoryPropertyFlags properties, VkBuffer * buffer,
     VkDeviceMemory * bufferMemory) {
   VkBufferCreateInfo bufferInfo = {0};
@@ -1471,7 +1547,7 @@ static void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
 
   if (vkCreateBuffer(cur_device(), &bufferInfo, NULL, buffer) != VK_SUCCESS) {
     CJ_ERRORF("Failed to create buffer");
-    exit(EXIT_FAILURE);
+    return false;
   }
 
   VkMemoryRequirements memRequirements;
@@ -1482,16 +1558,24 @@ static void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage,
   allocInfo.allocationSize = memRequirements.size;
   allocInfo.memoryTypeIndex =
       findMemoryType(memRequirements.memoryTypeBits, properties);
+  if (allocInfo.memoryTypeIndex == UINT32_MAX) {
+    vkDestroyBuffer(cur_device(), *buffer, NULL);
+    *buffer = VK_NULL_HANDLE;
+    return false;
+  }
 
   if (vkAllocateMemory(cur_device(), &allocInfo, NULL, bufferMemory) != VK_SUCCESS) {
     CJ_ERRORF("Failed to allocate buffer memory");
-    exit(EXIT_FAILURE);
+    vkDestroyBuffer(cur_device(), *buffer, NULL);
+    *buffer = VK_NULL_HANDLE;
+    return false;
   }
 
   vkBindBufferMemory(cur_device(), *buffer, *bufferMemory, 0);
+  return true;
 }
 
-static void createImage(uint32_t width, uint32_t height, VkFormat format,
+static CJ_MUST_CHECK bool createImage(uint32_t width, uint32_t height, VkFormat format,
     VkImageTiling tiling, VkImageUsageFlags usage,
     VkMemoryPropertyFlags properties, VkImage * image,
     VkDeviceMemory * imageMemory) {
@@ -1512,7 +1596,7 @@ static void createImage(uint32_t width, uint32_t height, VkFormat format,
 
   if (vkCreateImage(cur_device(), &imageInfo, NULL, image) != VK_SUCCESS) {
     CJ_ERRORF("Failed to create image");
-    exit(EXIT_FAILURE);
+    return false;
   }
 
   VkMemoryRequirements memRequirements;
@@ -1523,13 +1607,21 @@ static void createImage(uint32_t width, uint32_t height, VkFormat format,
   allocInfo.allocationSize = memRequirements.size;
   allocInfo.memoryTypeIndex =
       findMemoryType(memRequirements.memoryTypeBits, properties);
+  if (allocInfo.memoryTypeIndex == UINT32_MAX) {
+    vkDestroyImage(cur_device(), *image, NULL);
+    *image = VK_NULL_HANDLE;
+    return false;
+  }
 
   if (vkAllocateMemory(cur_device(), &allocInfo, NULL, imageMemory) != VK_SUCCESS) {
     CJ_ERRORF("Failed to allocate image memory");
-    exit(EXIT_FAILURE);
+    vkDestroyImage(cur_device(), *image, NULL);
+    *image = VK_NULL_HANDLE;
+    return false;
   }
 
   vkBindImageMemory(cur_device(), *image, *imageMemory, 0);
+  return true;
 }
 
 static VkCommandBuffer beginSingleTimeCommands(void) {
@@ -1564,7 +1656,7 @@ static void endSingleTimeCommands(VkCommandBuffer commandBuffer) {
   vkFreeCommandBuffers(cur_device(), cur_cmd_pool(), 1, &commandBuffer);
 }
 
-static void transitionImageLayout(VkImage image, CJ_MAYBE_UNUSED(VkFormat format),
+static CJ_MUST_CHECK bool transitionImageLayout(VkImage image, CJ_MAYBE_UNUSED(VkFormat format),
     VkImageLayout oldLayout, VkImageLayout newLayout) {
   VkCommandBuffer commandBuffer = beginSingleTimeCommands();
 
@@ -1600,14 +1692,17 @@ static void transitionImageLayout(VkImage image, CJ_MAYBE_UNUSED(VkFormat format
     destinationStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
   }
   else {
+    /* Give the open command buffer back before leaving - see the ctx twin. */
     CJ_ERRORF("Unsupported layout transition!");
-    exit(EXIT_FAILURE);
+    endSingleTimeCommands(commandBuffer);
+    return false;
   }
 
   vkCmdPipelineBarrier(commandBuffer, sourceStage, destinationStage, 0, 0, NULL,
       0, NULL, 1, &barrier);
 
   endSingleTimeCommands(commandBuffer);
+  return true;
 }
 
 
@@ -1619,7 +1714,7 @@ static void transitionImageLayout(VkImage image, CJ_MAYBE_UNUSED(VkFormat format
  * from the global 'verticesTextured' array. The VertexTextured structure
  * includes both position and texture coordinates.
  */
-static void createTexturedVertexBuffer(void) {
+static CJ_MUST_CHECK bool createTexturedVertexBuffer(void) {
   // Vertices for a textured square.
   VertexTextured verticesTextured[] = {
       {{-0.5f, -0.5f}, {0.0f, 0.0f}}, {{0.5f, -0.5f}, {1.0f, 0.0f}},
@@ -1641,7 +1736,7 @@ static void createTexturedVertexBuffer(void) {
   if (vkCreateBuffer(cur_device(), &bufferInfo, NULL, &txV->vertexBuffer) !=
       VK_SUCCESS) {
     CJ_ERRORF("Failed to create textured vertex buffer");
-    exit(EXIT_FAILURE);
+    return false;
   }
 
   VkMemoryRequirements memRequirements;
@@ -1653,11 +1748,18 @@ static void createTexturedVertexBuffer(void) {
   allocInfo.memoryTypeIndex = findMemoryType(memRequirements.memoryTypeBits,
       VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
           VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+  if (allocInfo.memoryTypeIndex == UINT32_MAX) {
+    vkDestroyBuffer(cur_device(), txV->vertexBuffer, NULL);
+    txV->vertexBuffer = VK_NULL_HANDLE;
+    return false;
+  }
 
   if (vkAllocateMemory(cur_device(), &allocInfo, NULL, &txV->vertexBufferMemory) !=
       VK_SUCCESS) {
     CJ_ERRORF("Failed to allocate textured vertex buffer memory");
-    exit(EXIT_FAILURE);
+    vkDestroyBuffer(cur_device(), txV->vertexBuffer, NULL);
+    txV->vertexBuffer = VK_NULL_HANDLE;
+    return false;
   }
 
   vkBindBufferMemory(
@@ -1667,11 +1769,12 @@ static void createTexturedVertexBuffer(void) {
   vkMapMemory(cur_device(), txV->vertexBufferMemory, 0, bufferSize, 0, &data);
   memcpy(data, verticesTextured, (size_t)bufferSize);
   vkUnmapMemory(cur_device(), txV->vertexBufferMemory);
+  return true;
 }
 
 /* Context-based textured command buffers for a window */
 
-static void createBindlessVertexBuffer(VkDevice device __attribute__((unused)), VkCommandPool commandPool __attribute__((unused))) {
+static CJ_MUST_CHECK bool createBindlessVertexBuffer(VkDevice device __attribute__((unused)), VkCommandPool commandPool __attribute__((unused))) {
   // Create vertices for bindless rendering - single square with dynamic color switching
   VertexBindless verticesBindless[] = {
     // Single square - use white so texture colors pass through
@@ -1686,14 +1789,17 @@ static void createBindlessVertexBuffer(VkDevice device __attribute__((unused)), 
   VkDeviceSize bufferSize = sizeof(verticesBindless);
 
   CJellyBindlessState* bl = cur_bl();
-  createBuffer(bufferSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
-               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-               &bl->vertexBuffer, &bl->vertexBufferMemory);
+  if (!createBuffer(bufferSize, VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+          &bl->vertexBuffer, &bl->vertexBufferMemory)) {
+    return false;
+  }
 
   void * data;
   vkMapMemory(cur_device(), bl->vertexBufferMemory, 0, bufferSize, 0, &data);
   memcpy(data, verticesBindless, (size_t)bufferSize);
   vkUnmapMemory(cur_device(), bl->vertexBufferMemory);
+  return true;
 }
 
 //
@@ -1733,14 +1839,19 @@ CJellyTextureAtlas * cjelly_create_texture_atlas(uint32_t width, uint32_t height
   memset(atlas->entries, 0, sizeof(CJellyTextureEntry) * atlas->maxTextures);
 
   // Create the atlas image
-  createImage(width, height, VK_FORMAT_R8G8B8A8_UNORM,
-              VK_IMAGE_TILING_OPTIMAL,
-              VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-              VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-              &atlas->atlasImage, &atlas->atlasImageMemory);
-  // Transition to TRANSFER_DST for subsequent copies
-  transitionImageLayout(atlas->atlasImage, VK_FORMAT_R8G8B8A8_UNORM,
-                        VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+  if (!createImage(width, height, VK_FORMAT_R8G8B8A8_UNORM,
+          VK_IMAGE_TILING_OPTIMAL,
+          VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+          VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+          &atlas->atlasImage, &atlas->atlasImageMemory)
+      // Transition to TRANSFER_DST for subsequent copies
+      || !transitionImageLayout(atlas->atlasImage, VK_FORMAT_R8G8B8A8_UNORM,
+          VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)) {
+    CJ_ERRORF("Failed to create the texture atlas image");
+    free(atlas->entries);
+    free(atlas);
+    return NULL;
+  }
 
   // Create image view
   VkImageViewCreateInfo viewInfo = {0};
@@ -1829,14 +1940,19 @@ CJellyTextureAtlas * cjelly_create_texture_atlas_ctx(const CJellyVulkanContext* 
   memset(atlas->entries, 0, sizeof(CJellyTextureEntry) * atlas->maxTextures);
 
   // Create the atlas image using context device
-  createImageCtx(ctx, width, height, VK_FORMAT_R8G8B8A8_UNORM,
-                  VK_IMAGE_TILING_OPTIMAL,
-                  VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                  VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
-                  &atlas->atlasImage, &atlas->atlasImageMemory);
-  // Transition to TRANSFER_DST for subsequent copies
-  transitionImageLayoutCtx(ctx, atlas->atlasImage, VK_FORMAT_R8G8B8A8_UNORM,
-                            VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+  if (!createImageCtx(ctx, width, height, VK_FORMAT_R8G8B8A8_UNORM,
+          VK_IMAGE_TILING_OPTIMAL,
+          VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+          VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+          &atlas->atlasImage, &atlas->atlasImageMemory)
+      // Transition to TRANSFER_DST for subsequent copies
+      || !transitionImageLayoutCtx(ctx, atlas->atlasImage, VK_FORMAT_R8G8B8A8_UNORM,
+          VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL)) {
+    CJ_ERRORF("Failed to create the texture atlas image");
+    free(atlas->entries);
+    free(atlas);
+    return NULL;
+  }
 
   // Create image view using context device
   VkImageViewCreateInfo viewInfo = {0};
@@ -1999,9 +2115,13 @@ uint32_t cjelly_atlas_add_texture(CJellyTextureAtlas * atlas, const char * fileP
   VkBuffer stagingBuffer;
   VkDeviceMemory stagingBufferMemory;
 
-  createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-               &stagingBuffer, &stagingBufferMemory);
+  if (!createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+          &stagingBuffer, &stagingBufferMemory)) {
+    /* 0 is "no texture" here, which is what the callers already check. */
+    cjelly_format_image_free(image);
+    return 0;
+  }
 
   // Copy image data to staging buffer
   void * data;
@@ -2100,9 +2220,13 @@ uint32_t cjelly_atlas_add_texture_ctx(CJellyTextureAtlas * atlas, const char * f
   VkBuffer stagingBuffer;
   VkDeviceMemory stagingBufferMemory;
 
-  createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
-               VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
-               &stagingBuffer, &stagingBufferMemory);
+  if (!createBuffer(imageSize, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+          VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+          &stagingBuffer, &stagingBufferMemory)) {
+    /* 0 is "no texture" here, which is what the callers already check. */
+    cjelly_format_image_free(image);
+    return 0;
+  }
 
   // Copy image data to staging buffer using context device
   void * data;
@@ -2217,19 +2341,28 @@ static void cjelly_atlas_update_descriptor_set_ctx(CJellyTextureAtlas * atlas, c
   vkUpdateDescriptorSets(ctx->device, 1, &descriptorWrite, 0, NULL);
 }
 
-/* Public wrapper used by window API to build textured path using a context */
-void cjelly_init_textured_pipeline_ctx(const CJellyVulkanContext* ctx) {
-  if (!ctx || ctx->device == VK_NULL_HANDLE) return;
+/* Public wrapper used by window API to build textured path using a context.
+ *
+ * Nine steps, each of which used to end the host process if it failed. A
+ * library does not get to make that decision - a program that could have
+ * carried on without a textured window instead died inside a call it made,
+ * with no return value to inspect and no way to prevent it. They report
+ * now, and this stops at the first one rather than building the rest on top
+ * of something that is not there.
+ *
+ * @return true when the whole textured path is ready to draw with. */
+CJ_MUST_CHECK bool cjelly_init_textured_pipeline_ctx(const CJellyVulkanContext* ctx) {
+  if (!ctx || ctx->device == VK_NULL_HANDLE) return false;
   // Avoid recreating global textured resources multiple times (multi-window init)
   CJellyTexturedResources* tx = cur_tx();
-  if (tx && (tx->pipeline != VK_NULL_HANDLE || tx->image != VK_NULL_HANDLE)) return;
-  createTextureImageCtx(ctx, "test/images/bmp/tang.bmp");
-  createTexturedVertexBuffer();
-  createTextureImageViewCtx(ctx);
-  createTextureSamplerCtx(ctx);
-  createDescriptorSetLayoutsCtx(ctx);
-  createTextureDescriptorPoolCtx(ctx);
-  allocateTextureDescriptorSetCtx(ctx);
+  if (tx && (tx->pipeline != VK_NULL_HANDLE || tx->image != VK_NULL_HANDLE)) return true;
+  if (!createTextureImageCtx(ctx, "test/images/bmp/tang.bmp")) return false;
+  if (!createTexturedVertexBuffer()) return false;
+  if (!createTextureImageViewCtx(ctx)) return false;
+  if (!createTextureSamplerCtx(ctx)) return false;
+  if (!createDescriptorSetLayoutsCtx(ctx)) return false;
+  if (!createTextureDescriptorPoolCtx(ctx)) return false;
+  if (!allocateTextureDescriptorSetCtx(ctx)) return false;
   updateTextureDescriptorSetCtx(ctx, tx ? tx->descriptorSet : VK_NULL_HANDLE);
-  createTexturedGraphicsPipelineCtx(ctx);
+  return createTexturedGraphicsPipelineCtx(ctx);
 }
