@@ -879,17 +879,38 @@ void cj_plat_create_window(const char* title, int width, int height,
   int win_x = (x == CJ_WINDOW_POSITION_DEFAULT) ? CW_USEDEFAULT : x;
   int win_y = (y == CJ_WINDOW_POSITION_DEFAULT) ? CW_USEDEFAULT : y;
 
-  /* TODO(windows): width/height here size the whole frame and the client area
-   * is fitted inside it, where X11 sizes the client area and the window
-   * manager hangs decoration outside. The same cj_window_desc_t therefore
-   * gives a smaller drawable on Windows. AdjustWindowRectEx() is the fix, but
-   * it changes the size of every window in every application using CJelly, so
-   * it should land on a machine that can verify it. Same split applies to
-   * win_x/win_y. See WINDOWS-TODO.md items 1 and 2. */
-  HWND hwnd = CreateWindowEx(0, "CJellyWindow", title, WS_OVERLAPPEDWINDOW,
-      win_x, win_y, width, height, NULL, NULL, hInstance, NULL);
+  /* CreateWindowEx sizes the whole frame and fits the client area inside it,
+   * where X11 sizes the client area and the window manager hangs decoration
+   * outside. Without correcting for that, the same cj_window_desc_t gave a
+   * drawable 16x39 pixels smaller on Windows at 96 DPI - 784x561 for an
+   * 800x600 request. The frame is grown by what AdjustWindowRectEx says the
+   * decoration takes, and then checked against the client rect the window
+   * actually got, because the frame's size depends on the monitor's DPI and
+   * the theme, which AdjustWindowRectEx does not know before the window
+   * exists.
+   *
+   * TODO(windows): position has the same split - Win32 places the frame, X11
+   * the client area - and is not corrected here. See WINDOWS-TODO.md item 2. */
+  const DWORD style = WS_OVERLAPPEDWINDOW;
+  RECT frame = { 0, 0, width, height };
+  AdjustWindowRectEx(&frame, style, FALSE, 0);
+  HWND hwnd = CreateWindowEx(0, "CJellyWindow", title, style,
+      win_x, win_y, frame.right - frame.left, frame.bottom - frame.top,
+      NULL, NULL, hInstance, NULL);
   if (!hwnd) return;
   out->handle = (uintptr_t)hwnd;
+
+  RECT client;
+  if (GetClientRect(hwnd, &client)
+      && (client.right != width || client.bottom != height)) {
+    RECT outer;
+    if (GetWindowRect(hwnd, &outer)) {
+      SetWindowPos(hwnd, NULL, 0, 0,
+          (outer.right - outer.left) + (width - client.right),
+          (outer.bottom - outer.top) + (height - client.bottom),
+          SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+  }
 
   int show_cmd = SW_SHOWNORMAL;
   if (initial_state == CJ_WINDOW_STATE_MAXIMIZED)      show_cmd = SW_SHOWMAXIMIZED;
