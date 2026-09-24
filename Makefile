@@ -664,11 +664,16 @@ endif
 # 	@mkdir -p $(@D)
 # 	$(CXX) $(CXXFLAGS) $(INCLUDE) -o $@ $< $(LDFLAGS) $(TESTFLAGS) $(CJELLYLIBRARY)
 
+# The static archive is a prerequisite because it is what CJELLYLIBRARY links.
+# Naming only the shared library let a change to the library relink the demo
+# against the previous archive - the demo then ran the old code with no sign
+# of it, which is how a Win32 window fix first appeared not to work.
 $(APP_DIR)/main$(EXE_EXTENSION): \
 		src/main.c \
 		$(DEP_CJELLY) \
 		$(DEP_FORMAT_3D_MTL) \
 		$(DEP_FORMAT_3D_OBJ) \
+		$(APP_DIR)/$(STATIC_TARGET) \
 		$(APP_DIR)/$(TARGET) \
 		$(FLAGS_STAMP)
 	@printf "\n### Compiling CJelly Test ###\n"
