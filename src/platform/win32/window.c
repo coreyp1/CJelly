@@ -242,6 +242,20 @@ static int32_t logical_to_physical(int32_t logical, float dpi_scale) {
   return (int32_t)(logical * dpi_scale + 0.5f);
 }
 
+/* Where the client area's top-left corner is, in screen coordinates.
+ *
+ * The seam speaks in client coordinates, as X11 does: a position is where
+ * the drawable starts, and the window manager hangs its decoration outside.
+ * Win32 positions and reports the outer frame, so every position crossing
+ * the seam goes through this. */
+static bool client_origin(HWND hwnd, int32_t* x, int32_t* y) {
+  POINT origin = { 0, 0 };
+  if (!hwnd || !ClientToScreen(hwnd, &origin)) return false;
+  *x = origin.x;
+  *y = origin.y;
+  return true;
+}
+
 /*
  * Windows window procedure.
  *
@@ -326,8 +340,12 @@ LRESULT CALLBACK cj_win32_wnd_proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM l
                       suggested_rect->bottom - suggested_rect->top,
                       SWP_NOZORDER | SWP_NOACTIVATE);
 
-          // Update the cached position, which like WM_MOVE's is the frame's.
-          cj_window__set_position(window, suggested_rect->left, suggested_rect->top);
+          // Update the cached position, which like WM_MOVE's is the client
+          // area's rather than the suggested rect's frame.
+          int32_t moved_x, moved_y;
+          if (client_origin(hwnd, &moved_x, &moved_y)) {
+            cj_window__set_position(window, moved_x, moved_y);
+          }
 
           // The swapchain's extent follows the new DPI even if the logical
           // size does not change.
@@ -348,12 +366,10 @@ LRESULT CALLBACK cj_win32_wnd_proc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM l
       if (app) {
         cj_window_t* window = (cj_window_t*)cjelly_application_find_window_by_handle(app, (void*)hwnd);
         if (window) {
-          // WM_MOVE provides client area position, use GetWindowRect for frame position
-          RECT rect;
-          if (GetWindowRect(hwnd, &rect)) {
-            int32_t new_x = rect.left;
-            int32_t new_y = rect.top;
-            // GetWindowRect returns logical pixels for DPI-aware apps
+          // The client area's origin, which is what the seam reports; see
+          // client_origin().
+          int32_t new_x, new_y;
+          if (client_origin(hwnd, &new_x, &new_y)) {
             int32_t cur_x, cur_y;
             cj_window__get_position(window, &cur_x, &cur_y);
             if (new_x != cur_x || new_y != cur_y) {
@@ -791,11 +807,11 @@ bool cj_plat_release_mouse(void) {
 
 bool cj_plat_query_position(uintptr_t handle, int32_t* out_x, int32_t* out_y) {
   /* Windows knows where the window is, including after the user moved it. */
-  RECT rect;
-  if (!handle || !GetWindowRect((HWND)handle, &rect)) return false;
+  int32_t x, y;
+  if (!client_origin((HWND)handle, &x, &y)) return false;
   /* TODO: Apply DPI scaling conversion (for now, assume 1.0 scale) */
-  if (out_x) *out_x = rect.left;
-  if (out_y) *out_y = rect.top;
+  if (out_x) *out_x = x;
+  if (out_y) *out_y = y;
   return true;
 }
 
@@ -813,7 +829,18 @@ bool cj_plat_move_window(uintptr_t handle, int32_t x, int32_t y,
   (void)cur_x; (void)cur_y;
   if (!handle) return false;
   /* TODO: Apply DPI scaling conversion (for now, assume 1.0 scale) */
-  SetWindowPos((HWND)handle, NULL, x, y, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
+  /* x and y place the client area; SetWindowPos places the frame, so the
+   * frame's offset from its own client area is subtracted. */
+  RECT outer;
+  int32_t cx, cy;
+  int32_t dx = 0, dy = 0;
+  if (GetWindowRect((HWND)handle, &outer)
+      && client_origin((HWND)handle, &cx, &cy)) {
+    dx = cx - outer.left;
+    dy = cy - outer.top;
+  }
+  SetWindowPos((HWND)handle, NULL, x - dx, y - dy, 0, 0,
+      SWP_NOSIZE | SWP_NOZORDER);
   /* Windows does not feed programmatic moves back as user moves, so there is
    * nothing for the caller to suppress. */
   return false;
@@ -889,11 +916,15 @@ void cj_plat_create_window(const char* title, int width, int height,
    * the theme, which AdjustWindowRectEx does not know before the window
    * exists.
    *
-   * TODO(windows): position has the same split - Win32 places the frame, X11
-   * the client area - and is not corrected here. See WINDOWS-TODO.md item 2. */
+   * Position has the same split - Win32 places the frame, X11 the client
+   * area - and gets the same treatment: the frame starts where the decoration
+   * says it must for the client area to land at (x, y), and is moved again
+   * below if it did not. */
   const DWORD style = WS_OVERLAPPEDWINDOW;
   RECT frame = { 0, 0, width, height };
   AdjustWindowRectEx(&frame, style, FALSE, 0);
+  if (win_x != CW_USEDEFAULT) win_x += frame.left;
+  if (win_y != CW_USEDEFAULT) win_y += frame.top;
   HWND hwnd = CreateWindowEx(0, "CJellyWindow", title, style,
       win_x, win_y, frame.right - frame.left, frame.bottom - frame.top,
       NULL, NULL, hInstance, NULL);
@@ -912,15 +943,26 @@ void cj_plat_create_window(const char* title, int width, int height,
     }
   }
 
+  if (x != CJ_WINDOW_POSITION_DEFAULT && y != CJ_WINDOW_POSITION_DEFAULT) {
+    int32_t cx, cy;
+    if (client_origin(hwnd, &cx, &cy) && (cx != x || cy != y)) {
+      RECT outer;
+      if (GetWindowRect(hwnd, &outer)) {
+        SetWindowPos(hwnd, NULL, outer.left + (x - cx), outer.top + (y - cy),
+            0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+      }
+    }
+  }
+
   int show_cmd = SW_SHOWNORMAL;
   if (initial_state == CJ_WINDOW_STATE_MAXIMIZED)      show_cmd = SW_SHOWMAXIMIZED;
   else if (initial_state == CJ_WINDOW_STATE_MINIMIZED) show_cmd = SW_SHOWMINIMIZED;
   ShowWindow(hwnd, show_cmd);
 
-  RECT rect;
-  if (GetWindowRect(hwnd, &rect)) {
-    out->x = rect.left;
-    out->y = rect.top;
+  int32_t cx, cy;
+  if (client_origin(hwnd, &cx, &cy)) {
+    out->x = cx;
+    out->y = cy;
   }
 
   out->dpi_scale = cj_win32_dpi_to_scale(cj_win32_window_dpi(hwnd));
