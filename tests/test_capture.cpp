@@ -13,6 +13,7 @@
 
 #include "test_helpers.h"
 #include <ghoti.io/cjelly/cj_capture.h>
+#include <ghoti.io/cjelly/window_internal.h>
 #include <gtest/gtest.h>
 
 #include <ghoti.io/image/codec.h>
@@ -82,6 +83,19 @@ TEST(Capture, CaptureRejectsNullArguments) {
   EXPECT_EQ(cj_window_capture(nullptr, &capture), CJ_E_INVALID_ARGUMENT);
   EXPECT_EQ(cj_window_capture(nullptr, nullptr), CJ_E_INVALID_ARGUMENT);
   EXPECT_EQ(capture.pixels, nullptr) << "nothing handed back on failure";
+}
+
+/* The two halves of the request-then-read contract, on the only argument a
+ * test without a display can supply. The contract itself - ask, render a
+ * frame, read - needs a swapchain, and is checked by `make check-render`,
+ * which fails with four write-after-present hazards if the copy is moved
+ * back to where it used to be. */
+TEST(Capture, RequestAndTakeToleratePassingNoWindow) {
+  cj_window__request_capture(nullptr);
+
+  cj_window_readback_t readback = {};
+  EXPECT_FALSE(cj_window__take_capture(nullptr, &readback));
+  EXPECT_EQ(readback.memory, VK_NULL_HANDLE);
 }
 
 //

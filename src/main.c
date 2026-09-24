@@ -135,7 +135,15 @@ typedef struct CaptureContext {
   CJellyApplication* app;
   cj_window_t* windows[4];
   int frames_remaining;
+  bool written[4];       /* Which windows have produced a PNG. */
+  int attempts;          /* Frames spent trying, so a stuck one still exits. */
 } CaptureContext;
+
+/* How many frames to keep asking for. A capture takes two calls a frame
+ * apart, so one extra frame is the expected cost; the rest is slack for a
+ * window that skips a frame. Without a bound, a window that never presents
+ * would keep the demo running forever. */
+#define CAPTURE_MAX_ATTEMPTS 30
 
 static cj_frame_result_t capture_on_frame(CJ_MAYBE_UNUSED(cj_window_t* window),
                                           CJ_MAYBE_UNUSED(const cj_frame_info_t* frame),
@@ -147,21 +155,42 @@ static cj_frame_result_t capture_on_frame(CJ_MAYBE_UNUSED(cj_window_t* window),
    * necessarily the one with everything drawn into it. */
   if (--ctx->frames_remaining > 0) return CJ_FRAME_CONTINUE;
 
+  ctx->attempts++;
+  bool all_done = true;
+
   for (int i = 0; i < 4; i++) {
-    if (!ctx->windows[i]) continue;
-    char path[512];
-    snprintf(path, sizeof(path), "%s/window%d.png", ctx->directory, i + 1);
+    if (!ctx->windows[i] || ctx->written[i]) continue;
 
     cj_capture_t capture = {0};
     cj_result_t r = cj_window_capture(ctx->windows[i], &capture);
-    if (r != CJ_SUCCESS) {
-      printf("capture: window %d could not be read (%d)\n", i + 1, (int)r);
+    if (r == CJ_E_NOT_READY) {
+      /* Asked for; the window records the copy in the frame it draws next,
+       * and the call after that returns it. */
+      all_done = false;
       continue;
     }
+    if (r != CJ_SUCCESS) {
+      printf("capture: window %d could not be read (%d)\n", i + 1, (int)r);
+      ctx->written[i] = true; /* Do not keep retrying a real failure. */
+      continue;
+    }
+
+    char path[512];
+    snprintf(path, sizeof(path), "%s/window%d.png", ctx->directory, i + 1);
     r = cj_capture_write_png(&capture, path);
     printf("capture: window %d %ux%u -> %s%s\n", i + 1, capture.width,
            capture.height, path, r == CJ_SUCCESS ? "" : " (write failed)");
     cj_capture_free(&capture);
+    ctx->written[i] = true;
+  }
+
+  if (!all_done && ctx->attempts < CAPTURE_MAX_ATTEMPTS) {
+    return CJ_FRAME_CONTINUE;
+  }
+  for (int i = 0; i < 4; i++) {
+    if (ctx->windows[i] && !ctx->written[i]) {
+      printf("capture: window %d never produced a frame to read\n", i + 1);
+    }
   }
 
   if (ctx->app) ctx->app->shutdown_requested = 1;
@@ -530,7 +559,8 @@ int main(int argc, char ** argv) {
   cj_window_on_resize(win4, window3_on_resize, NULL);
 
   CaptureContext capture_ctx = {getenv("CJELLY_DEMO_CAPTURE"), app,
-                                {win1, win2, win3, win4}, 30};
+                                {win1, win2, win3, win4}, 30,
+                                {false, false, false, false}, 0};
   if (capture_ctx.directory) {
     printf("Capturing to %s after %d frames, then exiting.\n",
            capture_ctx.directory, capture_ctx.frames_remaining);

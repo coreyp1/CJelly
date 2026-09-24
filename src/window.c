@@ -76,10 +76,30 @@ typedef struct CJPlatformWindow {
   VkExtent2D swapChainExtent;
   VkFormat swapChainFormat;
   /* Which swapchain image was last handed to the presentation engine, and
-   * whether anything has been presented yet. A capture reads that image: it
-   * is the one the user is actually looking at. */
+   * whether anything has been presented yet. */
   uint32_t lastPresentedImage;
   bool hasPresentedImage;
+
+  /* Frame capture.
+   *
+   * The copy is recorded into the frame that draws the image and submitted
+   * with it, while the application still owns that image. Reading it after
+   * vkQueuePresentKHR - which is what this did - is a write-after-present
+   * hazard: the image belongs to the presentation engine from the moment it
+   * is presented until it is acquired again, and nothing says the next
+   * acquire returns the same one. It produced a correct-looking screenshot
+   * on every driver tried, which is why it survived.
+   *
+   * So a capture costs a frame: ask on one, read on the next. That is the
+   * honest shape of a readback and it is what cj_window_capture() does. */
+  VkCommandBuffer captureCommandBuffer;
+  VkBuffer captureBuffer;
+  VkDeviceMemory captureMemory;
+  VkDeviceSize captureCapacity;
+  VkFormat captureFormat;
+  VkExtent2D captureExtent;
+  bool captureRequested;  /**< Asked for; the next frame records the copy. */
+  bool captureReady;      /**< Copied, and not yet read. */
   int width;
   int height;
   int updateMode;
@@ -435,6 +455,207 @@ static void plat_createSyncObjectsForWindow(CJPlatformWindow * win) {
   VkFenceCreateInfo fi = {0}; fi.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO; fi.flags = VK_FENCE_CREATE_SIGNALED_BIT; vkCreateFence(cj_engine_device(cj_engine_get_current()), &fi, NULL, &win->inFlightFence);
 }
 
+/* ---------------------------------------------------------------- capture */
+
+/** Find a memory type satisfying `properties`, or UINT32_MAX. */
+static uint32_t plat_captureMemoryType(VkPhysicalDevice physical_device,
+    uint32_t type_bits, VkMemoryPropertyFlags properties) {
+  VkPhysicalDeviceMemoryProperties memory = {0};
+  vkGetPhysicalDeviceMemoryProperties(physical_device, &memory);
+  for (uint32_t i = 0; i < memory.memoryTypeCount; i++) {
+    if ((type_bits & (1u << i))
+        && (memory.memoryTypes[i].propertyFlags & properties) == properties) {
+      return i;
+    }
+  }
+  return UINT32_MAX;
+}
+
+/** Release the staging buffer and its memory. Safe to call twice. */
+static void plat_releaseCaptureBuffer(CJPlatformWindow * win, VkDevice dev) {
+  if (!win || dev == VK_NULL_HANDLE) return;
+  if (win->captureBuffer != VK_NULL_HANDLE) {
+    vkDestroyBuffer(dev, win->captureBuffer, NULL);
+    win->captureBuffer = VK_NULL_HANDLE;
+  }
+  if (win->captureMemory != VK_NULL_HANDLE) {
+    vkFreeMemory(dev, win->captureMemory, NULL);
+    win->captureMemory = VK_NULL_HANDLE;
+  }
+  win->captureCapacity = 0;
+  win->captureReady = false;
+}
+
+/**
+ * Make sure there is a staging buffer big enough for this window's frame,
+ * and a command buffer to record the copy into.
+ *
+ * Both are kept between captures rather than allocated per frame: a capture
+ * is usually either never taken or taken every frame, and the second case is
+ * the one that would notice.
+ */
+static bool plat_ensureCaptureBuffer(CJPlatformWindow * win) {
+  if (!win) return false;
+  cj_engine_t * engine = cj_engine_get_current();
+  VkDevice dev = cj_engine_device(engine);
+  VkPhysicalDevice phys = cj_engine_physical_device(engine);
+  VkCommandPool pool = cj_engine_command_pool(engine);
+  if (dev == VK_NULL_HANDLE || pool == VK_NULL_HANDLE) return false;
+  if (win->swapChainExtent.width == 0 || win->swapChainExtent.height == 0) {
+    return false;
+  }
+
+  VkDeviceSize needed = (VkDeviceSize)win->swapChainExtent.width
+      * win->swapChainExtent.height * 4u;
+
+  if (win->captureBuffer != VK_NULL_HANDLE && win->captureCapacity >= needed) {
+    /* Already big enough - a window that shrank keeps the larger buffer. */
+  }
+  else {
+    /* A resize went through, so whatever was in there describes the old
+     * size. Nothing has read it, or captureReady would be clear. */
+    plat_releaseCaptureBuffer(win, dev);
+
+    VkBufferCreateInfo bi = {0};
+    bi.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bi.size = needed;
+    bi.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+    if (vkCreateBuffer(dev, &bi, NULL, &win->captureBuffer) != VK_SUCCESS) {
+      win->captureBuffer = VK_NULL_HANDLE;
+      return false;
+    }
+
+    VkMemoryRequirements req = {0};
+    vkGetBufferMemoryRequirements(dev, win->captureBuffer, &req);
+    uint32_t type = plat_captureMemoryType(phys, req.memoryTypeBits,
+        VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
+            | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    if (type == UINT32_MAX) {
+      plat_releaseCaptureBuffer(win, dev);
+      return false;
+    }
+
+    VkMemoryAllocateInfo ai = {0};
+    ai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    ai.allocationSize = req.size;
+    ai.memoryTypeIndex = type;
+    if (vkAllocateMemory(dev, &ai, NULL, &win->captureMemory) != VK_SUCCESS) {
+      plat_releaseCaptureBuffer(win, dev);
+      return false;
+    }
+    if (vkBindBufferMemory(dev, win->captureBuffer, win->captureMemory, 0)
+        != VK_SUCCESS) {
+      plat_releaseCaptureBuffer(win, dev);
+      return false;
+    }
+    win->captureCapacity = needed;
+  }
+
+  if (win->captureCommandBuffer == VK_NULL_HANDLE) {
+    VkCommandBufferAllocateInfo ci = {0};
+    ci.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    ci.commandPool = pool;
+    ci.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    ci.commandBufferCount = 1;
+    if (vkAllocateCommandBuffers(dev, &ci, &win->captureCommandBuffer)
+        != VK_SUCCESS) {
+      win->captureCommandBuffer = VK_NULL_HANDLE;
+      return false;
+    }
+  }
+  return true;
+}
+
+/** Move a swapchain image between the presentable and readable layouts. */
+static void plat_captureTransition(VkCommandBuffer cmd, VkImage image,
+    VkImageLayout from, VkImageLayout to, VkAccessFlags src_access,
+    VkAccessFlags dst_access) {
+  VkImageMemoryBarrier barrier = {0};
+  barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+  barrier.oldLayout = from;
+  barrier.newLayout = to;
+  barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+  barrier.image = image;
+  barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  barrier.subresourceRange.levelCount = 1;
+  barrier.subresourceRange.layerCount = 1;
+  barrier.srcAccessMask = src_access;
+  barrier.dstAccessMask = dst_access;
+  vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT,
+      VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, NULL, 0, NULL, 1, &barrier);
+}
+
+/**
+ * Record this frame's copy, if one was asked for.
+ *
+ * Returns the command buffer to submit after the frame's own, or
+ * VK_NULL_HANDLE when there is nothing to do. Submitting it in the same
+ * vkQueueSubmit as the frame is what keeps the image owned: the two run in
+ * order on the queue, and the present that follows has not happened yet.
+ */
+static VkCommandBuffer plat_recordCaptureForFrame(
+    CJPlatformWindow * win, uint32_t imageIndex) {
+  if (!win || !win->captureRequested) return VK_NULL_HANDLE;
+  if (!win->swapChainImages || imageIndex >= win->swapChainImageCount) {
+    return VK_NULL_HANDLE;
+  }
+  if (!plat_ensureCaptureBuffer(win)) {
+    /* Asked for and cannot be done. Drop the request rather than retrying
+     * every frame for as long as the program runs. */
+    win->captureRequested = false;
+    CJ_WARNF("capture: no staging buffer could be made for this window");
+    return VK_NULL_HANDLE;
+  }
+
+  VkImage image = win->swapChainImages[imageIndex];
+  VkCommandBuffer cmd = win->captureCommandBuffer;
+
+  VkCommandBufferBeginInfo begin = {0};
+  begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+  begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+  if (vkBeginCommandBuffer(cmd, &begin) != VK_SUCCESS) {
+    win->captureRequested = false;
+    return VK_NULL_HANDLE;
+  }
+
+  /* The render pass leaves the image in PRESENT_SRC, which is where the
+   * frame's own command buffer stops. */
+  plat_captureTransition(cmd, image, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+      VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_MEMORY_READ_BIT,
+      VK_ACCESS_TRANSFER_READ_BIT);
+
+  VkBufferImageCopy region = {0};
+  region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  region.imageSubresource.layerCount = 1;
+  region.imageExtent.width = win->swapChainExtent.width;
+  region.imageExtent.height = win->swapChainExtent.height;
+  region.imageExtent.depth = 1;
+  vkCmdCopyImageToBuffer(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+      win->captureBuffer, 1, &region);
+
+  /* Back to PRESENT_SRC before the present that follows: this command buffer
+   * is submitted ahead of it, so the image has to be presentable again by the
+   * time it finishes. */
+  plat_captureTransition(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+      VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_ACCESS_TRANSFER_READ_BIT,
+      VK_ACCESS_MEMORY_READ_BIT);
+
+  if (vkEndCommandBuffer(cmd) != VK_SUCCESS) {
+    win->captureRequested = false;
+    return VK_NULL_HANDLE;
+  }
+
+  /* Recorded against this frame's size and format, which is what the reader
+   * has to unpack it with - not whatever the window is by the time it looks. */
+  win->captureFormat = win->swapChainFormat;
+  win->captureExtent = win->swapChainExtent;
+  win->captureRequested = false;
+  win->captureReady = true;
+  return cmd;
+}
+
 static void plat_drawFrameForWindow(CJPlatformWindow * win) {
   if (!win) return;
   VkDevice dev = cj_engine_device(cj_engine_get_current());
@@ -445,7 +666,12 @@ static void plat_drawFrameForWindow(CJPlatformWindow * win) {
   vkResetFences(dev, 1, &win->inFlightFence);
   uint32_t imageIndex; vkAcquireNextImageKHR(dev, win->swapChain, UINT64_MAX, win->imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
   VkSemaphore waitS[] = { win->imageAvailableSemaphore }; VkPipelineStageFlags stages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
-  VkSubmitInfo si = {0}; si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO; si.waitSemaphoreCount = 1; si.pWaitSemaphores = waitS; si.pWaitDstStageMask = stages; si.commandBufferCount = 1; si.pCommandBuffers = &win->commandBuffers[imageIndex]; VkSemaphore sigS[] = { win->renderFinishedSemaphore }; si.signalSemaphoreCount = 1; si.pSignalSemaphores = sigS;
+  /* Two at most: this frame's, then the copy of what it drew. */
+  VkCommandBuffer submitted[2] = { win->commandBuffers[imageIndex], VK_NULL_HANDLE };
+  uint32_t submittedCount = 1;
+  VkCommandBuffer captureCmd = plat_recordCaptureForFrame(win, imageIndex);
+  if (captureCmd != VK_NULL_HANDLE) submitted[submittedCount++] = captureCmd;
+  VkSubmitInfo si = {0}; si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO; si.waitSemaphoreCount = 1; si.pWaitSemaphores = waitS; si.pWaitDstStageMask = stages; si.commandBufferCount = submittedCount; si.pCommandBuffers = submitted; VkSemaphore sigS[] = { win->renderFinishedSemaphore }; si.signalSemaphoreCount = 1; si.pSignalSemaphores = sigS;
   vkQueueSubmit(cj_engine_graphics_queue(cj_engine_get_current()), 1, &si, win->inFlightFence);
   VkPresentInfoKHR pi = {0}; pi.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR; pi.waitSemaphoreCount = 1; pi.pWaitSemaphores = sigS; pi.swapchainCount = 1; pi.pSwapchains = &win->swapChain; pi.pImageIndices = &imageIndex; vkQueuePresentKHR(cj_engine_present_queue(cj_engine_get_current()), &pi);
   win->lastPresentedImage = imageIndex;
@@ -460,6 +686,14 @@ static void plat_cleanupWindow(CJPlatformWindow * win) {
   if (dev) vkDeviceWaitIdle(dev);
 
   // Destroy Vulkan resources
+  /* The capture staging buffer first, and its command buffer with the pool's
+   * other ones below - the buffer has to go before the memory it is bound to,
+   * which is what plat_releaseCaptureBuffer gets in the right order. */
+  if (dev && win->captureCommandBuffer) {
+    vkFreeCommandBuffers(dev, pool, 1, &win->captureCommandBuffer);
+    win->captureCommandBuffer = VK_NULL_HANDLE;
+  }
+  plat_releaseCaptureBuffer(win, dev);
   if (dev && win->renderFinishedSemaphore) vkDestroySemaphore(dev, win->renderFinishedSemaphore, NULL);
   if (dev && win->imageAvailableSemaphore) vkDestroySemaphore(dev, win->imageAvailableSemaphore, NULL);
   if (dev && win->inFlightFence) vkDestroyFence(dev, win->inFlightFence, NULL);
@@ -694,17 +928,32 @@ static uint64_t cj_window_now_ms(void) {
   return cj_plat_now_ms();
 }
 
-bool cj_window__last_presented_frame(
-    const cj_window_t* window, cj_window_frame_source_t* out_source) {
-  if (!window || !out_source || !window->plat) return false;
-  const CJPlatformWindow* plat = window->plat;
-  if (!plat->hasPresentedImage || !plat->swapChainImages) return false;
-  if (plat->lastPresentedImage >= plat->swapChainImageCount) return false;
+void cj_window__request_capture(cj_window_t* window) {
+  if (!window || window->is_destroyed || !window->plat) return;
+  window->plat->captureRequested = true;
+  /* A window that renders only when something changed would otherwise sit
+   * there with the request pending and never take a frame to serve it. */
+  window->plat->needsRedraw = 1;
+}
 
-  out_source->image = plat->swapChainImages[plat->lastPresentedImage];
-  out_source->format = plat->swapChainFormat;
-  out_source->extent = plat->swapChainExtent;
-  return out_source->image != VK_NULL_HANDLE;
+bool cj_window__take_capture(
+    cj_window_t* window, cj_window_readback_t* out_readback) {
+  if (!window || !out_readback || !window->plat) return false;
+  CJPlatformWindow* plat = window->plat;
+  if (!plat->captureReady || plat->captureMemory == VK_NULL_HANDLE) {
+    return false;
+  }
+
+  out_readback->memory = plat->captureMemory;
+  out_readback->size =
+      (VkDeviceSize)plat->captureExtent.width * plat->captureExtent.height * 4u;
+  out_readback->format = plat->captureFormat;
+  out_readback->extent = plat->captureExtent;
+  /* Handed over. Holding it would mean a second call to cj_window_capture()
+   * returning the same frame and looking like a window that stopped
+   * animating. */
+  plat->captureReady = false;
+  return true;
 }
 
 CJ_API cj_result_t cj_window_execute(cj_window_t* win) {
@@ -809,8 +1058,15 @@ CJ_API cj_result_t cj_window_execute(cj_window_t* win) {
         si.waitSemaphoreCount = 1;
         si.pWaitSemaphores = waitS;
         si.pWaitDstStageMask = stages;
-        si.commandBufferCount = 1;
-        si.pCommandBuffers = &win->plat->commandBuffers[imageIndex];
+        /* Two at most: this frame's, then the copy of what it drew. The
+         * copy has to travel with the frame - after the present below the
+         * image is the presentation engine's and reading it is a hazard. */
+        VkCommandBuffer submitted[2] = { win->plat->commandBuffers[imageIndex], VK_NULL_HANDLE };
+        uint32_t submittedCount = 1;
+        VkCommandBuffer captureCmd = plat_recordCaptureForFrame(win->plat, imageIndex);
+        if (captureCmd != VK_NULL_HANDLE) submitted[submittedCount++] = captureCmd;
+        si.commandBufferCount = submittedCount;
+        si.pCommandBuffers = submitted;
         VkSemaphore sigS[] = { win->plat->renderFinishedSemaphore };
         si.signalSemaphoreCount = 1;
         si.pSignalSemaphores = sigS;

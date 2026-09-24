@@ -65,19 +65,46 @@ typedef struct cj_capture_t {
   size_t stride;     /**< Bytes per row; always width * 4. */
 } cj_capture_t;
 
-/** Copy the frame a window is currently displaying.
+/** Copy a frame the window has drawn.
  *
- *  Captures the image last handed to the presentation engine - what is on
- *  screen, not what is part-way through being drawn. The window must have
- *  presented at least one frame.
+ *  **This takes two calls, one frame apart.** The first returns
+ *  CJ_E_NOT_READY and asks the window for a copy; the next frame it presents
+ *  records that copy alongside the drawing; a later call returns it. So:
+ *
+ *  @code
+ *  cj_capture_t shot = {0};
+ *  if (cj_window_capture(window, &shot) == CJ_SUCCESS) {
+ *    cj_capture_write_png(&shot, "frame.png");
+ *    cj_capture_free(&shot);
+ *  }
+ *  // ...otherwise let the window render a frame and call again.
+ *  @endcode
+ *
+ *  The frame in between is not a limitation of this implementation; it is
+ *  what a swapchain readback is. A swapchain image belongs to the
+ *  presentation engine from the moment it is presented until it is acquired
+ *  again, so the copy has to be recorded into the frame that draws it - and
+ *  that frame has not happened yet when the first call is made. Reading the
+ *  last presented image instead, which is what this function did until the
+ *  hazard was reported, works on every driver tried and is still a
+ *  write-after-present.
+ *
+ *  What comes back is therefore the frame that followed the request, not the
+ *  one on screen when it was made. For anything animating they differ.
+ *
+ *  Requesting twice before reading does not queue a second copy: a window
+ *  holds one frame at a time, and reading it hands it over, so the call after
+ *  a successful one asks again.
  *
  *  The caller owns the result and releases it with cj_capture_free().
  *
  *  @param window The window to read from.
- *  @param out_capture Receives the frame on success.
- *  @return CJ_SUCCESS, CJ_E_INVALID_ARGUMENT for a NULL argument or a window
- *          that has not presented, CJ_E_OUT_OF_MEMORY, or CJ_E_UNKNOWN when
- *          the device refuses the readback.
+ *  @param out_capture Receives the frame on success, and is zeroed otherwise.
+ *  @return CJ_SUCCESS with a frame; CJ_E_NOT_READY having asked for one, so
+ *          call again after the window renders; CJ_E_INVALID_ARGUMENT for a
+ *          NULL argument; CJ_E_OUT_OF_MEMORY; or CJ_E_UNKNOWN when the
+ *          swapchain format is not one this can unpack or the device refuses
+ *          the mapping.
  */
 CJ_API cj_result_t cj_window_capture(cj_window_t* window, cj_capture_t* out_capture);
 

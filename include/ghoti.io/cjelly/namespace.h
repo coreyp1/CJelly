@@ -131,7 +131,7 @@
 #define cj_window_close_response_t GHOTIIO_CJELLY(cj_window_close_response_t)
 #define cj_window_desc_t GHOTIIO_CJELLY(cj_window_desc_t)
 #define cj_window_frame_callback_t GHOTIIO_CJELLY(cj_window_frame_callback_t)
-#define cj_window_frame_source_t GHOTIIO_CJELLY(cj_window_frame_source_t)
+#define cj_window_readback_t GHOTIIO_CJELLY(cj_window_readback_t)
 #define cj_window_move_callback_t GHOTIIO_CJELLY(cj_window_move_callback_t)
 #define cj_window_resize_callback_t GHOTIIO_CJELLY(cj_window_resize_callback_t)
 #define cj_window_state_callback_t GHOTIIO_CJELLY(cj_window_state_callback_t)

@@ -21,7 +21,11 @@
 /**
  * @file capture.c
  *
- * Copying a presented swapchain image into ordinary memory.
+ * Reading a copy of a rendered frame out into ordinary memory.
+ *
+ * The copy itself is made in window.c, inside the frame that drew it, for
+ * the reason cj_window_capture() gives. What is here is the half that runs
+ * on the CPU: unpacking the swapchain's channel order, and writing a PNG.
  */
 
 #include <stdio.h>
@@ -78,41 +82,6 @@ static capture_swizzle_t capture_swizzle_for(VkFormat format) {
   }
 }
 
-/** Find a memory type satisfying `properties`, or UINT32_MAX. */
-static uint32_t capture_memory_type(VkPhysicalDevice physical_device,
-    uint32_t type_bits, VkMemoryPropertyFlags properties) {
-  VkPhysicalDeviceMemoryProperties memory = {0};
-  vkGetPhysicalDeviceMemoryProperties(physical_device, &memory);
-  for (uint32_t i = 0; i < memory.memoryTypeCount; i++) {
-    if ((type_bits & (1u << i))
-        && (memory.memoryTypes[i].propertyFlags & properties) == properties) {
-      return i;
-    }
-  }
-  return UINT32_MAX;
-}
-
-/** Move a swapchain image between the presentable and readable layouts. */
-static void capture_transition(VkCommandBuffer cmd, VkImage image,
-    VkImageLayout from, VkImageLayout to, VkAccessFlags src_access,
-    VkAccessFlags dst_access, VkPipelineStageFlags src_stage,
-    VkPipelineStageFlags dst_stage) {
-  VkImageMemoryBarrier barrier = {0};
-  barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-  barrier.oldLayout = from;
-  barrier.newLayout = to;
-  barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-  barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-  barrier.image = image;
-  barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-  barrier.subresourceRange.levelCount = 1;
-  barrier.subresourceRange.layerCount = 1;
-  barrier.srcAccessMask = src_access;
-  barrier.dstAccessMask = dst_access;
-  vkCmdPipelineBarrier(
-      cmd, src_stage, dst_stage, 0, 0, NULL, 0, NULL, 1, &barrier);
-}
-
 CJ_API cj_result_t cj_window_capture(
     cj_window_t * window, cj_capture_t * out_capture) {
   if (!out_capture) {
@@ -123,150 +92,60 @@ CJ_API cj_result_t cj_window_capture(
     return CJ_E_INVALID_ARGUMENT;
   }
 
-  cj_window_frame_source_t source = {0};
-  if (!cj_window__last_presented_frame(window, &source)) {
-    /* Nothing has been presented yet, so there is nothing to read. */
-    return CJ_E_INVALID_ARGUMENT;
+  cj_window_readback_t readback = {0};
+  if (!cj_window__take_capture(window, &readback)) {
+    /* Nothing copied yet. Ask for one; the next frame this window presents
+     * will record the copy alongside the drawing, and the call after that
+     * returns it.
+     *
+     * The frame is the whole reason this is two calls. A swapchain image
+     * belongs to the presentation engine from vkQueuePresentKHR until it is
+     * acquired again, so the copy has to be recorded into the frame that
+     * drew it. Reading it afterwards - which is what this function used to
+     * do - is a write-after-present hazard, reported once per capture by
+     * synchronisation validation, and nothing says the image that comes back
+     * from the next acquire is the one that was just presented. */
+    cj_window__request_capture(window);
+    return CJ_E_NOT_READY;
   }
 
-  capture_swizzle_t swizzle = capture_swizzle_for(source.format);
+  capture_swizzle_t swizzle = capture_swizzle_for(readback.format);
   if (!swizzle.understood) {
-    CJ_ERRORF("cj_window_capture: swapchain format %d is not one this knows how to "
-        "unpack",
-        (int)source.format);
+    CJ_ERRORF("cj_window_capture: swapchain format %d is not one this knows "
+        "how to unpack",
+        (int)readback.format);
     return CJ_E_UNKNOWN;
   }
-  if (source.extent.width == 0 || source.extent.height == 0) {
+  if (readback.extent.width == 0 || readback.extent.height == 0) {
     return CJ_E_INVALID_ARGUMENT;
   }
 
   cj_engine_t * engine = cj_engine_get_current();
   VkDevice device = cj_engine_device(engine);
-  VkPhysicalDevice physical_device = cj_engine_physical_device(engine);
-  VkCommandPool pool = cj_engine_command_pool(engine);
-  VkQueue queue = cj_engine_graphics_queue(engine);
-  if (device == VK_NULL_HANDLE || pool == VK_NULL_HANDLE
-      || queue == VK_NULL_HANDLE) {
+  if (device == VK_NULL_HANDLE) {
     return CJ_E_UNKNOWN;
   }
 
-  /* The frame being read may still be in flight. A capture is a diagnostic
-   * taken occasionally, so waiting for the device is the right trade against
-   * threading a fence through the present path. */
+  /* The frame that wrote the buffer may still be in flight. A capture is a
+   * diagnostic taken occasionally, so waiting for the device is the right
+   * trade against threading a fence out of the window. */
   vkDeviceWaitIdle(device);
 
-  VkDeviceSize size =
-      (VkDeviceSize)source.extent.width * source.extent.height * 4u;
-
-  VkBuffer buffer = VK_NULL_HANDLE;
-  VkDeviceMemory memory = VK_NULL_HANDLE;
-  VkCommandBuffer cmd = VK_NULL_HANDLE;
-  VkFence fence = VK_NULL_HANDLE;
-  uint8_t * pixels = NULL;
-  cj_result_t result = CJ_E_UNKNOWN;
-
-  VkBufferCreateInfo buffer_info = {0};
-  buffer_info.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-  buffer_info.size = size;
-  buffer_info.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
-  buffer_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
-  if (vkCreateBuffer(device, &buffer_info, NULL, &buffer) != VK_SUCCESS) {
-    goto done;
-  }
-
-  VkMemoryRequirements requirements = {0};
-  vkGetBufferMemoryRequirements(device, buffer, &requirements);
-  uint32_t type = capture_memory_type(physical_device,
-      requirements.memoryTypeBits,
-      VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT
-          | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-  if (type == UINT32_MAX) {
-    goto done;
-  }
-
-  VkMemoryAllocateInfo allocation = {0};
-  allocation.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-  allocation.allocationSize = requirements.size;
-  allocation.memoryTypeIndex = type;
-  if (vkAllocateMemory(device, &allocation, NULL, &memory) != VK_SUCCESS) {
-    result = CJ_E_OUT_OF_MEMORY;
-    goto done;
-  }
-  vkBindBufferMemory(device, buffer, memory, 0);
-
-  VkCommandBufferAllocateInfo cmd_info = {0};
-  cmd_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-  cmd_info.commandPool = pool;
-  cmd_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-  cmd_info.commandBufferCount = 1;
-  if (vkAllocateCommandBuffers(device, &cmd_info, &cmd) != VK_SUCCESS) {
-    goto done;
-  }
-
-  VkCommandBufferBeginInfo begin = {0};
-  begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-  begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-  if (vkBeginCommandBuffer(cmd, &begin) != VK_SUCCESS) {
-    goto done;
-  }
-
-  capture_transition(cmd, source.image, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-      VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_MEMORY_READ_BIT,
-      VK_ACCESS_TRANSFER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-      VK_PIPELINE_STAGE_TRANSFER_BIT);
-
-  VkBufferImageCopy region = {0};
-  region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-  region.imageSubresource.layerCount = 1;
-  region.imageExtent.width = source.extent.width;
-  region.imageExtent.height = source.extent.height;
-  region.imageExtent.depth = 1;
-  vkCmdCopyImageToBuffer(cmd, source.image,
-      VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buffer, 1, &region);
-
-  /* Put it back, or the presentation engine is handed an image in a layout it
-   * does not expect the next time this index comes round. */
-  capture_transition(cmd, source.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-      VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_ACCESS_TRANSFER_READ_BIT,
-      VK_ACCESS_MEMORY_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
-      VK_PIPELINE_STAGE_TRANSFER_BIT);
-
-  if (vkEndCommandBuffer(cmd) != VK_SUCCESS) {
-    goto done;
-  }
-
-  VkFenceCreateInfo fence_info = {0};
-  fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-  if (vkCreateFence(device, &fence_info, NULL, &fence) != VK_SUCCESS) {
-    goto done;
-  }
-
-  VkSubmitInfo submit = {0};
-  submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-  submit.commandBufferCount = 1;
-  submit.pCommandBuffers = &cmd;
-  if (vkQueueSubmit(queue, 1, &submit, fence) != VK_SUCCESS) {
-    goto done;
-  }
-  if (vkWaitForFences(device, 1, &fence, VK_TRUE, UINT64_MAX) != VK_SUCCESS) {
-    goto done;
-  }
-
   void * mapped = NULL;
-  if (vkMapMemory(device, memory, 0, size, 0, &mapped) != VK_SUCCESS) {
-    goto done;
+  if (vkMapMemory(device, readback.memory, 0, readback.size, 0, &mapped)
+      != VK_SUCCESS) {
+    return CJ_E_UNKNOWN;
   }
 
-  pixels = (uint8_t *)malloc((size_t)size);
+  uint8_t * pixels = (uint8_t *)malloc((size_t)readback.size);
   if (!pixels) {
-    vkUnmapMemory(device, memory);
-    result = CJ_E_OUT_OF_MEMORY;
-    goto done;
+    vkUnmapMemory(device, readback.memory);
+    return CJ_E_OUT_OF_MEMORY;
   }
 
   {
     const uint8_t * src = (const uint8_t *)mapped;
-    size_t count = (size_t)source.extent.width * source.extent.height;
+    size_t count = (size_t)readback.extent.width * readback.extent.height;
     for (size_t i = 0; i < count; i++) {
       const uint8_t * in = src + i * 4;
       uint8_t * out = pixels + i * 4;
@@ -276,22 +155,13 @@ CJ_API cj_result_t cj_window_capture(
       out[3] = in[swizzle.alpha];
     }
   }
-  vkUnmapMemory(device, memory);
+  vkUnmapMemory(device, readback.memory);
 
   out_capture->pixels = pixels;
-  out_capture->width = source.extent.width;
-  out_capture->height = source.extent.height;
-  out_capture->stride = (size_t)source.extent.width * 4u;
-  pixels = NULL;
-  result = CJ_SUCCESS;
-
-done:
-  free(pixels);
-  if (fence != VK_NULL_HANDLE) vkDestroyFence(device, fence, NULL);
-  if (cmd != VK_NULL_HANDLE) vkFreeCommandBuffers(device, pool, 1, &cmd);
-  if (memory != VK_NULL_HANDLE) vkFreeMemory(device, memory, NULL);
-  if (buffer != VK_NULL_HANDLE) vkDestroyBuffer(device, buffer, NULL);
-  return result;
+  out_capture->width = readback.extent.width;
+  out_capture->height = readback.extent.height;
+  out_capture->stride = (size_t)readback.extent.width * 4u;
+  return CJ_SUCCESS;
 }
 
 CJ_API void cj_capture_free(cj_capture_t * capture) {

@@ -702,7 +702,7 @@ $(APP_DIR)/main$(EXE_EXTENSION): \
 .PHONY: fuzz fuzz-clean test-asan test-ubsan
 # Release build commands
 .PHONY: all demo install test test-watch uninstall watch check-symbols check-stamps check-aliasing
-.PHONY: check-headers check-quiet
+.PHONY: check-headers check-quiet check-render
 # Debug build commands
 .PHONY: all-debug install-debug test-debug test-watch-debug uninstall-debug watch-debug
 
@@ -868,6 +868,108 @@ test: \
 # relative path would be resolved against the wrong directory.
 MODEL ?=
 DEMO_MODEL_ARG := $(if $(MODEL),$(abspath $(MODEL)),)
+
+####################################################################
+# The render path, checked without a person looking
+####################################################################
+# The unit tests never create a swapchain, so nothing in `make test` executes
+# a frame. This runs the demo on a virtual display with the validation layers
+# on and reads what they say, which is the only check the render path has.
+#
+# It is not in TEST_GATES: it wants Xvfb, a software Vulkan driver and the
+# validation layers installed, and a build machine is not obliged to have
+# them. It refuses rather than skipping when they are missing - a check that
+# reports clean because it could not run is worse than one that is not run.
+CHECK_RENDER_DISPLAY ?= :97
+CHECK_RENDER_ICD ?= /usr/share/vulkan/icd.d/lvp_icd.json
+CHECK_RENDER_DIR := $(BUILD_DIR)/render-check
+# Hazard classes that must not appear.
+#
+# The goal is "no validation message at all", and that is not reachable yet:
+# the render pass declares no external subpass dependency, so synchronisation
+# validation reports a WRITE_AFTER_READ against vkAcquireNextImageKHR and a
+# WRITE_AFTER_WRITE on the attachment's loadOp, once per window per frame.
+# Those are the next thing to fix here and this list gets shorter, not longer.
+CHECK_RENDER_FORBIDDEN := WRITE_AFTER_PRESENT
+
+check-render: ## Run the demo headless with the validation layers and read what they say
+check-render: \
+		$(TEST_FILES) \
+		$(APP_DIR)/$(TARGET) \
+		$(APP_DIR)/main$(EXE_EXTENSION)
+	@command -v Xvfb > /dev/null 2>&1 || { \
+		printf "\033[0;31mcheck-render: Xvfb is not installed, so the render path cannot be run. apt install xvfb\033[0m\n" >&2; \
+		exit 1; \
+	}
+	@test -f "$(CHECK_RENDER_ICD)" || { \
+		printf "\033[0;31mcheck-render: no software Vulkan driver at $(CHECK_RENDER_ICD). apt install mesa-vulkan-drivers, or set CHECK_RENDER_ICD. A hardware driver cannot present to Xvfb, which has no DRI3.\033[0m\n" >&2; \
+		exit 1; \
+	}
+	@rm -rf $(CHECK_RENDER_DIR)
+	@mkdir -p $(CHECK_RENDER_DIR)
+	@Xvfb $(CHECK_RENDER_DISPLAY) -screen 0 1600x1200x24 \
+			> $(CHECK_RENDER_DIR)/xvfb.log 2>&1 & \
+		xvfb=$$!; \
+		trap 'kill $$xvfb 2>/dev/null' EXIT INT TERM; \
+		sleep 2; \
+		run() { \
+			( cd $(APP_DIR) && \
+				DISPLAY=$(CHECK_RENDER_DISPLAY) \
+				LD_LIBRARY_PATH="$(RUNTIME_LIB_PATH)" \
+				VK_DRIVER_FILES="$(CHECK_RENDER_ICD)" \
+				CJELLY_VALIDATION=1 \
+				CJELLY_LOG=warn \
+				CJELLY_DEMO_CAPTURE="$(abspath $(CHECK_RENDER_DIR))/shots" \
+				VK_LAYER_ENABLES="$$1" \
+				./main$(EXE_EXTENSION) ) > "$$2" 2>&1; \
+		}; \
+		mkdir -p $(CHECK_RENDER_DIR)/shots; \
+		\
+		: 'The control. Best practices complains about something in every real' ; \
+		: 'program - a small allocation is enough - so a run of it that says' ; \
+		: 'nothing means the messages are not arriving, and a clean result from' ; \
+		: 'the real pass below would mean nothing either. This is the same' ; \
+		: 'failure the whole target exists because of: the demo enabled the' ; \
+		: 'layer for a year without registering a messenger to hear it.' ; \
+		run VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT \
+			$(CHECK_RENDER_DIR)/control.log || { \
+			printf "\033[0;31mcheck-render: the control run did not finish. See $(CHECK_RENDER_DIR)/control.log\033[0m\n" >&2; \
+			exit 1; \
+		}; \
+		heard=$$(grep -c 'validation:' $(CHECK_RENDER_DIR)/control.log || true); \
+		if [ "$$heard" = "0" ]; then \
+			printf "\033[0;31mcheck-render: best practices reported nothing, which it never does on a real program. The validation messages are not reaching the log, so a clean run below would mean nothing. See $(CHECK_RENDER_DIR)/control.log\033[0m\n" >&2; \
+			exit 1; \
+		fi; \
+		printf "check-render: control heard %s best-practice messages; the channel is live.\n" "$$heard"; \
+		\
+		rm -f $(CHECK_RENDER_DIR)/shots/*.png; \
+		run VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT \
+			$(CHECK_RENDER_DIR)/render.log || { \
+			printf "\033[0;31mcheck-render: the demo did not finish. See $(CHECK_RENDER_DIR)/render.log\033[0m\n" >&2; \
+			exit 1; \
+		}; \
+		bad=0; \
+		for class in $(CHECK_RENDER_FORBIDDEN); do \
+			n=$$(grep -c "$$class" $(CHECK_RENDER_DIR)/render.log || true); \
+			if [ "$$n" != "0" ]; then \
+				printf "  %s: %s reported\n" "$$class" "$$n" >&2; \
+				bad=$$((bad+1)); \
+			fi; \
+		done; \
+		shots=$$(ls $(CHECK_RENDER_DIR)/shots/*.png 2>/dev/null | wc -l); \
+		if [ "$$shots" != "4" ]; then \
+			printf "  captured %s of the demo's 4 windows\n" "$$shots" >&2; \
+			bad=$$((bad+1)); \
+		fi; \
+		if [ "$$bad" != "0" ]; then \
+			printf "\033[0;31m\n### The render path is not clean ###\033[0m\n" >&2; \
+			printf "\nSee $(CHECK_RENDER_DIR)/render.log for the messages.\n" >&2; \
+			exit 1; \
+		fi; \
+		printf "\033[0;32mThe demo rendered and captured 4 windows with no %s.\033[0m\n" "$(CHECK_RENDER_FORBIDDEN)"; \
+		printf "Still reported, and not yet gated: %s other validation messages. See $(CHECK_RENDER_DIR)/render.log\n" \
+			"$$(grep -c 'validation:' $(CHECK_RENDER_DIR)/render.log || true)"
 
 demo: ## Build and run the interactive Vulkan demo (needs a display). MODEL=x.obj to choose a model.
 demo: \

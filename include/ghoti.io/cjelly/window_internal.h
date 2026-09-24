@@ -31,6 +31,13 @@
 #include "cj_window.h"
 #include <stdbool.h>
 
+/* Named here rather than left to whoever includes this: the declarations
+ * below use VkDeviceMemory and VkExtent2D, and a header that borrows types
+ * from its includer compiles in the files that happen to include Vulkan
+ * first and nowhere else. check-headers only preprocesses, so it cannot see
+ * an undeclared type - the first TU to get the order wrong does. */
+#include <vulkan/vulkan.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -42,23 +49,38 @@ extern "C" {
 void cj_window_close_with_callback(cj_window_t* window, bool cancellable);
 
 /** Internal helper used by the framework event loop to run a window's per-frame callback. */
-/** What a frame capture needs from a window, without exposing the platform
+/** What a completed capture left behind, without exposing the platform
  *  window structure, which is private to window.c.
  */
-typedef struct cj_window_frame_source_t {
-  VkImage image;       /**< The swapchain image last presented. */
-  VkFormat format;     /**< Its format. */
-  VkExtent2D extent;   /**< Its size in pixels. */
-} cj_window_frame_source_t;
+typedef struct cj_window_readback_t {
+  VkDeviceMemory memory;  /**< Host-visible, host-coherent, already bound. */
+  VkDeviceSize size;      /**< Bytes written, extent.width * height * 4. */
+  VkFormat format;        /**< The swapchain format the bytes are in. */
+  VkExtent2D extent;      /**< Its size in pixels, as of the copy. */
+} cj_window_readback_t;
 
-/** Describe the frame the user is currently looking at.
+/** Ask that the next frame this window presents also be copied for reading.
+ *
+ *  The copy is recorded into that frame and submitted with it, while the
+ *  application still owns the swapchain image. It cannot be done afterwards:
+ *  from vkQueuePresentKHR until the next acquire the image belongs to the
+ *  presentation engine, and touching it there is a write-after-present
+ *  hazard that synchronisation validation reports once per capture.
+ *
+ *  Asking twice before reading is not an error and does not queue a second
+ *  copy; the window holds one frame at a time.
+ */
+void cj_window__request_capture(cj_window_t* window);
+
+/** Collect the copy, if one has been made.
  *
  *  @param window The window.
- *  @param out_source Receives the description on success.
- *  @return true when a frame has been presented and can be read back.
+ *  @param out_readback Receives the description on success.
+ *  @return true when a frame had been copied and has now been handed over.
+ *          The window then holds nothing until the next request.
  */
-bool cj_window__last_presented_frame(
-    const cj_window_t* window, cj_window_frame_source_t* out_source);
+bool cj_window__take_capture(
+    cj_window_t* window, cj_window_readback_t* out_readback);
 
 cj_frame_result_t cj_window__dispatch_frame_callback(cj_window_t* window,
                                                     const cj_frame_info_t* frame_info);
