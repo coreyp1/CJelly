@@ -43,6 +43,11 @@ CJ_API VkQueue cj_engine_graphics_queue(const cj_engine_t*);
 CJ_API VkQueue cj_engine_present_queue(const cj_engine_t*);
 CJ_API VkRenderPass cj_engine_render_pass(const cj_engine_t*);
 CJ_API VkCommandPool cj_engine_command_pool(const cj_engine_t*);
+/* VK_NULL_HANDLE when the engine was initialised without validation, and the
+ * thing a test asserts on to know that initialising WITH validation left
+ * somewhere for the layer to report to. An engine that enables the layer and
+ * registers nothing runs every check and discards every answer. */
+CJ_API VkDebugUtilsMessengerEXT cj_engine_debug_messenger(const cj_engine_t*);
 /* Ensure render pass in engine matches specified color format */
 CJ_API int cj_engine_ensure_render_pass(cj_engine_t* e, VkFormat fmt);
 

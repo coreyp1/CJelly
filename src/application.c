@@ -40,6 +40,7 @@
 #include <ghoti.io/cjelly/macros.h>
 #include <ghoti.io/cjelly/cj_log.h>
 #include <ghoti.io/cjelly/log_internal.h>
+#include <ghoti.io/cjelly/vk_debug_internal.h>
 #include <ghoti.io/cjelly/application.h>
 #include <ghoti.io/cjelly/cj_window.h>
 #include <ghoti.io/cjelly/window_internal.h>
@@ -98,115 +99,6 @@ static size_t handle_hash(const void * handle) {
   x ^= x >> 16;
   return (size_t)x;
 #endif
-}
-
-
-/**
- * @brief Debug callback function for Vulkan validation layers.
- *
- * This callback is invoked by the validation layers when a message is
- * generated. It prints the validation message to standard error.
- *
- * @param messageSeverity Indicates the severity of the message.
- * @param messageTypes Indicates the type of the message.
- * @param pCallbackData Pointer to a structure containing details of the debug
- * message.
- * @param pUserData A user-defined pointer (unused in this implementation).
- * @return VkBool32 Always returns VK_FALSE.
- */
-/**
- * @brief Hands a validation layer message to the log at its own severity.
- *
- * The severity the layer assigns is the only thing that can decide how loud
- * one of these is; printing them all at one volume - which this did, at full
- * volume, whenever the validation layers were on at all - is what made the
- * layers something to turn off rather than something to read.
- *
- * The mapping itself is cj_log__level_for_vk_severity, which is separate so
- * that it can be tested without provoking a real validation failure.
- */
-static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallback(
-    VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
-    CJ_MAYBE_UNUSED(VkDebugUtilsMessageTypeFlagsEXT messageTypes),
-    const VkDebugUtilsMessengerCallbackDataEXT * pCallbackData,
-    CJ_MAYBE_UNUSED(void * pUserData)) {
-  /* %s on a message the layer owns: it is not a format string, and treating
-   * it as one would let a layer's text steer printf. */
-  CJ_LOG_AT(cj_log__level_for_vk_severity(messageSeverity),
-      "validation: %s", pCallbackData->pMessage);
-  return VK_FALSE;
-}
-
-cj_log_level_t cj_log__level_for_vk_severity(
-    VkDebugUtilsMessageSeverityFlagBitsEXT severity) {
-  /* Most severe bit first: a message carrying both ERROR and WARNING is an
-   * error, and testing WARNING first would quietly demote it. */
-  if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) {
-    return CJ_LOG_ERROR;
-  }
-  if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) {
-    return CJ_LOG_WARN;
-  }
-  /* VERBOSE and INFO are both the layer narrating its own bookkeeping, and
-   * they differ by less than the gap between DEBUG and TRACE here. A
-   * severity of 0, which is not a thing a layer should send, lands here too
-   * rather than being treated as an error. */
-  return CJ_LOG_DEBUG;
-}
-
-
-/**
- * @brief Dynamically loads and calls vkCreateDebugUtilsMessengerEXT.
- *
- * This helper function retrieves the function pointer for
- * vkCreateDebugUtilsMessengerEXT using vkGetInstanceProcAddr, and if available,
- * calls it to create a debug messenger.
- *
- * @param instance The Vulkan instance.
- * @param pCreateInfo Pointer to a VkDebugUtilsMessengerCreateInfoEXT structure
- * specifying the parameters of the debug messenger.
- * @param pAllocator Optional pointer to custom allocation callbacks.
- * @param pDebugMessenger Pointer to the variable that will receive the debug
- * messenger.
- * @return VkResult VK_SUCCESS on success, or VK_ERROR_EXTENSION_NOT_PRESENT if
- * the extension is not available.
- */
-static VkResult CreateDebugUtilsMessengerEXT(VkInstance instance,
-    const VkDebugUtilsMessengerCreateInfoEXT * pCreateInfo,
-    const VkAllocationCallbacks * pAllocator,
-    VkDebugUtilsMessengerEXT * pDebugMessenger) {
-  PFN_vkCreateDebugUtilsMessengerEXT func =
-      (PFN_vkCreateDebugUtilsMessengerEXT)vkGetInstanceProcAddr(
-          instance, "vkCreateDebugUtilsMessengerEXT");
-  if (func != NULL) {
-    return func(instance, pCreateInfo, pAllocator, pDebugMessenger);
-  }
-  else {
-    return VK_ERROR_EXTENSION_NOT_PRESENT;
-  }
-}
-
-
-/**
- * @brief Dynamically loads and calls vkDestroyDebugUtilsMessengerEXT.
- *
- * This helper function retrieves the function pointer for
- * vkDestroyDebugUtilsMessengerEXT using vkGetInstanceProcAddr, and if
- * available, calls it to destroy a debug messenger.
- *
- * @param instance The Vulkan instance.
- * @param debugMessenger The debug messenger to destroy.
- * @param pAllocator Optional pointer to custom allocation callbacks.
- */
-static void DestroyDebugUtilsMessengerEXT(VkInstance instance,
-    VkDebugUtilsMessengerEXT debugMessenger,
-    const VkAllocationCallbacks * pAllocator) {
-  PFN_vkDestroyDebugUtilsMessengerEXT func =
-      (PFN_vkDestroyDebugUtilsMessengerEXT)vkGetInstanceProcAddr(
-          instance, "vkDestroyDebugUtilsMessengerEXT");
-  if (func != NULL) {
-    func(instance, debugMessenger, pAllocator);
-  }
 }
 
 
@@ -612,17 +504,8 @@ CJ_API CJellyApplicationError cjelly_application_init(CJellyApplication * app) {
     instanceCreateInfo.ppEnabledLayerNames = validationLayers;
 
     // Set up debug messenger info so that it is used during instance creation.
-    debugCreateInfo.sType =
-        VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
-    debugCreateInfo.messageSeverity =
-        VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
-        VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
-    debugCreateInfo.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
-        VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
-        VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
-    debugCreateInfo.pfnUserCallback = debugCallback;
-    instanceCreateInfo.pNext =
-        (VkDebugUtilsMessengerCreateInfoEXT *)&debugCreateInfo;
+    cj_vk_debug__describe(&debugCreateInfo);
+    instanceCreateInfo.pNext = &debugCreateInfo;
   }
 
   // Create the Vulkan instance.
@@ -861,20 +744,10 @@ CJ_API CJellyApplicationError cjelly_application_init(CJellyApplication * app) {
 
   // If validation layers are enabled, create the debug messenger.
   if (app->options.enableValidation) {
-    // Prepare the debug messenger create info.
-    VkDebugUtilsMessengerCreateInfoEXT createInfo = {0};
-    createInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
-    createInfo.messageSeverity =
-        VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
-        VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
-    createInfo.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
-        VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
-        VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
-    createInfo.pfnUserCallback = debugCallback;
-
-    // Create the debug messenger.
-    if (CreateDebugUtilsMessengerEXT(app->instance, &createInfo, NULL,
-            &app->debugMessenger) != VK_SUCCESS) {
+    // The pNext messenger above covers instance creation only; it is gone by
+    // the time anything is drawn. This is the one that lasts.
+    if (cj_vk_debug__create(app->instance, &app->debugMessenger)
+        != VK_SUCCESS) {
       CJ_ERRORF("Failed to set up debug messenger!");
       err = CJELLY_APPLICATION_ERROR_INIT_FAILED;
       goto ERROR_RETURN;
@@ -892,7 +765,7 @@ ERROR_RETURN:
 
   // Destroy the debug messenger if it was created.
   if (app->debugMessenger != VK_NULL_HANDLE) {
-    DestroyDebugUtilsMessengerEXT(app->instance, app->debugMessenger, NULL);
+    cj_vk_debug__destroy(app->instance, app->debugMessenger);
     app->debugMessenger = VK_NULL_HANDLE;
   }
 
@@ -923,7 +796,7 @@ CJ_API void cjelly_application_destroy(CJellyApplication * app) {
 
   // Destroy the debug messenger if it was created.
   if (app->debugMessenger != VK_NULL_HANDLE) {
-    DestroyDebugUtilsMessengerEXT(app->instance, app->debugMessenger, NULL);
+    cj_vk_debug__destroy(app->instance, app->debugMessenger);
     app->debugMessenger = VK_NULL_HANDLE;
   }
 

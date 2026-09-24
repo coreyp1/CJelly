@@ -155,6 +155,7 @@
 #define cj_engine_bindless_pool GHOTIIO_CJELLY(cj_engine_bindless_pool)
 #define cj_engine_color_pipeline GHOTIIO_CJELLY(cj_engine_color_pipeline)
 #define cj_engine_command_pool GHOTIIO_CJELLY(cj_engine_command_pool)
+#define cj_engine_debug_messenger GHOTIIO_CJELLY(cj_engine_debug_messenger)
 #define cj_engine_allocator GHOTIIO_CJELLY(cj_engine_allocator)
 #define cj_engine_create GHOTIIO_CJELLY(cj_engine_create)
 #define cj_engine_create_buffer GHOTIIO_CJELLY(cj_engine_create_buffer)

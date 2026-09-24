@@ -144,10 +144,28 @@ cd build/linux/release/apps
 DISPLAY=:99 \
   LD_LIBRARY_PATH="$(cd ../../../..; pwd)/build/linux/release/apps:..." \
   VK_DRIVER_FILES=/usr/share/vulkan/icd.d/lvp_icd.json \
-  VK_LOADER_LAYERS_ENABLE=VK_LAYER_KHRONOS_validation \
+  CJELLY_VALIDATION=1 \
+  CJELLY_LOG=warn \
   CJELLY_DEMO_CAPTURE=/tmp/shots \
   ./main /path/to/model.obj
 ```
+
+Both of those variables are load-bearing, and neither is the one that looks
+like it ought to be.
+
+`CJELLY_VALIDATION=1` is what the demo reads; the loader's own
+`VK_LOADER_LAYERS_ENABLE` is not enough. It makes the loader insert the layer,
+but the layer reports through a debug messenger *the application* registers,
+and a demo that was not told to use validation registers none. The layer then
+runs every check and discards every answer. That is not a quiet run - it is an
+indistinguishable one, and this document recommended it for long enough that
+"the demo reports no validation errors" was said about a demo that could not
+report one.
+
+`CJELLY_LOG=warn` is what makes the messages appear. They go to the log like
+everything else the library says, and the log is off unless asked (see
+[the README's Diagnostics section](../README.md#diagnostics)) - so validation
+with the log off is the same silence by a different route.
 
 The demo renders a few frames, writes each window to `/tmp/shots/windowN.png`
 through `cj_window_capture()`, and exits.
@@ -163,6 +181,20 @@ a fault specific to a real driver, but for correctness it is the better test:
 lavapipe is strict where a vendor driver is often forgiving. The
 validation layers need `VK_LAYER_PATH` set if they are not in the loader's
 default search path.
+
+Core validation is what the run above turns on. Two more sets are worth a
+pass of their own, because they find different things and neither is on by
+default:
+
+```bash
+VK_LAYER_ENABLES=VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT
+VK_LAYER_ENABLES=VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT
+```
+
+Synchronisation validation is the one that catches a hazard between two
+correctly-formed commands - a missing subpass dependency, or a command
+buffer touching a swapchain image the application has already handed back.
+Best practices is advisory, and reads as noisy until it names something real.
 
 `CJELLY_DEMO_WINDOW_OFFSET` spreads the demo's cascade out. It is no longer
 needed for capturing - reading the swapchain does not care what is in front of

@@ -1717,7 +1717,7 @@ check-aliasing: ## Fail if the strict-aliasing warning is no longer armed
 #
 # Pinned so that a sweep which stops finding headers fails instead of passing
 # on an empty loop. Raise it when a header is added.
-CHECK_HEADERS_EXPECTED := 33
+CHECK_HEADERS_EXPECTED := 34
 
 check-headers: ## Fail if an installed header pulls the window system in with it
 	@mkdir -p $(BUILD_DIR)
@@ -1788,7 +1788,7 @@ check-headers: ## Fail if an installed header pulls the window system in with it
 #
 # Pinned so that a sweep which stops finding sources fails instead of
 # reporting a clean tree. Raise it when a source file is added.
-CHECK_QUIET_EXPECTED := 19
+CHECK_QUIET_EXPECTED := 20
 
 # The library sources, less the two that are allowed to write to a stream.
 CHECK_QUIET_SOURCES = $(shell find src -type f -name '*.c' \

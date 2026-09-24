@@ -29,6 +29,7 @@
 #include <ghoti.io/cjelly/cj_log.h>
 #include <ghoti.io/cjelly/cj_engine.h>
 #include <ghoti.io/cjelly/engine_internal.h>
+#include <ghoti.io/cjelly/vk_debug_internal.h>
 #include <ghoti.io/cjelly/runtime.h>
 #include <vulkan/vulkan.h>
 #include <ghoti.io/cjelly/textured_internal.h>
@@ -59,6 +60,9 @@ struct cj_engine_t {
 
   /* Vulkan globals during migration */
   VkInstance instance;
+  /* The validation layer's only way to reach the log. VK_NULL_HANDLE when
+   * the engine was initialised without validation. */
+  VkDebugUtilsMessengerEXT debug_messenger;
   VkPhysicalDevice physical_device;
   VkDevice device;
   VkQueue graphics_queue;
@@ -107,14 +111,35 @@ static int eng_create_instance(cj_engine_t* e, int use_validation) {
   VkInstanceCreateInfo ci = {0};
   ci.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
   ci.pApplicationInfo = &appInfo;
-  ci.enabledExtensionCount = extCount;
-  ci.ppEnabledExtensionNames = extensions;
   const char* layers[] = { "VK_LAYER_KHRONOS_validation" };
+  VkDebugUtilsMessengerCreateInfoEXT debug_info;
   if (use_validation) {
     ci.enabledLayerCount = 1;
     ci.ppEnabledLayerNames = layers;
+    /* The extension is what the layer reports THROUGH. Switching the layer on
+     * without it is accepted by the loader and produces an instance that runs
+     * every check and has nowhere to send the answers - which is what this
+     * function did, so the demo's "no validation errors" was a run that could
+     * not have produced one. */
+    extensions[extCount++] = CJ_VK_DEBUG_EXTENSION_NAME;
+    /* Chained here as well as registered below, because a messenger cannot be
+     * registered against an instance that does not exist yet, and instance
+     * creation is one of the places a layer has something to say. */
+    cj_vk_debug__describe(&debug_info);
+    ci.pNext = &debug_info;
   }
+  ci.enabledExtensionCount = extCount;
+  ci.ppEnabledExtensionNames = extensions;
   if (vkCreateInstance(&ci, NULL, &e->instance) != VK_SUCCESS) return 0;
+
+  if (use_validation
+      && cj_vk_debug__create(e->instance, &e->debug_messenger) != VK_SUCCESS) {
+    /* Not fatal: an engine that renders without validation is still an
+     * engine. Silence would be the failure, so say so at the one level that
+     * is on whenever anything is. */
+    CJ_ERRORF("validation layer is on but no debug messenger could be "
+        "registered; validation messages will not be reported");
+  }
   return 1;
 }
 
@@ -534,6 +559,11 @@ CJ_API void cj_engine_shutdown_vulkan(cj_engine_t* engine) {
     engine->device = VK_NULL_HANDLE;
   }
   if (engine->instance != VK_NULL_HANDLE) {
+    /* Before the instance it belongs to, and before vkDestroyInstance starts
+     * reporting what was left behind - a messenger torn down first is a
+     * teardown nobody hears. */
+    cj_vk_debug__destroy(engine->instance, engine->debug_messenger);
+    engine->debug_messenger = VK_NULL_HANDLE;
     vkDestroyInstance(engine->instance, NULL);
     engine->instance = VK_NULL_HANDLE;
   }
@@ -575,6 +605,7 @@ CJ_API VkQueue cj_engine_graphics_queue(const cj_engine_t* e) { return e ? e->gr
 CJ_API VkQueue cj_engine_present_queue(const cj_engine_t* e) { return e ? e->present_queue : VK_NULL_HANDLE; }
 CJ_API VkRenderPass cj_engine_render_pass(const cj_engine_t* e) { return e ? e->render_pass : VK_NULL_HANDLE; }
 CJ_API VkCommandPool cj_engine_command_pool(const cj_engine_t* e) { return e ? e->command_pool : VK_NULL_HANDLE; }
+CJ_API VkDebugUtilsMessengerEXT cj_engine_debug_messenger(const cj_engine_t* e) { return e ? e->debug_messenger : VK_NULL_HANDLE; }
 CJ_API VkDescriptorSetLayout cj_engine_bindless_layout(const cj_engine_t* e) { return e ? e->bindless_layout : VK_NULL_HANDLE; }
 CJ_API VkDescriptorPool      cj_engine_bindless_pool(const cj_engine_t* e) { return e ? e->bindless_pool : VK_NULL_HANDLE; }
 CJ_API CJellyBindlessResources* cj_engine_color_pipeline(const cj_engine_t* e) { return e ? (CJellyBindlessResources*)&e->color_pipeline : NULL; }
