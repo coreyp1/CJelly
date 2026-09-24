@@ -22,6 +22,19 @@
 #include <string>
 #include <vector>
 
+#ifdef _WIN32
+// The library reads its variables with getenv(), and on Windows only the C
+// runtime's own setter changes what getenv() sees - SetEnvironmentVariable
+// updates the process block, which the runtime copied at startup.  Setting a
+// variable to the empty string is how _putenv_s removes one.
+static int setenv(const char * name, const char * value, int) {
+  return _putenv_s(name, value);
+}
+static int unsetenv(const char * name) {
+  return _putenv_s(name, "");
+}
+#endif
+
 namespace {
 
 /** Collects what the library hands the sink, so a test can assert on the
