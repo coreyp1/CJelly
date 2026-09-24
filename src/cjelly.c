@@ -187,14 +187,18 @@ CJ_API void cj_bindless_update_split_from_colorMul(CJellyBindlessResources* reso
   float g = resources->colorMul[1];
   float b = resources->colorMul[2];
 
-  VertexBindless vertices[] = {
+  /* The colour pipeline's layout, not the bindless one, despite the name
+   * this function carries: its only caller passes the engine's colour
+   * pipeline resources, and writing a bindless vertex here overran the
+   * buffer the engine allocated for colour ones. */
+  CJellyColorVertex vertices[] = {
     // Single quad matching textured size: [-0.5,0.5]
-    {{-0.5f, -0.5f}, {r, g, b}, 0},
-    {{ 0.5f, -0.5f}, {r, g, b}, 0},
-    {{ 0.5f,  0.5f}, {r, g, b}, 0},
-    {{ 0.5f,  0.5f}, {r, g, b}, 0},
-    {{-0.5f,  0.5f}, {r, g, b}, 0},
-    {{-0.5f, -0.5f}, {r, g, b}, 0},
+    {{-0.5f, -0.5f}, {r, g, b}},
+    {{ 0.5f, -0.5f}, {r, g, b}},
+    {{ 0.5f,  0.5f}, {r, g, b}},
+    {{ 0.5f,  0.5f}, {r, g, b}},
+    {{-0.5f,  0.5f}, {r, g, b}},
+    {{-0.5f, -0.5f}, {r, g, b}},
   };
   void* data = NULL;
   VkDevice dev = cur_device();

@@ -1154,16 +1154,19 @@ static int create_color_node(cj_rgraph_t* graph, cj_rgraph_node_t* node) {
     }
 
     // Create our own vertex buffer with animated colors
-    // Format: Position (x, y) + Color (r, g, b) + TextureID (uint32) - matches engine's format
+    // Format: Position (x, y) + Color (r, g, b) - matches the engine's color
+    // pipeline, whose stride this has to agree with. Both used to carry a
+    // TextureID field that color.vert does not read; it went from both at
+    // once, because a stride that disagrees with the pipeline's reads every
+    // vertex from the wrong offset.
     // Engine expects 6 vertices (two triangles) to form a quad
-    typedef struct { float pos[2]; float color[3]; uint32_t textureID; } ColorVertex;
-    ColorVertex vertices[] = {
-        {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, 0},  // bottom-left (red) - triangle 1
-        {{ 0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, 0},  // bottom-right (green) - triangle 1
-        {{ 0.5f,  0.5f}, {0.0f, 0.0f, 1.0f}, 0},  // top-right (blue) - triangle 1
-        {{ 0.5f,  0.5f}, {0.0f, 0.0f, 1.0f}, 0},  // top-right (blue) - triangle 2
-        {{-0.5f,  0.5f}, {1.0f, 1.0f, 0.0f}, 0},  // top-left (yellow) - triangle 2
-        {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, 0}   // bottom-left (red) - triangle 2
+    CJellyColorVertex vertices[] = {
+        {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},  // bottom-left (red) - triangle 1
+        {{ 0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},  // bottom-right (green) - triangle 1
+        {{ 0.5f,  0.5f}, {0.0f, 0.0f, 1.0f}},  // top-right (blue) - triangle 1
+        {{ 0.5f,  0.5f}, {0.0f, 0.0f, 1.0f}},  // top-right (blue) - triangle 2
+        {{-0.5f,  0.5f}, {1.0f, 1.0f, 0.0f}},  // top-left (yellow) - triangle 2
+        {{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}}   // bottom-left (red) - triangle 2
     };
 
     VkBufferCreateInfo buffer_info = {0};

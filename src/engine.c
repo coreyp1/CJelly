@@ -204,7 +204,28 @@ static int eng_create_render_pass(cj_engine_t* e) {
   color.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
   VkAttachmentReference colorRef = {0}; colorRef.attachment = 0; colorRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
   VkSubpassDescription sub = {0}; sub.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS; sub.colorAttachmentCount = 1; sub.pColorAttachments = &colorRef;
-  VkRenderPassCreateInfo rp = {0}; rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO; rp.attachmentCount = 1; rp.pAttachments = &color; rp.subpassCount = 1; rp.pSubpasses = &sub;
+
+  /* The one dependency this pass needs, and had none of.
+   *
+   * Beginning the pass transitions the image from UNDEFINED and then runs
+   * loadOp's clear over it. Both are writes, and with no dependency saying
+   * so, nothing orders them against what came before - which for a swapchain
+   * image is vkAcquireNextImageKHR's read. Synchronisation validation
+   * reported it as a WRITE_AFTER_READ against the acquire, once per window
+   * per frame.
+   *
+   * The submission's wait on imageAvailableSemaphore is not a substitute: it
+   * orders the queue, and this orders the two writes inside the pass. Both
+   * are needed, which is why the frame looked correct on every driver. */
+  VkSubpassDependency dep = {0};
+  dep.srcSubpass = VK_SUBPASS_EXTERNAL;
+  dep.dstSubpass = 0;
+  dep.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+  dep.srcAccessMask = 0;
+  dep.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+  dep.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
+  VkRenderPassCreateInfo rp = {0}; rp.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO; rp.attachmentCount = 1; rp.pAttachments = &color; rp.subpassCount = 1; rp.pSubpasses = &sub; rp.dependencyCount = 1; rp.pDependencies = &dep;
   if (vkCreateRenderPass(e->device, &rp, NULL, &e->render_pass) != VK_SUCCESS) return 0;
   return 1;
 }
@@ -309,15 +330,21 @@ static int eng_create_color_pipeline(cj_engine_t* e) {
   if (!e) return 0;
   CJellyBindlessResources* cp = &e->color_pipeline;
 
-  // Create vertex buffer for color-only quad
-  typedef struct { float pos[2]; float color[3]; uint32_t textureID; } VertexBindless;
-  VertexBindless vertices[] = {
-    {{-0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, 0},
-    {{ 0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, 0},
-    {{ 0.5f,  0.5f}, {1.0f, 1.0f, 1.0f}, 0},
-    {{ 0.5f,  0.5f}, {1.0f, 1.0f, 1.0f}, 0},
-    {{-0.5f,  0.5f}, {1.0f, 1.0f, 1.0f}, 0},
-    {{-0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, 0},
+  // Create vertex buffer for color-only quad.
+  //
+  // Position and colour, and nothing else. This carried a third field named
+  // textureID, always zero, in a struct called VertexBindless - copied from
+  // the bindless pipeline, which does read one. color.vert has two inputs, so
+  // the pipeline described an attribute no shader consumed and every vertex
+  // carried four bytes nothing read. Validation says so; it is also the kind
+  // of thing that makes a layout look deliberate when it is inherited.
+  CJellyColorVertex vertices[] = {
+    {{-0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}},
+    {{ 0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}},
+    {{ 0.5f,  0.5f}, {1.0f, 1.0f, 1.0f}},
+    {{ 0.5f,  0.5f}, {1.0f, 1.0f, 1.0f}},
+    {{-0.5f,  0.5f}, {1.0f, 1.0f, 1.0f}},
+    {{-0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}},
   };
   VkDeviceSize vbSize = sizeof(vertices);
 
@@ -401,17 +428,16 @@ static int eng_create_color_pipeline(cj_engine_t* e) {
 
   VkVertexInputBindingDescription binding = {0};
   binding.binding = 0;
-  binding.stride = sizeof(VertexBindless);
+  binding.stride = sizeof(CJellyColorVertex);
   binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
-  VkVertexInputAttributeDescription attrs[3] = {0};
-  attrs[0].binding = 0; attrs[0].location = 0; attrs[0].format = VK_FORMAT_R32G32_SFLOAT; attrs[0].offset = offsetof(VertexBindless, pos);
-  attrs[1].binding = 0; attrs[1].location = 1; attrs[1].format = VK_FORMAT_R32G32B32_SFLOAT; attrs[1].offset = offsetof(VertexBindless, color);
-  attrs[2].binding = 0; attrs[2].location = 2; attrs[2].format = VK_FORMAT_R32_UINT; attrs[2].offset = offsetof(VertexBindless, textureID);
+  VkVertexInputAttributeDescription attrs[2] = {0};
+  attrs[0].binding = 0; attrs[0].location = 0; attrs[0].format = VK_FORMAT_R32G32_SFLOAT; attrs[0].offset = offsetof(CJellyColorVertex, pos);
+  attrs[1].binding = 0; attrs[1].location = 1; attrs[1].format = VK_FORMAT_R32G32B32_SFLOAT; attrs[1].offset = offsetof(CJellyColorVertex, color);
 
   VkPipelineVertexInputStateCreateInfo vi = {0};
   vi.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
   vi.vertexBindingDescriptionCount = 1; vi.pVertexBindingDescriptions = &binding;
-  vi.vertexAttributeDescriptionCount = 3; vi.pVertexAttributeDescriptions = attrs;
+  vi.vertexAttributeDescriptionCount = 2; vi.pVertexAttributeDescriptions = attrs;
 
   VkPipelineInputAssemblyStateCreateInfo ia = {0};
   ia.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;

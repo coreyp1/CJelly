@@ -883,14 +883,15 @@ DEMO_MODEL_ARG := $(if $(MODEL),$(abspath $(MODEL)),)
 CHECK_RENDER_DISPLAY ?= :97
 CHECK_RENDER_ICD ?= /usr/share/vulkan/icd.d/lvp_icd.json
 CHECK_RENDER_DIR := $(BUILD_DIR)/render-check
-# Hazard classes that must not appear.
+# What it demands is zero validation messages, not a count of the known ones.
 #
-# The goal is "no validation message at all", and that is not reachable yet:
-# the render pass declares no external subpass dependency, so synchronisation
-# validation reports a WRITE_AFTER_READ against vkAcquireNextImageKHR and a
-# WRITE_AFTER_WRITE on the attachment's loadOp, once per window per frame.
-# Those are the next thing to fix here and this list gets shorter, not longer.
-CHECK_RENDER_FORBIDDEN := WRITE_AFTER_PRESENT
+# A pinned count would have to be right about how many a particular layer
+# version reports, and would pass a run that swapped one fault for another.
+# Zero is the only figure that does not need re-deriving on another machine,
+# and it is reachable: core validation and synchronisation validation both
+# report nothing on this demo as of the render-pass, capture and vertex-layout
+# fixes. Best practices is deliberately not included - it is advisory, it
+# fires on things that are choices, and it is used below as the control.
 
 check-render: ## Run the demo headless with the validation layers and read what they say
 check-render: \
@@ -950,13 +951,14 @@ check-render: \
 			exit 1; \
 		}; \
 		bad=0; \
-		for class in $(CHECK_RENDER_FORBIDDEN); do \
-			n=$$(grep -c "$$class" $(CHECK_RENDER_DIR)/render.log || true); \
-			if [ "$$n" != "0" ]; then \
-				printf "  %s: %s reported\n" "$$class" "$$n" >&2; \
-				bad=$$((bad+1)); \
-			fi; \
-		done; \
+		said=$$(grep -c 'validation:' $(CHECK_RENDER_DIR)/render.log || true); \
+		if [ "$$said" != "0" ]; then \
+			printf "  %s validation messages:\n" "$$said" >&2; \
+			grep 'validation:' $(CHECK_RENDER_DIR)/render.log \
+				| sed 's/.*validation: //' | cut -c1-140 | sort | uniq -c \
+				| sed 's/^/    /' >&2; \
+			bad=$$((bad+1)); \
+		fi; \
 		shots=$$(ls $(CHECK_RENDER_DIR)/shots/*.png 2>/dev/null | wc -l); \
 		if [ "$$shots" != "4" ]; then \
 			printf "  captured %s of the demo's 4 windows\n" "$$shots" >&2; \
@@ -964,12 +966,10 @@ check-render: \
 		fi; \
 		if [ "$$bad" != "0" ]; then \
 			printf "\033[0;31m\n### The render path is not clean ###\033[0m\n" >&2; \
-			printf "\nSee $(CHECK_RENDER_DIR)/render.log for the messages.\n" >&2; \
+			printf "\nThe whole run is in $(CHECK_RENDER_DIR)/render.log.\n" >&2; \
 			exit 1; \
 		fi; \
-		printf "\033[0;32mThe demo rendered and captured 4 windows with no %s.\033[0m\n" "$(CHECK_RENDER_FORBIDDEN)"; \
-		printf "Still reported, and not yet gated: %s other validation messages. See $(CHECK_RENDER_DIR)/render.log\n" \
-			"$$(grep -c 'validation:' $(CHECK_RENDER_DIR)/render.log || true)"
+		printf "\033[0;32mThe demo rendered and captured 4 windows with nothing to report from core or synchronisation validation.\033[0m\n"
 
 demo: ## Build and run the interactive Vulkan demo (needs a display). MODEL=x.obj to choose a model.
 demo: \

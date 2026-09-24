@@ -232,13 +232,26 @@ static int create_offscreen_render_pass(
   // Two dependencies: the first orders the clear after any previous sampling
   // of the image, the second makes the written colour visible to the fragment
   // shader that composites it.
+  //
+  // The first names both attachments. It used to name only the colour one,
+  // and the depth attachment is cleared too: its layout transition out of
+  // UNDEFINED and loadOp's clear are two writes at EARLY_FRAGMENT_TESTS with
+  // nothing ordering them, which synchronisation validation reported as a
+  // WRITE_AFTER_WRITE on "the depth aspect of attachment 1" once per frame.
+  // A dependency that covers one attachment of a pass does not cover the
+  // others, and the pass is created in one place, so the omission read as a
+  // pass that had been thought about.
   VkSubpassDependency dependencies[2] = {0};
   dependencies[0].srcSubpass = VK_SUBPASS_EXTERNAL;
   dependencies[0].dstSubpass = 0;
-  dependencies[0].srcStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT;
-  dependencies[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-  dependencies[0].srcAccessMask = VK_ACCESS_SHADER_READ_BIT;
-  dependencies[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+  dependencies[0].srcStageMask = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT
+      | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT;
+  dependencies[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+      | VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+  dependencies[0].srcAccessMask = VK_ACCESS_SHADER_READ_BIT
+      | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+  dependencies[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT
+      | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
   dependencies[0].dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT;
 
   dependencies[1].srcSubpass = 0;

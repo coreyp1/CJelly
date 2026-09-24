@@ -53,6 +53,7 @@
 #define CJellyApplicationSignalHandler GHOTIIO_CJELLY(CJellyApplicationSignalHandler)
 #define CJellyBasicState GHOTIIO_CJELLY(CJellyBasicState)
 #define CJellyBindlessResources GHOTIIO_CJELLY(CJellyBindlessResources)
+#define CJellyColorVertex GHOTIIO_CJELLY(CJellyColorVertex)
 #define CJellyBindlessState GHOTIIO_CJELLY(CJellyBindlessState)
 #define CJellyFormatImage GHOTIIO_CJELLY(CJellyFormatImage)
 #define CJellyFormatImageError GHOTIIO_CJELLY(CJellyFormatImageError)
