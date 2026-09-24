@@ -12,9 +12,25 @@ This document is the single source of truth for what we’re doing now and what�
    - Eliminate legacy drawing paths in `src/cjelly.c` and move per-window recording to `src/window.c`.
    - Remove any remaining reads/writes of legacy globals.
 
-2) Cleanup/teardown correctness (validation clean)
-   - Destroy per-window resources and app-owned resources before device/context.
-   - Ensure pipelines, layouts, buffers, descriptor pools/sets, images, image views, and memory are fully released.
+2) ✅ Cleanup/teardown correctness (validation clean) **COMPLETED**
+   - ✅ `make check-render` runs the demo headless under Xvfb and lavapipe
+     with the validation layers on, and fails on any message from core or
+     synchronisation validation. It reports none.
+   - ✅ Eight places destroyed a VkImage or VkBuffer *after* freeing the
+     memory bound to it. Fixed, and the best-practice layer now reports no
+     object outliving its memory.
+   - ✅ Both render passes say how they are ordered against what came before;
+     neither declared a complete set of subpass dependencies.
+   - ✅ Frame capture no longer touches a presented swapchain image.
+   - ✅ Swapchains are created with a format the surface reports, and a
+     transform it offers, rather than an assumed one.
+
+   What this track cannot say: the demo creates windows, renders, captures
+   and exits, and that is the path the layers see. A resize, a
+   device-lost recovery, and destroying one window of several while the rest
+   keep rendering are all unexercised. `make check-render` is the place to
+   add them, and the reason they were not checked before is that nothing in
+   this repository executed a frame at all.
 
 3) ✅ Public API finalization (C-first, handles) **COMPLETED**
    - ✅ Switch resources to 64-bit opaque handles `(index:32 | generation:32)`.
@@ -95,21 +111,35 @@ This document is the single source of truth for what we’re doing now and what�
 9. ✅ **Create basic render nodes**: Implement simple pass-through render node for basic rendering
 10. ✅ **Test render graph integration**: Verify windows can render via render graph instead of legacy helpers
 
-**Next Recommended Focus**: 8) Shader hot-reload - file watch, recompile,
-swap pipeline, plumbed through the Engine.
+**Next Recommended Focus**: 10) Test/demo app hygiene, which turns out to
+be an API question rather than a tidying one. `src/main.c` includes three
+internal headers - `plat_internal.h`, `engine_internal.h`,
+`bindless_internal.h` - because opening a display connection, reading a
+monotonic clock and reaching the engine's colour pipeline are not in the
+public API. The demo is the reference consumer; if it cannot be written
+against `cj_*.h`, nothing else can be either, and the answer decides what
+tracks 1 and 9 should say.
 
-Two smaller things are also loose, either of which is a shorter piece of work
-than track 8:
+Also loose:
 
-- The demo cannot complete a run under Xvfb: the X connection dies during
-  window creation, before anything interesting happens. That makes headless
-  capture - the one way to check the render path without a person looking -
-  unavailable on a machine with no real display, so it is worth a look.
+- 1) Engine/Window split hardening: `src/cjelly.c` is still 2,368 lines of
+  legacy drawing paths against `src/window.c`'s 2,042. The legacy *globals*
+  are essentially gone, so what is left is moving per-window recording.
+- 9) Headers/Docs: eight of the thirteen public `cj_*.h` headers still open
+  with "This is a design-time stub for headers. Implementation is TBD",
+  including `cj_engine.h`, `cj_window.h` and `cj_rgraph.h`, whose tracks are
+  marked complete above. `cj_handle.h` has no `@file` block. Cheap, and
+  visibly wrong to anyone who opens a header.
+- 8) Shader hot-reload - file watch, recompile, swap pipeline, plumbed
+  through the Engine. The largest genuinely new feature left.
 - There is still no mingw cross compiler, so the ~1,065 lines under
-  `src/platform/win32/` are checked only by brace balance, text sweeps and
-  `check-quiet`. A syntax-only gate would have caught the one real Win32
-  break platform separation introduced. See
-  notes/cjelly/platform-separation.md.
+  `src/platform/win32/` are checked only by brace balance, text sweeps,
+  `check-quiet` and `check-no-exit`. A Windows machine has now built and run
+  all of it once (see notes/suite/WINDOWS-NATIVE-BUILD.md), which is not the
+  same as a gate. See notes/cjelly/platform-separation.md.
+- Track 6 left one thing: `CJPlatformWindow` still shares swapchain state
+  with portable code rather than owning "OS surface + swapchain only".
+- Track 7 left one thing: nothing logs at INFO.
 
 ---
 
