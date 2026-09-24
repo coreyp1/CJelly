@@ -206,6 +206,67 @@ static void plat_createSurfaceForWindow(CJPlatformWindow * win) {
       cj_engine_instance(cj_engine_get_current()), &win->surface);
 }
 
+/**
+ * Pick a surface format the surface actually supports.
+ *
+ * This was VK_FORMAT_B8G8R8A8_SRGB, written into the swapchain description
+ * without ever asking. Every desktop driver offers it, which is why it held,
+ * but a surface is not obliged to: vkGetPhysicalDeviceSurfaceFormatsKHR is
+ * what says so, and calling vkCreateSwapchainKHR without it is a best
+ * practice the layer reports once per window.
+ *
+ * Preference order matters beyond legality. capture.c can only unpack the
+ * 8-bit four-channel formats, so a surface offering one of those should get
+ * it even if something else comes first in the list; falling through to
+ * formats[0] keeps a window openable on a surface that offers neither, at
+ * the cost of captures from it being refused rather than wrong.
+ */
+static bool plat_chooseSurfaceFormat(
+    VkPhysicalDevice phys, VkSurfaceKHR surface, VkSurfaceFormatKHR * out) {
+  uint32_t count = 0;
+  if (vkGetPhysicalDeviceSurfaceFormatsKHR(phys, surface, &count, NULL)
+          != VK_SUCCESS
+      || count == 0) {
+    return false;
+  }
+  if (count > 64) count = 64;
+  VkSurfaceFormatKHR formats[64];
+  if (vkGetPhysicalDeviceSurfaceFormatsKHR(phys, surface, &count, formats)
+      != VK_SUCCESS) {
+    return false;
+  }
+
+  /* A single VK_FORMAT_UNDEFINED entry is the old spelling of "no
+   * preference, choose anything". */
+  if (count == 1 && formats[0].format == VK_FORMAT_UNDEFINED) {
+    out->format = VK_FORMAT_B8G8R8A8_SRGB;
+    out->colorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+    return true;
+  }
+
+  static const VkFormat preferred[] = {
+    VK_FORMAT_B8G8R8A8_SRGB,
+    VK_FORMAT_R8G8B8A8_SRGB,
+    VK_FORMAT_B8G8R8A8_UNORM,
+    VK_FORMAT_R8G8B8A8_UNORM,
+  };
+  for (size_t p = 0; p < sizeof(preferred) / sizeof(preferred[0]); p++) {
+    for (uint32_t i = 0; i < count; i++) {
+      if (formats[i].format == preferred[p]
+          && formats[i].colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+        *out = formats[i];
+        return true;
+      }
+    }
+  }
+
+  CJ_WARNF("swapchain: the surface offers no 8-bit RGBA format; using %d, "
+      "which frame capture will not be able to unpack",
+      (int)formats[0].format);
+  *out = formats[0];
+  return true;
+}
+
 static void plat_createSwapChainForWindow(CJPlatformWindow * win) {
   if (!win) return;
   VkSurfaceCapabilitiesKHR caps; vkGetPhysicalDeviceSurfaceCapabilitiesKHR(cj_engine_physical_device(cj_engine_get_current()), win->surface, &caps);
@@ -238,7 +299,15 @@ static void plat_createSwapChainForWindow(CJPlatformWindow * win) {
 
   win->swapChainExtent.width = physical_width;
   win->swapChainExtent.height = physical_height;
-  win->swapChainFormat = VK_FORMAT_B8G8R8A8_SRGB;
+
+  VkSurfaceFormatKHR surface_format = {
+      VK_FORMAT_B8G8R8A8_SRGB, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR};
+  if (!plat_chooseSurfaceFormat(cj_engine_physical_device(cj_engine_get_current()),
+          win->surface, &surface_format)) {
+    CJ_ERRORF("swapchain: the surface reports no formats at all");
+    return;
+  }
+  win->swapChainFormat = surface_format.format;
 
   /* Reading a frame back needs the swapchain images usable as a transfer
    * source. Every implementation worth the name supports it, but it is
@@ -249,7 +318,7 @@ static void plat_createSwapChainForWindow(CJPlatformWindow * win) {
       (caps.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT)
       ? VK_IMAGE_USAGE_TRANSFER_SRC_BIT
       : 0;
-  VkSwapchainCreateInfoKHR ci = {0}; ci.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR; ci.surface = win->surface; ci.minImageCount = caps.minImageCount; ci.imageFormat = VK_FORMAT_B8G8R8A8_SRGB; ci.imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR; ci.imageExtent = win->swapChainExtent; ci.imageArrayLayers = 1; ci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | transfer_src_usage; ci.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR; ci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR; ci.presentMode = VK_PRESENT_MODE_FIFO_KHR; ci.clipped = VK_TRUE;
+  VkSwapchainCreateInfoKHR ci = {0}; ci.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR; ci.surface = win->surface; ci.minImageCount = caps.minImageCount; ci.imageFormat = surface_format.format; ci.imageColorSpace = surface_format.colorSpace; ci.imageExtent = win->swapChainExtent; ci.imageArrayLayers = 1; ci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | transfer_src_usage; ci.preTransform = caps.currentTransform; ci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR; ci.presentMode = VK_PRESENT_MODE_FIFO_KHR; ci.clipped = VK_TRUE;
   /* Ensure we do not reference an invalid oldSwapchain */
   ci.oldSwapchain = VK_NULL_HANDLE;
   vkCreateSwapchainKHR(cj_engine_device(cj_engine_get_current()), &ci, NULL, &win->swapChain);
@@ -323,7 +392,17 @@ static void plat_recreateSwapChainForWindow(CJPlatformWindow * win) {
 
   win->swapChainExtent.width = physical_width;
   win->swapChainExtent.height = physical_height;
-  win->swapChainFormat = VK_FORMAT_B8G8R8A8_SRGB;
+
+  /* Asked again rather than reused: a surface can be moved to another
+   * display between one swapchain and the next. */
+  VkSurfaceFormatKHR surface_format = {
+      VK_FORMAT_B8G8R8A8_SRGB, VK_COLOR_SPACE_SRGB_NONLINEAR_KHR};
+  if (!plat_chooseSurfaceFormat(cj_engine_physical_device(cj_engine_get_current()),
+          win->surface, &surface_format)) {
+    CJ_ERRORF("swapchain: the surface reports no formats at all");
+    return;
+  }
+  win->swapChainFormat = surface_format.format;
 
   /* A recreated swapchain has to stay readable, or a capture would work until
    * the first resize and then stop. */
@@ -337,12 +416,12 @@ static void plat_recreateSwapChainForWindow(CJPlatformWindow * win) {
   ci.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
   ci.surface = win->surface;
   ci.minImageCount = caps.minImageCount;
-  ci.imageFormat = VK_FORMAT_B8G8R8A8_SRGB;
-  ci.imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+  ci.imageFormat = surface_format.format;
+  ci.imageColorSpace = surface_format.colorSpace;
   ci.imageExtent = win->swapChainExtent;
   ci.imageArrayLayers = 1;
   ci.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | transfer_src_usage;
-  ci.preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+  ci.preTransform = caps.currentTransform;
   ci.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
   ci.presentMode = VK_PRESENT_MODE_FIFO_KHR;
   ci.clipped = VK_TRUE;
@@ -355,6 +434,12 @@ static void plat_recreateSwapChainForWindow(CJPlatformWindow * win) {
 
   /* Destroy old swapchain after creating new one */
   vkDestroySwapchainKHR(dev, oldSwapchain, NULL);
+
+  /* The format is queried rather than assumed now, so it can differ from the
+   * one the render pass was built for - a surface dragged to another display
+   * is enough. The framebuffers below are created against that render pass,
+   * so it has to be right before they are. */
+  cj_engine_ensure_render_pass(cj_engine_get_current(), ci.imageFormat);
 
   /* Recreate image views, framebuffers, and command buffers */
   if (!plat_createImageViewsForWindow(win)) {
@@ -622,8 +707,12 @@ static VkCommandBuffer plat_recordCaptureForFrame(
 
   /* The render pass leaves the image in PRESENT_SRC, which is where the
    * frame's own command buffer stops. */
+  /* Zero on the PRESENT_SRC side of both barriers, not MEMORY_READ. Nothing
+   * the application can name accesses an image in that layout - the
+   * presentation engine's reads are outside the access model - and naming one
+   * asks for a cache flush that means nothing here. */
   plat_captureTransition(cmd, image, VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-      VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_ACCESS_MEMORY_READ_BIT,
+      VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, 0,
       VK_ACCESS_TRANSFER_READ_BIT);
 
   VkBufferImageCopy region = {0};
@@ -639,8 +728,7 @@ static VkCommandBuffer plat_recordCaptureForFrame(
    * is submitted ahead of it, so the image has to be presentable again by the
    * time it finishes. */
   plat_captureTransition(cmd, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-      VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_ACCESS_TRANSFER_READ_BIT,
-      VK_ACCESS_MEMORY_READ_BIT);
+      VK_IMAGE_LAYOUT_PRESENT_SRC_KHR, VK_ACCESS_TRANSFER_READ_BIT, 0);
 
   if (vkEndCommandBuffer(cmd) != VK_SUCCESS) {
     win->captureRequested = false;

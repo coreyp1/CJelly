@@ -836,8 +836,10 @@ CJ_API int cj_engine_create_texture(cj_engine_t* e, uint32_t slot, const cj_text
   viewInfo.subresourceRange.layerCount = desc->layers ? desc->layers : 1;
 
   if (vkCreateImageView(dev, &viewInfo, NULL, &entry->vulkan.texture.imageView) != VK_SUCCESS) {
-    vkFreeMemory(dev, entry->vulkan.texture.memory, NULL);
+    /* Image first: freeing the memory under a live VkImage leaves an object
+     * referencing memory that has been handed back. */
     vkDestroyImage(dev, entry->vulkan.texture.image, NULL);
+    vkFreeMemory(dev, entry->vulkan.texture.memory, NULL);
     return 0;
   }
 
@@ -862,8 +864,8 @@ CJ_API int cj_engine_create_texture(cj_engine_t* e, uint32_t slot, const cj_text
 
   if (vkCreateSampler(dev, &samplerInfo, NULL, &entry->vulkan.texture.sampler) != VK_SUCCESS) {
     vkDestroyImageView(dev, entry->vulkan.texture.imageView, NULL);
-    vkFreeMemory(dev, entry->vulkan.texture.memory, NULL);
     vkDestroyImage(dev, entry->vulkan.texture.image, NULL);
+    vkFreeMemory(dev, entry->vulkan.texture.memory, NULL);
     return 0;
   }
 

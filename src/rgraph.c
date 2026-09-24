@@ -1057,24 +1057,28 @@ static void destroy_textured_node(cj_rgraph_t* graph, cj_rgraph_node_t* node) {
         textured->texture_view = VK_NULL_HANDLE;
     }
 
-    if (textured->texture_memory != VK_NULL_HANDLE) {
-        vkFreeMemory(device, textured->texture_memory, NULL);
-        textured->texture_memory = VK_NULL_HANDLE;
-    }
-
+    /* The object, then the memory it was bound to. The other order leaves a
+     * VkImage or VkBuffer pointing at memory that has been handed back, which
+     * the best-practice layer reports as an object still referencing freed
+     * memory. Nothing crashed, because nothing touched them afterwards. */
     if (textured->texture_image != VK_NULL_HANDLE) {
         vkDestroyImage(device, textured->texture_image, NULL);
         textured->texture_image = VK_NULL_HANDLE;
     }
 
-    if (textured->vertex_buffer_memory != VK_NULL_HANDLE) {
-        vkFreeMemory(device, textured->vertex_buffer_memory, NULL);
-        textured->vertex_buffer_memory = VK_NULL_HANDLE;
+    if (textured->texture_memory != VK_NULL_HANDLE) {
+        vkFreeMemory(device, textured->texture_memory, NULL);
+        textured->texture_memory = VK_NULL_HANDLE;
     }
 
     if (textured->vertex_buffer != VK_NULL_HANDLE) {
         vkDestroyBuffer(device, textured->vertex_buffer, NULL);
         textured->vertex_buffer = VK_NULL_HANDLE;
+    }
+
+    if (textured->vertex_buffer_memory != VK_NULL_HANDLE) {
+        vkFreeMemory(device, textured->vertex_buffer_memory, NULL);
+        textured->vertex_buffer_memory = VK_NULL_HANDLE;
     }
 
     if (textured->pipeline_layout != VK_NULL_HANDLE) {
@@ -1237,8 +1241,8 @@ static int create_color_node(cj_rgraph_t* graph, cj_rgraph_node_t* node) {
 
     if (vkCreatePipelineLayout(device, &layout_info, NULL, &color->pipeline_layout) != VK_SUCCESS) {
         CJ_ERRORF("create_color_node: failed to create pipeline layout");
-        vkFreeMemory(device, color->vertex_buffer_memory, NULL);
         vkDestroyBuffer(device, color->vertex_buffer, NULL);
+        vkFreeMemory(device, color->vertex_buffer_memory, NULL);
         return 0;
     }
 
@@ -1266,14 +1270,14 @@ static void destroy_color_node(cj_rgraph_t* graph, cj_rgraph_node_t* node) {
         color->pipeline_layout = VK_NULL_HANDLE;
     }
 
-    if (color->vertex_buffer_memory != VK_NULL_HANDLE) {
-        vkFreeMemory(device, color->vertex_buffer_memory, NULL);
-        color->vertex_buffer_memory = VK_NULL_HANDLE;
-    }
-
     if (color->vertex_buffer != VK_NULL_HANDLE) {
         vkDestroyBuffer(device, color->vertex_buffer, NULL);
         color->vertex_buffer = VK_NULL_HANDLE;
+    }
+
+    if (color->vertex_buffer_memory != VK_NULL_HANDLE) {
+        vkFreeMemory(device, color->vertex_buffer_memory, NULL);
+        color->vertex_buffer_memory = VK_NULL_HANDLE;
     }
 
     // Note: color->pipeline is owned by the engine, not the node
@@ -1470,8 +1474,8 @@ static int create_intermediate_render_target(cj_rgraph_t* graph, cj_rgraph_blur_
 
     if (vkCreateImageView(device, &view_info, NULL, &blur->intermediate_view) != VK_SUCCESS) {
         CJ_ERRORF("create_intermediate_render_target: failed to create intermediate texture view");
-        vkFreeMemory(device, blur->intermediate_memory, NULL);
         vkDestroyImage(device, blur->intermediate_texture, NULL);
+        vkFreeMemory(device, blur->intermediate_memory, NULL);
         return 0;
     }
 
@@ -1490,13 +1494,13 @@ static void destroy_intermediate_render_target(cj_rgraph_t* graph, cj_rgraph_blu
         vkDestroyImageView(device, blur->intermediate_view, NULL);
         blur->intermediate_view = VK_NULL_HANDLE;
     }
-    if (blur->intermediate_memory != VK_NULL_HANDLE) {
-        vkFreeMemory(device, blur->intermediate_memory, NULL);
-        blur->intermediate_memory = VK_NULL_HANDLE;
-    }
     if (blur->intermediate_texture != VK_NULL_HANDLE) {
         vkDestroyImage(device, blur->intermediate_texture, NULL);
         blur->intermediate_texture = VK_NULL_HANDLE;
+    }
+    if (blur->intermediate_memory != VK_NULL_HANDLE) {
+        vkFreeMemory(device, blur->intermediate_memory, NULL);
+        blur->intermediate_memory = VK_NULL_HANDLE;
     }
     if (blur->intermediate_framebuffer != VK_NULL_HANDLE) {
         vkDestroyFramebuffer(device, blur->intermediate_framebuffer, NULL);
