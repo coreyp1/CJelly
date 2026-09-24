@@ -599,35 +599,29 @@ $(GEN_DIR)/shaders/%.h: $(APP_DIR)/shaders/%.spv
 	  | sed "s/^\(unsigned char \)[^[]*\(\[.*\)/\1$(VAR_NAME)\2/" \
 	  | sed "s/^\(unsigned int \)[^ ]*/\1$(VAR_NAME)_len/" > $@
 
-# Pattern rule to compile shaders to SPIR-V
+# Pattern rule to compile shaders to SPIR-V.
+#
+# The compiler is required, and its absence is a build failure that names it.
+#
+# There was a Windows-only fallback here for when glslangValidator is missing:
+# it wrote an empty .spv and a header declaring a zero-length array, and the
+# build went green. Every vkCreateShaderModule then got zero bytes and every
+# pipeline failed to create, at run time, on a machine where nothing had
+# appeared to go wrong - the failure arrived hours from its cause and did not
+# mention shaders. The fallback also declared its array `static` where the
+# real generator declares it extern, so which translation units could include
+# a shader header depended on whether the tool had been installed.
+#
+# A missing build tool is the easiest thing in the world to report accurately.
+# See notes/suite/WINDOWS-TODO.md item 3.
 $(APP_DIR)/shaders/%.spv: src/shaders/%
 	@printf "\n### Compiling $@ ###\n"
 	@mkdir -p $(@D)
+	@command -v glslangValidator > /dev/null 2>&1 || { \
+		printf "\033[0;31mglslangValidator is not on PATH, and it is what turns src/shaders/ into the SPIR-V this library embeds. Install it - glslang-tools on Debian, mingw-w64-x86_64-glslang under MSYS2, or the Vulkan SDK - and build again.\033[0m\n" >&2; \
+		exit 1; \
+	}
 	glslangValidator -V $< -o $@
-
-# Windows-specific shader compilation (fallback if glslangValidator not available)
-ifeq ($(OS),Windows_NT)
-# Check if glslangValidator is available
-GLSLANG_AVAILABLE := $(shell which glslangValidator 2>/dev/null)
-ifeq ($(GLSLANG_AVAILABLE),)
-# TODO(windows): this writes an empty shader header rather than failing, so
-# the build succeeds and every pipeline creation fails at run time with
-# nothing pointing at the cause. It should fail at this step instead, naming
-# the missing tool. See WINDOWS-TODO.md item 3.
-# If glslangValidator is not available, create empty shader headers
-$(GEN_DIR)/shaders/%.h: $(APP_DIR)/shaders/%.spv
-	@printf "\n### Generating empty $@ ###\n"
-	@mkdir -p $(@D)
-	@echo "// Empty shader header - glslangValidator not available on Windows" > $@
-	@echo "static const unsigned char $(VAR_NAME)[] = {0};" >> $@
-	@echo "static const unsigned int $(VAR_NAME)_len = 0;" >> $@
-
-$(APP_DIR)/shaders/%.spv: src/shaders/%
-	@printf "\n### Warning: glslangValidator not found, creating empty shader $@ ###\n"
-	@mkdir -p $(@D)
-	@echo "// Empty shader - glslangValidator not available on Windows" > $@
-endif
-endif
 
 
 ####################################################################
