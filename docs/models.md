@@ -1,4 +1,5 @@
-# Drawing a model
+@page cjelly_models Drawing a model
+
 
 CJelly can load a Wavefront OBJ file and render it in a window. The demo's
 fourth window does exactly that:

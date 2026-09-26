@@ -1,4 +1,5 @@
-# Input Events
+@page cjelly_events Input events
+
 
 This document explains how input events are handled in the CJelly framework, including keyboard, mouse, and focus events.
 

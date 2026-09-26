@@ -1,4 +1,5 @@
-# Window Rendering System
+@page cjelly_windowing Windows and rendering
+
 
 This document explains how the CJelly windowing and rendering system works, including frame callbacks, redraw policies, FPS limiting, and the event loop integration.
 

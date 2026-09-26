@@ -1,4 +1,5 @@
-# Application Lifecycle
+@page cjelly_lifecycle Application lifecycle
+
 
 This document explains how to use the CJelly framework from application startup to shutdown, including engine creation, window management, event loop execution, and cleanup.
 

@@ -1,4 +1,5 @@
-# DPI and Window Dragging
+@page cjelly_dpi DPI and window dragging
+
 
 This document explains how DPI (dots per inch) scaling affects window dragging in CJelly.
 
@@ -27,7 +28,7 @@ For dragging to work correctly, these must be in the **same coordinate space**.
 
 ### DPI Awareness Implementation
 
-CJelly declares DPI awareness in `cjelly_application_create()` using a three-tier fallback:
+CJelly declares DPI awareness in `cjelly_application_create()` by trying these, in order, and keeping the first that the system provides:
 
 1. **Per-Monitor V2** (Windows 10 1703+): `SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2)`
 2. **Per-Monitor** (Windows 8.1+): `SetProcessDpiAwareness(PROCESS_PER_MONITOR_DPI_AWARE)`

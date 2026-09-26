@@ -1,4 +1,5 @@
-# Event Loop System
+@page cjelly_loops Event loop
+
 
 This document explains how the CJelly event loop system works, including event processing, frame timing, FPS control, and integration with window callbacks.
 

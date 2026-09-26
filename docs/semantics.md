@@ -1,4 +1,5 @@
-# The semantic model
+@page cjelly_semantics Semantic model
+
 
 **Status:** Design. Nothing here is implemented yet.
 

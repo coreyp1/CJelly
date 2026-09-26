@@ -1,76 +1,137 @@
-# CJelly - A Cross-Platform GUI Library
+# CJelly
 
-## MSYS2 MINGW64 Setup
+A Vulkan-first GUI library in C. It opens native windows and draws with its
+own renderer.
 
-To install packages, from the repo base directory, run:
+## What is implemented
 
-```
-pacman -S --needed - < install/msys2_packages.txt
-```
+This is what the library implements.
 
-## WSL2 Ubuntu 22.04
+- Native windows, and a renderer that draws colored panels, an image, and a Wavefront model.
+- A render graph per window, including a model node.
+- A process-wide engine, input events, and a log.
 
-To install packages, from the repo base directory, run:
+It does not embed native controls. The design draft names Windows and a
+software fallback; those are not what `make demo` exercises. The demo runs
+on Linux, with X11 and Vulkan.
 
-```
-sudo apt install $(cat install/wsl2_ubuntu22_packages.txt)
-```
+## Before you call it
 
-It may be that the installation seems to get hung.  Worse yet, it happens on a
-message that says, in part, "this may take a while...".  Evidently this is a
-known bug that has been around at least 7 years.  Just press `Enter` a dozen or
-so times, and it will resume.  (Check `htop` or something like that to see
-whether or not you actually see activity before spamming the `Enter` key.)
+- The library is quiet unless something failed. `CJELLY_LOG` takes `off`, `error` (the default), `warn`, `info`, `debug` or `trace`, or the digits `0` to `5`. An embedding program can set the level with `cj_log_set_level` and take the messages with `cj_log_set_sink` instead of letting them reach stderr.
+- Vulkan validation messages arrive at the severity the layer gave them, so validation errors are visible by default.
+- `cj_engine_create()` does not touch Vulkan, which is why the handle table can be tested with no device. A stale handle stays rejected after its slot is reused; the generation counter is what makes that true.
+- `make test` needs neither a GPU nor a window. `make demo` does.
 
-This may work on other versions, but I haven't tried it.
+## Examples
 
-## Run a test
+The interactive demo is the fastest way to see it. It needs a GPU, a
+display, and the Vulkan drivers:
 
-From the repo base directory, run:
-
-```
-make test
-```
-
-For other command, run:
-
-```
-make help
+```bash
+make demo
+make demo MODEL=path/to/model.obj
 ```
 
-## Drawing a model
+To hear more:
 
-The demo's fourth window loads a Wavefront OBJ file and spins it. Pass a path
-to use your own:
-
-```
-./build/linux/release/apps/main path/to/model.obj
-```
-
-See [docs/models.md](docs/models.md) for how that is put together, and what it
-does not do yet.
-
-## Diagnostics
-
-The library is quiet unless something failed. To hear more:
-
-```
+```bash
 CJELLY_LOG=debug ./build/linux/release/apps/main
 ```
 
-`CJELLY_LOG` takes `off`, `error` (the default), `warn`, `info`, `debug` or
-`trace`, or the digits `0` to `5`. `trace` includes bulk listings such as
-every extension a device reports, which runs to a few hundred lines per
-device.
+A model is a node on a window's render graph:
 
-An embedding application can set the level itself with `cj_log_set_level`,
-and take the messages rather than letting them reach stderr with
-`cj_log_set_sink`. See
-[cj_log.h](include/ghoti.io/cjelly/cj_log.h).
+```c
+cj_rgraph_add_model_node(graph, "model", "teapot.obj");
+```
 
-Vulkan validation messages arrive at the level matching the severity the
-layer gave them, so validation errors are visible by default and the layers'
-own chatter is not.
+[docs/models.md](docs/models.md) is how that node is put together.
+[docs/Overview.md](docs/Overview.md) is the design draft for the toolkit.
+
+## Compile and link
+
+Once the library is installed, pkg-config carries the include path, the
+library, and its dependencies:
+
+```bash
+cc -o show show.c $(pkg-config --cflags --libs ghoti.io-cjelly-0)
+```
+
+The module name ends in the major version, `-0` for this release, so two
+majors can be installed side by side. A build made with `make BRANCH=-dev`
+installs `ghoti.io-cjelly-dev` instead.
+
+The renderer also needs a Vulkan SDK and, on Linux, X11. `make test` does
+not link a device.
+
+## Building the library
+
+[cutil](https://github.com/Ghoti-io/cutil),
+[image](https://github.com/coreyp1/image) and
+[model](https://github.com/coreyp1/model) must already be installed where
+pkg-config can see them. A dependency it cannot find is a hard error naming
+the fix.
+
+```bash
+make
+make test
+sudo make install
+```
+
+From the workspace, which installs the three libraries first:
+
+```bash
+./bootstrap.sh
+export PKG_CONFIG_PATH="$PWD/.local/share/pkgconfig"
+make -C libs/cjelly test PREFIX="$PWD/.local"
+```
+
+`make help` lists the rest.
+
+| Target | What it does |
+| --- | --- |
+| `make` | The libraries and the demo binary |
+| `make test` | Unit tests, headless |
+| `make demo` | Build and run the interactive demo. `MODEL=` picks an OBJ file |
+| `make test-asan` | Rebuild with ASan and UBSan and run the tests |
+| `make docs` | The Doxygen manual, into `./docs` |
+
+## The API
+
+Public headers live under `<ghoti.io/cjelly/...>`. The ones an embedding
+program starts from:
+
+- **`cj_engine.h`** — the process-wide engine. `cj_engine_create()`.
+- **`cj_window.h`** — a window: create, resize, a frame, present.
+- **`cj_rgraph.h`** — the render graph for a window, including `cj_rgraph_add_model_node()`.
+- **`cj_input.h`** — input events.
+- **`cj_log.h`** — the log level and the sink.
+- **`runtime.h`** — `cj_run()`, the event loop.
+
+[What is implemented](#what-is-implemented) is the inventory.
+[Before you call it](#before-you-call-it) is what that changes about a call.
+
+## Dependencies
+
+All three are found through pkg-config, and the installed `.pc` file names
+them, so a program that links `ghoti.io-cjelly-0` links these too.
+
+- [ghoti.io-cutil](https://github.com/Ghoti-io/cutil) — the handle map and the allocator.
+- [ghoti.io-image](https://github.com/coreyp1/image) — every image the toolkit loads.
+- [ghoti.io-model](https://github.com/coreyp1/model) — OBJ and MTL for the model node.
+
+## Documentation
+
+| Page | What it settles |
+| --- | --- |
+| [docs/models.md](docs/models.md) | How a model node is put together |
+| [docs/Overview.md](docs/Overview.md) | The design draft for the toolkit |
+| [include/ghoti.io/cjelly/cj_log.h](include/ghoti.io/cjelly/cj_log.h) | The log level and the sink |
+
+`make docs` builds the manual.
+
+## Status
+
+The demo runs on Linux, with X11 and Vulkan.
 
 ## License
 

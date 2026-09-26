@@ -1,4 +1,5 @@
-# Engine Architecture
+@page cjelly_engine Engine
+
 
 This document explains the CJelly engine architecture, including resource ownership, threading model, signal handling, and the separation between engine and windows.
 
